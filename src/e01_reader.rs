@@ -1,3 +1,4 @@
+use byteorder::LittleEndian;
 use libflate::zlib;
 use std::convert::TryFrom;
 use std::io::Read;
@@ -116,7 +117,7 @@ pub struct VolumeSection {
 }
 
 impl VolumeSection {
-    pub fn new(io: &BytesReader, size: u64) -> Result<Self, SimpleError> {
+    pub fn new(io: &BytesReader, size: u64, ignore_checksums: bool) -> Result<Self, SimpleError> {
         // read volume section
         if size == 1052 {
             let vol_section =
@@ -126,6 +127,26 @@ impl VolumeSection {
                         e
                     ))
                 })?;
+
+            if !ignore_checksums {
+                let crc_stored = *vol_section.checksum();
+
+                let crc = adler32::adler32(std::io::Cursor::new(
+                    vol_section
+                        ._io()
+                        .read_bytes(io.pos() - vol_section._io().pos() - 4)
+                        .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
+                ))
+                .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+
+                if crc != crc_stored {
+                    return Err(SimpleError::new(format!(
+                        "Volume section checksum failed, calculated {}, expected {}",
+                        crc, crc_stored
+                    )));
+                }
+            }
+
             return Ok(VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
                 sector_per_chunk: *vol_section.sector_per_chunk(),
@@ -140,6 +161,26 @@ impl VolumeSection {
                         e
                     ))
                 })?;
+
+            if !ignore_checksums {
+                let crc_stored = *vol_section.checksum();
+
+                let crc = adler32::adler32(std::io::Cursor::new(
+                    vol_section
+                        ._io()
+                        .read_bytes(io.pos() - vol_section._io().pos() - 4)
+                        .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
+                ))
+                .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+
+                if crc != crc_stored {
+                    return Err(SimpleError::new(format!(
+                        "Volume section checksum failed, calculated {}, expected {}",
+                        crc, crc_stored
+                    )));
+                }
+            }
+
             return Ok(VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
                 sector_per_chunk: *vol_section.sector_per_chunk(),
@@ -163,6 +204,7 @@ impl VolumeSection {
 pub struct E01Reader {
     volume: VolumeSection,
     segments: Vec<Segment>,
+    ignore_checksums: bool,
 }
 
 #[derive(Debug)]
@@ -180,7 +222,11 @@ struct Chunk {
 }
 
 impl Segment {
-    fn read_table(io: &BytesReader, _size: u64) -> Result<Vec<Chunk>, SimpleError> {
+    fn read_table(
+        io: &BytesReader,
+        size: u64,
+        ignore_checksums: bool,
+    ) -> Result<Vec<Chunk>, SimpleError> {
         let table_section = EwfTableHeader::read_into::<_, EwfTableHeader>(io, None, None)
             .map_err(|e| {
                 SimpleError::new(format!(
@@ -188,6 +234,25 @@ impl Segment {
                     e
                 ))
             })?;
+        if !ignore_checksums {
+            let crc_stored = *table_section.checksum();
+
+            let crc = adler32::adler32(std::io::Cursor::new(
+                table_section
+                    ._io()
+                    .read_bytes(io.pos() - table_section._io().pos() - 4)
+                    .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
+            ))
+            .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+
+            if crc != crc_stored {
+                return Err(SimpleError::new(format!(
+                    "Volume section checksum failed, calculated {}, expected {}",
+                    crc, crc_stored
+                )));
+            }
+        }
+        let io_offsets = Clone::clone(io);
         let mut data_offset: u32;
         let mut chunks: Vec<Chunk> = Vec::new();
         for _ in 0..*table_section.entry_count() {
@@ -201,14 +266,36 @@ impl Segment {
                 compressed: (entry & 0x80000000) > 0,
             });
         }
+        if !ignore_checksums {
+            // table footer
+            let crc_stored = io.read_u4le().map_err(|e| {
+                SimpleError::new(format!("BytesReader::read_u4le() failed: {:?}", e))
+            })?;
+
+            let crc = adler32::adler32(std::io::Cursor::new(
+                io_offsets
+                    .read_bytes(*table_section.entry_count() as usize * 4)
+                    .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
+            ))
+            .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+
+            if crc != crc_stored {
+                return Err(SimpleError::new(format!(
+                    "Table offset array is broken, checksum calculated {}, expected {}",
+                    crc, crc_stored
+                )));
+            }
+        }
         Ok(chunks)
     }
 
     pub fn read<T: AsRef<Path>>(
         f: T,
         volume: &mut Option<VolumeSection>,
+        ignore_checksums: bool,
     ) -> Result<Self, SimpleError> {
-        let io = BytesReader::open(f.as_ref()).unwrap();
+        let io = BytesReader::open(f.as_ref())
+            .map_err(|e| SimpleError::new(format!("BytesReader::open failed: {:?}", e)))?;
         let header = SegmentFileHeader::new(&io)?;
         let mut chunks: Vec<Chunk> = Vec::new();
         let mut end_of_sectors = 0;
@@ -245,11 +332,11 @@ impl Segment {
             let section_type = section_type_full.trim_matches(char::from(0));
 
             if section_type == "disk" || section_type == "volume" {
-                *volume = Some(VolumeSection::new(&io, section_size)?);
+                *volume = Some(VolumeSection::new(&io, section_size, ignore_checksums)?);
             }
 
             if section_type == "table" {
-                chunks.extend(Segment::read_table(&io, section_size)?);
+                chunks.extend(Segment::read_table(&io, section_size, ignore_checksums)?);
             }
 
             if section_type == "sectors" {
@@ -273,7 +360,12 @@ impl Segment {
         Ok(segment)
     }
 
-    fn read_chunk(&self, chunk_index: usize) -> Result<Vec<u8>, SimpleError> {
+    fn read_chunk(
+        &self,
+        chunk_number: usize,
+        chunk_index: usize,
+        ignore_checksums: bool,
+    ) -> Result<Vec<u8>, SimpleError> {
         debug_assert!(chunk_index < self.chunks.len());
         let chunk = &self.chunks[chunk_index];
         self.io
@@ -292,8 +384,24 @@ impl Segment {
             .map_err(|e| SimpleError::new(format!("Read error: {:?}", e)))?;
 
         if !chunk.compressed {
-            // skip 4 bytes of checksum
-            // TODO: checksum
+            if !ignore_checksums {
+                let crc = adler32::adler32(std::io::Cursor::new(
+                    raw_data[..raw_data.len() - 4].to_vec(),
+                ))
+                .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+
+                let crc_stored = u32::from_le_bytes(
+                    raw_data[raw_data.len() - 4..]
+                        .try_into()
+                        .map_err(|e| SimpleError::new(format!("Convert error: {:?}", e)))?,
+                );
+                if crc != crc_stored {
+                    return Err(SimpleError::new(format!(
+                        "Chunk #{} checksum failed, calculated {}, expected {}",
+                        chunk_number, crc, crc_stored
+                    )));
+                }
+            }
             return Ok(raw_data[..raw_data.len() - 4].to_vec());
         }
 
@@ -334,19 +442,29 @@ impl E01Reader {
         Ok(paths)
     }
 
-    pub fn open<T: AsRef<Path>>(f: T) -> Result<Self, SimpleError> {
+    pub fn open<T: AsRef<Path>>(f: T, ignore_checksums: bool) -> Result<Self, SimpleError> {
         let mut segments: Vec<Segment> = Vec::new();
         let mut volume_opt: Option<VolumeSection> = None;
         let segments_path = E01Reader::find_all_segments(f.as_ref())?;
+        if segments_path.is_empty() {
+            return Err(SimpleError::new(format!(
+                "Can't find file(s): {}",
+                f.as_ref().to_string_lossy()
+            )));
+        }
         for s in segments_path {
-            segments.push(Segment::read(s, &mut volume_opt)?);
+            segments.push(Segment::read(s, &mut volume_opt, ignore_checksums)?);
         }
         let volume = volume_opt.ok_or(SimpleError::new(format!("Missing volume section")))?;
         let chunks = segments.iter().fold(0, |acc, i| acc + i.chunks.len());
         if chunks != volume.chunk_count as usize {
             return Err(SimpleError::new(format!("Missing some segment file.")));
         }
-        Ok(E01Reader { volume, segments })
+        Ok(E01Reader {
+            volume,
+            segments,
+            ignore_checksums,
+        })
     }
 
     pub fn total_size(&self) -> usize {
@@ -390,7 +508,7 @@ impl E01Reader {
             let mut chunk_index = 0;
             let mut data = self
                 .get_segment(chunk_number, &mut chunk_index)?
-                .read_chunk(chunk_index)?;
+                .read_chunk(chunk_number, chunk_index, self.ignore_checksums)?;
 
             if chunk_number * self.chunk_size() + data.len() > total_size {
                 data = data[..total_size - chunk_number * self.chunk_size()].to_vec();

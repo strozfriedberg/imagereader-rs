@@ -9,7 +9,7 @@ mod test {
     use std::process::Command;
 
     fn do_hash(vmdk_path: &str) -> String /*hash*/ {
-        let e01_reader = E01Reader::open(&vmdk_path).unwrap();
+        let e01_reader = E01Reader::open(&vmdk_path, false).unwrap();
 
         let mut hasher = Sha256::new();
         let mut buf: Vec<u8> = vec![0; 1048576];
