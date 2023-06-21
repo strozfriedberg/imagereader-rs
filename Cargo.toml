@@ -13,8 +13,5 @@ kaitai = { git = "https://github.com/Agile86/kaitai_rust.git", branch = "rust_ba
 simple-error = "*"
 libflate = "1.4.0"
 byteorder = "1.4.3"
-sha-1 = "0.10.1"
 sha2 = "0.9"
 glob = "0.3.1"
-
-ewf = { path = "C:/Projects/EWF" }
