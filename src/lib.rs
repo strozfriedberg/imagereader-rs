@@ -8,7 +8,10 @@ mod test {
     use sha2::Sha256;
     use std::process::Command;
 
-    fn do_hash(vmdk_path: &str) -> String /*hash*/ {
+    extern crate rand;
+    use rand::Rng;
+
+    fn do_hash(vmdk_path: &str, random_buf_size: bool) -> String /*hash*/ {
         let e01_reader = E01Reader::open(&vmdk_path, false).unwrap();
 
         let mut hasher = Sha256::new();
@@ -16,7 +19,12 @@ mod test {
         let mut offset = 0;
 
         while offset < e01_reader.total_size() {
-            let buf_size = buf.len();
+            let buf_size = if random_buf_size {
+                rand::thread_rng().gen_range(0..buf.len())
+            } else {
+                buf.len()
+            };
+
             let readed = match e01_reader.read_at_offset(offset, &mut buf[..buf_size]) {
                 Ok(v) => v,
                 Err(e) => {
@@ -43,7 +51,9 @@ mod test {
     }
 
     fn do_hash_both(image_path: &str) {
-        assert_eq!(do_hash(image_path), do_hash_libewf(image_path));
+        let hash_libewf = do_hash_libewf(image_path);
+        assert_eq!(do_hash(image_path, false), hash_libewf);
+        assert_eq!(do_hash(image_path, true), hash_libewf);
     }
 
     fn do_hash_libewf(image_path: &str) -> String {
