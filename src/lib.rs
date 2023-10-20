@@ -11,8 +11,8 @@ mod test {
     extern crate rand;
     use rand::Rng;
 
-    fn do_hash(vmdk_path: &str, random_buf_size: bool) -> String /*hash*/ {
-        let e01_reader = E01Reader::open(&vmdk_path, false).unwrap();
+    fn do_hash(e01_path: &str, random_buf_size: bool) -> String /*hash*/ {
+        let e01_reader = E01Reader::open(&e01_path, false).unwrap();
 
         let mut hasher = Sha256::new();
         let mut buf: Vec<u8> = vec![0; 1048576];
