@@ -68,12 +68,26 @@ fn main() {
     }
 
     let mut generated_files = 0;
-    if let Ok(entries) = fs::read_dir(out_dir) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                generated_files += 1;
-                remove_inner_attrs(entry.path().to_str().unwrap());
+    for ksy in &ksy_files {
+        let ksy_file_stem = std::path::Path::new(ksy).file_stem().unwrap();
+        let mut found = false;
+        if let Ok(entries) = fs::read_dir(&out_dir) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    if entry.path().file_stem().unwrap().to_str().unwrap() == ksy_file_stem {
+                        generated_files += 1;
+                        found = true;
+                        remove_inner_attrs(entry.path().to_str().unwrap());
+                        break;
+                    }
+                }
             }
+        }
+        if !found {
+            eprintln!(
+                "Error occured while generating rs-related code from {}",
+                ksy
+            );
         }
     }
     assert_eq!(generated_files, ksy_files.len());
