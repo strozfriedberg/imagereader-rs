@@ -20,13 +20,13 @@ Sample of usage:
 ```
     use e01::e01_reader::E01Reader;
 
-    fn read_vmdk(e01_path: &str) {
-        let vmdk_reader = E01Reader::open(&e01_path).unwrap();
+    fn read_e01(e01_path: &str) {
+        let e01_reader = E01Reader::open(&e01_path).unwrap();
 
         let mut buf: Vec<u8> = vec![0; 1048576];
         let mut offset = 0;
-        while offset < vmdk_reader.total_size {
-            let readed = vmdk_reader.read_at_offset(offset, &mut buf).unwrap();
+        while offset < e01_reader.total_size {
+            let readed = e01_reader.read_at_offset(offset, &mut buf).unwrap();
             if readed == 0 {
                 break;
             }
