@@ -21,13 +21,33 @@ fn remove_inner_attrs(file: &str) {
 }
 
 fn main() {
-    let env_var_compiler_name = "KAITAI_STRUCT_COMPILER";
+    let out_dir = env::var_os("OUT_DIR").unwrap();
+    let env_var_compiler_name = "KAITAI_STRUCT_COMPILER1";
+
+    // if env KAITAI_STRUCT_COMPILER is not defined
+    if env::var_os(env_var_compiler_name).is_none() {
+        // copy pre-generated files
+        if let Ok(entries) = fs::read_dir(
+            env::current_dir()
+                .unwrap()
+                .join("ksy")
+                .join("pre-generated"),
+        ) {
+            for entry in entries.flatten() {
+                let out = std::path::Path::new(out_dir.to_str().unwrap()).join(entry.file_name());
+                println!("copying {:?} to {:?}", entry.path(), out);
+                fs::copy(entry.path(), out).unwrap();
+            }
+        }
+        println!("copyed pre-generated files");
+        return;
+    }
+
     let kaitai_struct_compiler = env::var_os(env_var_compiler_name)
-        .expect(format!("Not defined env var '{env_var_compiler_name}'").as_str())
+        .unwrap_or_else(|| panic!("Not defined env var '{env_var_compiler_name}'"))
         .to_str()
         .unwrap()
         .to_string();
-    let out_dir = env::var_os("OUT_DIR").unwrap();
     let cmd_is_batch = kaitai_struct_compiler.ends_with(".bat");
     let mut cmd = if cmd_is_batch {
         Command::new("cmd")
@@ -42,9 +62,9 @@ fn main() {
 
     let mut ksy_files: Vec<String> = Vec::new();
     if let Ok(entries) = fs::read_dir(env::current_dir().unwrap().join("ksy")) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                if entry.path().extension().unwrap() == "ksy" {
+        for entry in entries.flatten() {
+            if let Some(ext) = entry.path().extension() {
+                if ext == "ksy" {
                     ksy_files.push(entry.path().as_path().to_string_lossy().to_string());
                 }
             }
@@ -68,26 +88,10 @@ fn main() {
     }
 
     let mut generated_files = 0;
-    for ksy in &ksy_files {
-        let ksy_file_stem = std::path::Path::new(ksy).file_stem().unwrap();
-        let mut found = false;
-        if let Ok(entries) = fs::read_dir(&out_dir) {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    if entry.path().file_stem().unwrap().to_str().unwrap() == ksy_file_stem {
-                        generated_files += 1;
-                        found = true;
-                        remove_inner_attrs(entry.path().to_str().unwrap());
-                        break;
-                    }
-                }
-            }
-        }
-        if !found {
-            eprintln!(
-                "Error occured while generating rs-related code from {}",
-                ksy
-            );
+    if let Ok(entries) = fs::read_dir(out_dir) {
+        for entry in entries.flatten() {
+            generated_files += 1;
+            remove_inner_attrs(entry.path().to_str().unwrap());
         }
     }
     assert_eq!(generated_files, ksy_files.len());

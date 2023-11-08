@@ -8,6 +8,9 @@ mod test {
     use sha2::Sha256;
     use std::process::Command;
 
+    extern crate phf;
+    use phf::phf_map;
+
     extern crate rand;
     use rand::Rng;
 
@@ -71,7 +74,7 @@ mod test {
                     String::from_utf8(hash.stderr).unwrap()
                 );
             }
-            String::from_utf8(hash.stdout)
+            let h = String::from_utf8(hash.stdout)
                 .unwrap()
                 .lines()
                 .skip(4)
@@ -83,9 +86,25 @@ mod test {
                 .trim()
                 .to_string()
                 .replace("\"", "")
-                .to_uppercase()
+                .to_uppercase();
+
+            // uncomment next line and run tests under Windows, then copy-paste to PREDEFINED_HASHES
+            //println!("\"{}\" => \"{}\",", image_path, h);
+
+            h
+        } else if cfg!(target_os = "linux") {
+            static PREDEFINED_HASHES: phf::Map<&'static str, &'static str> = phf_map! {
+                "data/streamOptimizedWithMarkers.vmdk" => "B6FD01DD1B93B3589E6D76F7507AF55C589EF69D",
+                // paste from here:
+                "data/image.E01" => "CAB8049F5FBA42E06609C9D0678EB9FFF7FCB50AFC6C9B531EE6216BBE40A827",
+                "data/mimage.E01" => "BC730943B2247E11B18CAF272B1E78289267864962751549B1722752BF1E2E3D",
+            };
+            PREDEFINED_HASHES
+                .get(image_path)
+                .unwrap_or_else(|| panic!("TODO: No predefined hash for {}", image_path))
+                .to_string()
         } else {
-            "".to_string()
+            todo!("unknown platform")
         }
     }
 }

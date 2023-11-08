@@ -1,5 +1,5 @@
 use byteorder::LittleEndian;
-use libflate::zlib;
+use flate2::read::ZlibDecoder;
 use std::convert::TryFrom;
 use std::io::Read;
 use std::option::Option;
@@ -405,8 +405,7 @@ impl Segment {
             return Ok(raw_data[..raw_data.len() - 4].to_vec());
         }
 
-        let mut decoder = zlib::Decoder::new(&raw_data[..])
-            .map_err(|e| SimpleError::new(format!("zlib::Decoder failed: {}", e)))?;
+        let mut decoder = ZlibDecoder::new(&raw_data[..]);
         let mut data = Vec::new();
         decoder
             .read_to_end(&mut data)
