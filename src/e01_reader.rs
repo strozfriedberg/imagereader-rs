@@ -1,4 +1,3 @@
-use byteorder::LittleEndian;
 use flate2::read::ZlibDecoder;
 use std::convert::TryFrom;
 use std::io::Read;
@@ -11,7 +10,7 @@ use self::kaitai::*;
 use crate::generated::ewf_file_header_v1::*;
 use crate::generated::ewf_file_header_v2::*;
 use crate::generated::ewf_section_descriptor_v1::*;
-use crate::generated::ewf_section_descriptor_v2::*;
+//use crate::generated::ewf_section_descriptor_v2::*;
 use crate::generated::ewf_table_header::*;
 use crate::generated::ewf_volume::*;
 use crate::generated::ewf_volume_smart::*;
@@ -104,7 +103,7 @@ impl SegmentFileHeader {
             }
         }
 
-        Err(SimpleError::new(format!("invalid segment file")))
+        Err(SimpleError::new("invalid segment file"))
     }
 }
 
@@ -210,7 +209,7 @@ pub struct E01Reader {
 #[derive(Debug)]
 pub struct Segment {
     io: BytesReader,
-    header: SegmentFileHeader,
+    _header: SegmentFileHeader,
     chunks: Vec<Chunk>,
     end_of_sectors: u64,
 }
@@ -224,7 +223,7 @@ struct Chunk {
 impl Segment {
     fn read_table(
         io: &BytesReader,
-        size: u64,
+        _size: u64,
         ignore_checksums: bool,
     ) -> Result<Vec<Chunk>, SimpleError> {
         let table_section = EwfTableHeader::read_into::<_, EwfTableHeader>(io, None, None)
@@ -352,7 +351,7 @@ impl Segment {
 
         let segment = Segment {
             io,
-            header,
+            _header: header,
             chunks,
             end_of_sectors,
         };
@@ -427,7 +426,7 @@ impl E01Reader {
             .to_str()
             .ok_or_else(|| SimpleError::new("Invalid extension"))?;
 
-        if !['E', 'L', 'S'].contains(&ext_str.chars().nth(0).unwrap().to_ascii_uppercase()) {
+        if !['E', 'L', 'S'].contains(&ext_str.chars().next().unwrap().to_ascii_uppercase()) {
             return Err(SimpleError::new(format!(
                 "Invalid EWF file: {}",
                 path.display()
@@ -454,10 +453,10 @@ impl E01Reader {
         for s in segments_path {
             segments.push(Segment::read(s, &mut volume_opt, ignore_checksums)?);
         }
-        let volume = volume_opt.ok_or(SimpleError::new(format!("Missing volume section")))?;
+        let volume = volume_opt.ok_or(SimpleError::new("Missing volume section"))?;
         let chunks = segments.iter().fold(0, |acc, i| acc + i.chunks.len());
         if chunks != volume.chunk_count as usize {
-            return Err(SimpleError::new(format!("Missing some segment file.")));
+            return Err(SimpleError::new("Missing some segment file."));
         }
         Ok(E01Reader {
             volume,
@@ -512,7 +511,7 @@ impl E01Reader {
             if chunk_number * self.chunk_size() + data.len() > total_size {
                 data = data[..total_size - chunk_number * self.chunk_size()].to_vec();
             }
-            let data_offset = (offset % self.chunk_size()) as usize;
+            let data_offset = offset % self.chunk_size();
 
             if buf.len() < bytes_read || data.len() < data_offset {
                 println!("todo");

@@ -15,7 +15,7 @@ mod test {
     use rand::Rng;
 
     fn do_hash(e01_path: &str, random_buf_size: bool) -> String /*hash*/ {
-        let e01_reader = E01Reader::open(&e01_path, false).unwrap();
+        let e01_reader = E01Reader::open(e01_path, false).unwrap();
 
         let mut hasher = Sha256::new();
         let mut buf: Vec<u8> = vec![0; 1048576];
@@ -65,7 +65,7 @@ mod test {
                 .arg("-d")
                 .arg("sha256")
                 .arg("-q")
-                .arg(image_path.replace("/", "\\"))
+                .arg(image_path.replace('/', "\\"))
                 .output()
                 .expect("Failed to execute ewfverify.exe");
             if !hash.status.success() {
@@ -77,15 +77,14 @@ mod test {
             let h = String::from_utf8(hash.stdout)
                 .unwrap()
                 .lines()
-                .skip(4)
-                .next()
+                .nth(4)
                 .unwrap()
-                .split("\t")
+                .split('\t')
                 .last()
                 .unwrap()
                 .trim()
                 .to_string()
-                .replace("\"", "")
+                .replace('\"', "")
                 .to_uppercase();
 
             // uncomment next line and run tests under Windows, then copy-paste to PREDEFINED_HASHES
