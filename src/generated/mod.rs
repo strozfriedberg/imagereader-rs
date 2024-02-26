@@ -11,3 +11,6 @@ pub mod ewf_volume;
 pub mod ewf_volume_smart;
 
 pub mod ewf_table_header;
+
+pub mod ewf_digest_section;
+pub mod ewf_hash_section;

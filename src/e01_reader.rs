@@ -11,6 +11,8 @@ use crate::generated::ewf_file_header_v1::*;
 use crate::generated::ewf_file_header_v2::*;
 use crate::generated::ewf_section_descriptor_v1::*;
 //use crate::generated::ewf_section_descriptor_v2::*;
+use crate::generated::ewf_digest_section::*;
+use crate::generated::ewf_hash_section::*;
 use crate::generated::ewf_table_header::*;
 use crate::generated::ewf_volume::*;
 use crate::generated::ewf_volume_smart::*;
@@ -204,6 +206,8 @@ pub struct E01Reader {
     volume: VolumeSection,
     segments: Vec<Segment>,
     ignore_checksums: bool,
+    stored_md5: Option<Vec<u8>>,
+    stored_sha1: Option<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -288,9 +292,77 @@ impl Segment {
         Ok(chunks)
     }
 
+    fn get_hash_section(
+        io: &BytesReader,
+        ignore_checksums: bool,
+    ) -> Result<OptRc<EwfHashSection>, SimpleError> {
+        let hash_section =
+            EwfHashSection::read_into::<_, EwfHashSection>(io, None, None).map_err(|e| {
+                SimpleError::new(format!(
+                    "Error while deserializing EwfHashSection struct: {:?}",
+                    e
+                ))
+            })?;
+
+        if !ignore_checksums {
+            let crc_stored = *hash_section.checksum();
+
+            let crc = adler32::adler32(std::io::Cursor::new(
+                hash_section
+                    ._io()
+                    .read_bytes(io.pos() - hash_section._io().pos() - 4)
+                    .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
+            ))
+            .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+
+            if crc != crc_stored {
+                return Err(SimpleError::new(format!(
+                    "Hash section checksum failed, calculated {}, expected {}",
+                    crc, crc_stored
+                )));
+            }
+        }
+        Ok(hash_section.clone())
+    }
+
+    fn get_digest_section(
+        io: &BytesReader,
+        ignore_checksums: bool,
+    ) -> Result<OptRc<EwfDigestSection>, SimpleError> {
+        let digest_section = EwfHashSection::read_into::<_, EwfDigestSection>(io, None, None)
+            .map_err(|e| {
+                SimpleError::new(format!(
+                    "Error while deserializing EwfDigestSection struct: {:?}",
+                    e
+                ))
+            })?;
+
+        if !ignore_checksums {
+            let crc_stored = *digest_section.checksum();
+
+            let crc = adler32::adler32(std::io::Cursor::new(
+                digest_section
+                    ._io()
+                    .read_bytes(io.pos() - digest_section._io().pos() - 4)
+                    .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
+            ))
+            .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+
+            if crc != crc_stored {
+                return Err(SimpleError::new(format!(
+                    "Hash section checksum failed, calculated {}, expected {}",
+                    crc, crc_stored
+                )));
+            }
+        }
+        Ok(digest_section.clone())
+    }
+
     pub fn read<T: AsRef<Path>>(
         f: T,
         volume: &mut Option<VolumeSection>,
+        stored_md5: &mut Option<Vec<u8>>,
+        stored_sha1: &mut Option<Vec<u8>>,
         ignore_checksums: bool,
     ) -> Result<Self, SimpleError> {
         let io = BytesReader::open(f.as_ref())
@@ -340,6 +412,17 @@ impl Segment {
 
             if section_type == "sectors" {
                 end_of_sectors = io.pos() as u64 + section_size;
+            }
+
+            if section_type == "hash" {
+                let hash_section = Self::get_hash_section(&io, ignore_checksums)?;
+                *stored_md5 = Some(hash_section.md5().clone());
+            }
+
+            if section_type == "digest" {
+                let digest_section = Self::get_digest_section(&io, ignore_checksums)?;
+                *stored_md5 = Some(digest_section.md5().clone());
+                *stored_sha1 = Some(digest_section.sha1().clone());
             }
 
             if current_offset == section_offset || section_type == "done" {
@@ -443,6 +526,8 @@ impl E01Reader {
     pub fn open<T: AsRef<Path>>(f: T, ignore_checksums: bool) -> Result<Self, SimpleError> {
         let mut segments: Vec<Segment> = Vec::new();
         let mut volume_opt: Option<VolumeSection> = None;
+        let mut stored_md5: Option<_> = None;
+        let mut stored_sha1: Option<_> = None;
         let segments_path = E01Reader::find_all_segments(f.as_ref())?;
         if segments_path.is_empty() {
             return Err(SimpleError::new(format!(
@@ -451,7 +536,13 @@ impl E01Reader {
             )));
         }
         for s in segments_path {
-            segments.push(Segment::read(s, &mut volume_opt, ignore_checksums)?);
+            segments.push(Segment::read(
+                s,
+                &mut volume_opt,
+                &mut stored_md5,
+                &mut stored_sha1,
+                ignore_checksums,
+            )?);
         }
         let volume = volume_opt.ok_or(SimpleError::new("Missing volume section"))?;
         let chunks = segments.iter().fold(0, |acc, i| acc + i.chunks.len());
@@ -462,6 +553,8 @@ impl E01Reader {
             volume,
             segments,
             ignore_checksums,
+            stored_md5,
+            stored_sha1,
         })
     }
 
@@ -532,5 +625,13 @@ impl E01Reader {
 
     pub fn chunk_size(&self) -> usize {
         self.volume.chunk_size()
+    }
+
+    pub fn get_stored_md5(&self) -> Option<&Vec<u8>> {
+        self.stored_md5.as_ref()
+    }
+
+    pub fn get_stored_sha1(&self) -> Option<&Vec<u8>> {
+        self.stored_sha1.as_ref()
     }
 }
