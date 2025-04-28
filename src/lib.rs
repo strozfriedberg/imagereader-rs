@@ -23,7 +23,7 @@ mod test {
 
         while offset < e01_reader.total_size() {
             let buf_size = if random_buf_size {
-                rand::thread_rng().gen_range(0..buf.len())
+                rand::rng().random_range(0..buf.len())
             } else {
                 buf.len()
             };
