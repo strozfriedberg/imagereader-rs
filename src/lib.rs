@@ -28,20 +28,20 @@ mod test {
                 buf.len()
             };
 
-            let readed = match e01_reader.read_at_offset(offset, &mut buf[..buf_size]) {
+            let read = match e01_reader.read_at_offset(offset, &mut buf[..buf_size]) {
                 Ok(v) => v,
                 Err(e) => {
                     panic!("{:?}", e);
                 }
             };
 
-            if readed == 0 {
+            if read == 0 {
                 break;
             }
 
-            hasher.update(&buf[..readed]);
+            hasher.update(&buf[..read]);
 
-            offset += readed;
+            offset += read;
         }
         let result = hasher.finalize();
         format!("{:X}", result)

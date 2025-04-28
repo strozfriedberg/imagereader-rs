@@ -193,20 +193,20 @@ fn dump(
     let mut offset = 0;
     while offset < e01_reader.total_size() {
         let len = buf.len();
-        let readed = match e01_reader.read_at_offset(offset, &mut buf[..len]) {
+        let read = match e01_reader.read_at_offset(offset, &mut buf[..len]) {
             Ok(v) => v,
             Err(e) => {
                 panic!("{:?}", e);
             }
         };
 
-        if readed == 0 {
+        if read == 0 {
             break;
         }
 
-        hasher.iter_mut().for_each(|d| d.1.update(&buf[..readed]));
+        hasher.iter_mut().for_each(|d| d.1.update(&buf[..read]));
 
-        offset += readed;
+        offset += read;
     }
     Ok(hasher
         .iter_mut()
