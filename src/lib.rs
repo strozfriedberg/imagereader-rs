@@ -4,24 +4,30 @@ mod generated;
 #[allow(unused)]
 mod test {
     use crate::e01_reader::E01Reader;
-    use sha1::Digest;
-    use sha1::Sha1;
-    // use sha2::Digest;
-    // use sha2::Sha256;
+    use sha2::Digest;
+    use sha2::Sha256;
     use std::process::Command;
 
-    fn do_hash(vmdk_path: &str) -> String /*hash*/ {
-        let e01_reader = E01Reader::open(&vmdk_path).unwrap();
+    extern crate phf;
+    use phf::phf_map;
 
-        //e01_reader.check_size();
+    extern crate rand;
+    use rand::Rng;
 
-        let mut hasher = Sha1::new();
+    fn do_hash(e01_path: &str, random_buf_size: bool) -> String /*hash*/ {
+        let e01_reader = E01Reader::open(e01_path, false).unwrap();
+
+        let mut hasher = Sha256::new();
         let mut buf: Vec<u8> = vec![0; 1048576];
         let mut offset = 0;
-        // let mut sum = 0;
-        // let mut sum_bytes = 0;
+
         while offset < e01_reader.total_size() {
-            let buf_size = buf.len();
+            let buf_size = if random_buf_size {
+                rand::thread_rng().gen_range(0..buf.len())
+            } else {
+                buf.len()
+            };
+
             let readed = match e01_reader.read_at_offset(offset, &mut buf[..buf_size]) {
                 Ok(v) => v,
                 Err(e) => {
@@ -33,95 +39,71 @@ mod test {
                 break;
             }
 
-            // let mut hasher2 = Sha256::new();
-            // hasher2.update(&buf[..readed]);
-            // println!("{} {:X}", offset, hasher2.finalize());
-
             hasher.update(&buf[..readed]);
-
-            // sum_bytes += buf[..readed].len();
-            // sum += buf[..readed].iter().fold(0u32, |acc, x| acc + *x as u32);
-            // if sum_bytes == 32768 {
-            //     println!("{} sum of {} = {}", offset, sum_bytes, sum);
-            //     sum_bytes = 0;
-            //     sum = 0;
-            // }
 
             offset += readed;
         }
         let result = hasher.finalize();
         format!("{:X}", result)
-        //"".to_string()
     }
 
     #[test]
     fn test_all_images() {
-        assert_eq!(
-            do_hash("C:/temp/E01/image.E01"),
-            "E5C6C296485B1146FEAD7AD552E1C3CCFC00BFAB"
-        );
-
-        assert_eq!(
-            do_hash("C:/temp/E01/test.E01"),
-            "3B4C136BA03700C6E970464FA68813017F6F9AF8"
-        );
+        do_hash_both("data/image.E01");
+        do_hash_both("data/mimage.E01");
     }
 
-    use ::ewf::*;
-    fn do_hash_ewf(path: &str) -> String {
-        let mut ewf = ewf::EWF::new(path).unwrap();
-        let buffer_size: usize = 1048576;
-        let mut hasher = Sha1::new();
-        let mut data = ewf.read(buffer_size);
-        let mut readed = 0;
-        while data.len() > 0 {
-            readed += data.len();
-            hasher.update(&data);
-            if data.len() < buffer_size {
-                break;
+    fn do_hash_both(image_path: &str) {
+        let hash_libewf = do_hash_libewf(image_path);
+        assert_eq!(do_hash(image_path, false), hash_libewf);
+        assert_eq!(do_hash(image_path, true), hash_libewf);
+    }
+
+    fn do_hash_libewf(image_path: &str) -> String {
+        if cfg!(target_os = "windows") {
+            let hash = Command::new("tools/ewfverify.exe")
+                .arg("-d")
+                .arg("sha256")
+                .arg("-q")
+                .arg(image_path.replace('/', "\\"))
+                .output()
+                .expect("Failed to execute ewfverify.exe");
+            if !hash.status.success() {
+                panic!(
+                    "ewfverify.exe failed: {}",
+                    String::from_utf8(hash.stderr).unwrap()
+                );
             }
-            data = ewf.read(buffer_size);
+            let h = String::from_utf8(hash.stdout)
+                .unwrap()
+                .lines()
+                .nth(4)
+                .unwrap()
+                .split('\t')
+                .last()
+                .unwrap()
+                .trim()
+                .to_string()
+                .replace('\"', "")
+                .to_uppercase();
+
+            // uncomment next line and run tests under Windows, then copy-paste to PREDEFINED_HASHES
+            //println!("\"{}\" => \"{}\",", image_path, h);
+
+            h
+        } else if cfg!(target_os = "linux") {
+            static PREDEFINED_HASHES: phf::Map<&'static str, &'static str> = phf_map! {
+                "data/streamOptimizedWithMarkers.vmdk" => "B6FD01DD1B93B3589E6D76F7507AF55C589EF69D",
+                // paste from here:
+                "data/image.E01" => "CAB8049F5FBA42E06609C9D0678EB9FFF7FCB50AFC6C9B531EE6216BBE40A827",
+                "data/mimage.E01" => "BC730943B2247E11B18CAF272B1E78289267864962751549B1722752BF1E2E3D",
+            };
+            PREDEFINED_HASHES
+                .get(image_path)
+                .unwrap_or_else(|| panic!("TODO: No predefined hash for {}", image_path))
+                .to_string()
+        } else {
+            todo!("unknown platform")
         }
-        format!("{:X}", hasher.finalize())
     }
-
-    // #[test]
-    // fn test_2() {
-    //     do_hash_by_buf("C:/temp/E01/test.E01");
-    // }
-
-    // fn do_hash_by_buf(path: &str) {
-    //     let e01_reader = E01Reader::open(&path).unwrap();
-    //     let mut ewf = ewf::EWF::new(path).unwrap();
-
-    //     let buffer_size: usize = 1048576;
-
-    //     e01_reader.check_size();
-
-    //     let mut data;
-    //     let mut data2: Vec<u8> = vec![0; buffer_size];
-    //     let mut offset = 0;
-    //     while offset < e01_reader.total_size() {
-    //         data = ewf.read(data2.len());
-
-    //         let readed = match e01_reader.read_at_offset(offset, &mut data2) {
-    //             Ok(v) => v,
-    //             Err(e) => {
-    //                 panic!("{:?}", e);
-    //             }
-    //         };
-
-    //         assert_eq!(data, data2[..readed]);
-
-    //         if readed == 0 {
-    //             break;
-    //         }
-
-    //         if data.len() < buffer_size {
-    //             break;
-    //         }
-
-    //         offset += readed;
-    //     }
-    // }
 }

@@ -8,13 +8,20 @@ edition = "2021"
 name = "e01"
 path = "src/lib.rs"
 
+[[bin]]
+name = "e01verify"
+path = "src/main.rs"
+
 [dependencies]
 kaitai = { git = "https://github.com/Agile86/kaitai_rust.git", branch = "rust_basic_support_v2" }
-simple-error = "*"
-libflate = "1.4.0"
+simple-error = "0.3.0"
+flate2 = "1.0.28"
 byteorder = "1.4.3"
-sha-1 = "0.10.1"
-sha2 = "0.9"
+sha1 = "0.10.6"
+sha2 = "0.10.8"
+md-5 = "0.10.6"
 glob = "0.3.1"
-
-ewf = { path = "C:/Projects/EWF" }
+adler32 = "1.2.0"
+rand = "0.8.5"
+phf = { version = "0.11", features = ["macros"] }
+clap = { version = "4.1.7", features = ["derive"] }

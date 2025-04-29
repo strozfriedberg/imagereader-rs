@@ -1,4 +1,5 @@
 #![allow(unused)]
+#![allow(clippy::all)]
 
 pub mod ewf_file_header_v1;
 pub mod ewf_file_header_v2;
@@ -10,3 +11,6 @@ pub mod ewf_volume;
 pub mod ewf_volume_smart;
 
 pub mod ewf_table_header;
+
+pub mod ewf_digest_section;
+pub mod ewf_hash_section;
