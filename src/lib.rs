@@ -23,25 +23,25 @@ mod test {
 
         while offset < e01_reader.total_size() {
             let buf_size = if random_buf_size {
-                rand::thread_rng().gen_range(0..buf.len())
+                rand::rng().random_range(0..buf.len())
             } else {
                 buf.len()
             };
 
-            let readed = match e01_reader.read_at_offset(offset, &mut buf[..buf_size]) {
+            let read = match e01_reader.read_at_offset(offset, &mut buf[..buf_size]) {
                 Ok(v) => v,
                 Err(e) => {
                     panic!("{:?}", e);
                 }
             };
 
-            if readed == 0 {
+            if read == 0 {
                 break;
             }
 
-            hasher.update(&buf[..readed]);
+            hasher.update(&buf[..read]);
 
-            offset += readed;
+            offset += read;
         }
         let result = hasher.finalize();
         format!("{:X}", result)
