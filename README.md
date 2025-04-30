@@ -1,3 +1,8 @@
+# e01-rs
+
+`e01-rs` is a Rust library to read data from Expert Witness Format (E01) files.
+This project is in active development and is intended for forensic research and testing.
+
 # [Expert Witness Compression Format (EWF)](https://github.com/libyal/libewf/blob/main/documentation/Expert%20Witness%20Compression%20Format%20(EWF).asciidoc)
 
 ### Supported file formats:
@@ -11,7 +16,6 @@
 * multiple segments (files)
 * chunk decompression (zlib)
 * checking all checksums
-
 
 ## TODO
 * [EWF2](https://github.com/libyal/libewf/blob/main/documentation/Expert%20Witness%20Compression%20Format%202%20(EWF2).asciidoc)
@@ -38,3 +42,7 @@ Sample of usage:
     }
 
 ```
+
+
+### Copyright
+Copyright 2025, Aon. `e01-rs` is licensed under the Apache License, Version 2.0.
