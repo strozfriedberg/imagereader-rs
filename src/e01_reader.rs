@@ -220,7 +220,7 @@ pub struct Segment {
 
 #[derive(Debug)]
 struct Chunk {
-    data_offset: u32,
+    data_offset: u64,
     compressed: bool,
 }
 
@@ -256,14 +256,14 @@ impl Segment {
             }
         }
         let io_offsets = Clone::clone(io);
-        let mut data_offset: u32;
+        let mut data_offset: u64;
         let mut chunks: Vec<Chunk> = Vec::new();
         for _ in 0..*table_section.entry_count() {
             let entry = io.read_u4le().map_err(|e| {
                 SimpleError::new(format!("BytesReader::read_u4le() failed: {:?}", e))
             })?;
-            data_offset = entry & 0x7fffffff;
-            data_offset += *table_section.table_base_offset() as u32;
+            data_offset = (entry & 0x7fffffff) as u64;
+            data_offset += *table_section.table_base_offset();
             chunks.push(Chunk {
                 data_offset,
                 compressed: (entry & 0x80000000) > 0,
