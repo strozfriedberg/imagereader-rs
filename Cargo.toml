@@ -1,5 +1,5 @@
 [package]
-name = "e01"
+name = "e01-rs"
 version = "0.1.0"
 authors = ["Aon"]
 edition = "2021"
