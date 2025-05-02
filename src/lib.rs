@@ -4,15 +4,10 @@ mod generated;
 #[allow(unused)]
 mod test {
     use crate::e01_reader::E01Reader;
-    use sha2::Digest;
-    use sha2::Sha256;
-    use std::process::Command;
 
-    extern crate phf;
-    use phf::phf_map;
-
-    extern crate rand;
     use rand::Rng;
+    use sha2::{Digest, Sha256};
+    use std::process::Command;
 
     #[track_caller]
     fn do_hash(e01_path: &str, random_buf_size: bool) -> String /*hash*/ {
@@ -25,7 +20,8 @@ mod test {
         while offset < e01_reader.total_size() {
             let buf_size = if random_buf_size {
                 rand::rng().random_range(0..buf.len())
-            } else {
+            }
+            else {
                 buf.len()
             };
 
@@ -45,65 +41,37 @@ mod test {
 
     #[test]
     fn test_image_e01() {
-        do_hash_both("data/image.E01");
+        assert_hash_both(
+            "data/image.E01",
+            "CAB8049F5FBA42E06609C9D0678EB9FFF7FCB50AFC6C9B531EE6216BBE40A827"
+        );
     }
 
     #[test]
     fn test_mimage_e01() {
-        do_hash_both("data/mimage.E01");
+        assert_hash_both(
+            "data/mimage.E01",
+            "BC730943B2247E11B18CAF272B1E78289267864962751549B1722752BF1E2E3D"
+        );
     }
 
-    fn do_hash_both(image_path: &str) {
-        let hash_libewf = do_hash_libewf(image_path);
-        assert_eq!(do_hash(image_path, false), hash_libewf);
-        assert_eq!(do_hash(image_path, true), hash_libewf);
+/*
+    #[test]
+    fn test_dademurphy_e01() {
+        assert_hash_both(
+            "/home/juckelman/Downloads/dademurphy.E01"
+        );
     }
 
-    fn do_hash_libewf(image_path: &str) -> String {
-        if cfg!(target_os = "windows") {
-            let hash = Command::new("tools/ewfverify.exe")
-                .arg("-d")
-                .arg("sha256")
-                .arg("-q")
-                .arg(image_path.replace('/', "\\"))
-                .output()
-                .expect("Failed to execute ewfverify.exe");
-            if !hash.status.success() {
-                panic!(
-                    "ewfverify.exe failed: {}",
-                    String::from_utf8(hash.stderr).unwrap()
-                );
-            }
-            let h = String::from_utf8(hash.stdout)
-                .unwrap()
-                .lines()
-                .nth(4)
-                .unwrap()
-                .split('\t')
-                .last()
-                .unwrap()
-                .trim()
-                .to_string()
-                .replace('\"', "")
-                .to_uppercase();
+    #[test]
+    fn test_nfury_e01() {
+        do_hash_both("/mnt/c/evidence/nfury/win7-64-nfury-c-drive.E01");
+    }
+*/
 
-            // uncomment next line and run tests under Windows, then copy-paste to PREDEFINED_HASHES
-            //println!("\"{}\" => \"{}\",", image_path, h);
-
-            h
-        } else if cfg!(target_os = "linux") {
-            static PREDEFINED_HASHES: phf::Map<&'static str, &'static str> = phf_map! {
-                "data/streamOptimizedWithMarkers.vmdk" => "B6FD01DD1B93B3589E6D76F7507AF55C589EF69D",
-                // paste from here:
-                "data/image.E01" => "CAB8049F5FBA42E06609C9D0678EB9FFF7FCB50AFC6C9B531EE6216BBE40A827",
-                "data/mimage.E01" => "BC730943B2247E11B18CAF272B1E78289267864962751549B1722752BF1E2E3D",
-            };
-            PREDEFINED_HASHES
-                .get(image_path)
-                .unwrap_or_else(|| panic!("TODO: No predefined hash for {}", image_path))
-                .to_string()
-        } else {
-            todo!("unknown platform")
-        }
+    #[track_caller]
+    fn assert_hash_both(image_path: &str, expected_hash: &str) {
+        assert_eq!(do_hash(image_path, false), expected_hash);
+        assert_eq!(do_hash(image_path, true), expected_hash);
     }
 }
