@@ -457,7 +457,7 @@ impl Segment {
         let end_offset = if chunk_index == self.chunks.len() - 1 {
             self.end_of_sectors
         } else {
-            self.chunks[chunk_index + 1].data_offset as u64
+            self.chunks[chunk_index + 1].data_offset
         };
 
         let raw_data = self

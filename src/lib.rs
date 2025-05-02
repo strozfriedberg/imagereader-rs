@@ -14,6 +14,7 @@ mod test {
     extern crate rand;
     use rand::Rng;
 
+    #[track_caller]
     fn do_hash(e01_path: &str, random_buf_size: bool) -> String /*hash*/ {
         let e01_reader = E01Reader::open(e01_path, false).unwrap();
 
