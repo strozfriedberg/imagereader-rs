@@ -461,23 +461,29 @@ impl Segment {
             self.chunks[chunk_index + 1].data_offset
         };
 
-        let raw_data = self
+        let mut raw_data = self
             .io
             .read_bytes(end_offset as usize - chunk.data_offset as usize)
             .map_err(|e| SimpleError::new(format!("Read error: {:?}", e)))?;
 
         if !chunk.compressed {
             if !ignore_checksums {
-                let crc = adler32::adler32(std::io::Cursor::new(
-                    raw_data[..raw_data.len() - 4].to_vec(),
-                ))
-                .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
-
+                // read stored checksum
                 let crc_stored = u32::from_le_bytes(
                     raw_data[raw_data.len() - 4..]
                         .try_into()
                         .map_err(|e| SimpleError::new(format!("Convert error: {:?}", e)))?,
                 );
+
+                // remove stored checksum from data
+                raw_data.truncate(raw_data.len() - 4);
+
+                // checksum the data
+                let crc = adler32::adler32(std::io::Cursor::new(
+                    &raw_data
+                ))
+                .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+
                 if crc != crc_stored {
                     return Err(SimpleError::new(format!(
                         "Chunk #{} checksum failed, calculated {}, expected {}",
@@ -485,15 +491,17 @@ impl Segment {
                     )));
                 }
             }
-            return Ok(raw_data[..raw_data.len() - 4].to_vec());
-        }
 
-        let mut decoder = ZlibDecoder::new(&raw_data[..]);
-        let mut data = Vec::new();
-        decoder
-            .read_to_end(&mut data)
-            .map_err(|e| SimpleError::new(format!("Decompression failed: {}", e)))?;
-        Ok(data)
+            Ok(raw_data)
+        }
+        else {
+            let mut decoder = ZlibDecoder::new(&raw_data[..]);
+            let mut data = Vec::new();
+            decoder
+                .read_to_end(&mut data)
+                .map_err(|e| SimpleError::new(format!("Decompression failed: {}", e)))?;
+            Ok(data)
+        }
     }
 }
 
