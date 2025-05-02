@@ -24,7 +24,9 @@ mod test {
                 buf.len()
             };
 
-            let read = e01_reader.read_at_offset(offset, &mut buf[..buf_size]).unwrap();
+            let read = e01_reader
+                .read_at_offset(offset, &mut buf[..buf_size])
+                .unwrap();
             if read == 0 {
                 break;
             }
