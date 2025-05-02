@@ -7,7 +7,6 @@ mod test {
 
     use rand::Rng;
     use sha2::{Digest, Sha256};
-    use std::process::Command;
 
     #[track_caller]
     fn do_hash(e01_path: &str, random_buf_size: bool) -> String /*hash*/ {
