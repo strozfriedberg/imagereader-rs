@@ -1,7 +1,8 @@
 use flate2::read::ZlibDecoder;
-use std::convert::TryFrom;
-use std::io::Read;
-use std::option::Option;
+use std::{
+    convert::TryFrom,
+    io::Read
+};
 use std::path::{Path, PathBuf};
 
 extern crate kaitai;
