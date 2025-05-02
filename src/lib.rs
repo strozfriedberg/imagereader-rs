@@ -38,6 +38,12 @@ mod test {
         format!("{:X}", result)
     }
 
+    #[track_caller]
+    fn assert_hash_both(image_path: &str, expected_hash: &str) {
+        assert_eq!(do_hash(image_path, false), expected_hash);
+        assert_eq!(do_hash(image_path, true), expected_hash);
+    }
+
     #[test]
     fn test_image_e01() {
         assert_hash_both(
@@ -67,10 +73,4 @@ mod test {
         do_hash_both("/mnt/c/evidence/nfury/win7-64-nfury-c-drive.E01");
     }
 */
-
-    #[track_caller]
-    fn assert_hash_both(image_path: &str, expected_hash: &str) {
-        assert_eq!(do_hash(image_path, false), expected_hash);
-        assert_eq!(do_hash(image_path, true), expected_hash);
-    }
 }
