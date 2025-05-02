@@ -48,8 +48,12 @@ mod test {
     }
 
     #[test]
-    fn test_all_images() {
+    fn test_image_e01() {
         do_hash_both("data/image.E01");
+    }
+
+    #[test]
+    fn test_mimage_e01() {
         do_hash_both("data/mimage.E01");
     }
 
