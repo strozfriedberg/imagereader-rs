@@ -28,13 +28,7 @@ mod test {
                 buf.len()
             };
 
-            let read = match e01_reader.read_at_offset(offset, &mut buf[..buf_size]) {
-                Ok(v) => v,
-                Err(e) => {
-                    panic!("{:?}", e);
-                }
-            };
-
+            let read = e01_reader.read_at_offset(offset, &mut buf[..buf_size]).unwrap();
             if read == 0 {
                 break;
             }
@@ -43,6 +37,7 @@ mod test {
 
             offset += read;
         }
+
         let result = hasher.finalize();
         format!("{:X}", result)
     }
