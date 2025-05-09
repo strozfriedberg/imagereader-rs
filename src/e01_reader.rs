@@ -242,6 +242,7 @@ impl Segment {
                     e
                 ))
             })?;
+
         if !ignore_checksums {
             let crc_stored = *table_section.checksum();
 
@@ -260,6 +261,7 @@ impl Segment {
                 )));
             }
         }
+
         let io_offsets = Clone::clone(io);
         let mut data_offset: u64;
         let mut chunks: Vec<Chunk> = Vec::new();
@@ -274,6 +276,7 @@ impl Segment {
                 compressed: (entry & 0x80000000) > 0,
             });
         }
+
         if !ignore_checksums {
             // table footer
             let crc_stored = io.read_u4le().map_err(|e| {
@@ -294,6 +297,7 @@ impl Segment {
                 )));
             }
         }
+
         Ok(chunks)
     }
 
@@ -360,6 +364,7 @@ impl Segment {
                 )));
             }
         }
+
         Ok(digest_section.clone())
     }
 
@@ -461,7 +466,8 @@ impl Segment {
 
         let end_offset = if chunk_index == self.chunks.len() - 1 {
             self.end_of_sectors
-        } else {
+        }
+        else {
             self.chunks[chunk_index + 1].data_offset
         };
 
