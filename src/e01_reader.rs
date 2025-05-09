@@ -150,12 +150,13 @@ impl VolumeSection {
                 }
             }
 
-            Ok(VolumeSection {
+            let vs = VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
                 sector_per_chunk: *vol_section.sector_per_chunk(),
                 bytes_per_sector: *vol_section.bytes_per_sector(),
                 total_sector_count: *vol_section.number_of_sectors(),
-            })
+            };
+            Ok(vs)
         }
         else if size == 94 {
             let vol_section = EwfVolumeSmart::read_into::<_, EwfVolumeSmart>(io, None, None)
@@ -185,12 +186,13 @@ impl VolumeSection {
                 }
             }
 
-            Ok(VolumeSection {
+            let vs = VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
                 sector_per_chunk: *vol_section.sector_per_chunk(),
                 bytes_per_sector: *vol_section.bytes_per_sector(),
                 total_sector_count: *vol_section.number_of_sectors() as u64,
-            })
+            };
+            Ok(vs)
         }
         else {
             Err(SimpleError::new(format!("Unknown volume size: {}", size)))
@@ -565,16 +567,19 @@ impl E01Reader {
         }
         let volume = volume_opt.ok_or(SimpleError::new("Missing volume section"))?;
         let chunks = segments.iter().fold(0, |acc, i| acc + i.chunks.len());
+
         if chunks != volume.chunk_count as usize {
-            return Err(SimpleError::new("Missing some segment file."));
+            Err(SimpleError::new("Missing some segment file."))
         }
-        Ok(E01Reader {
-            volume,
-            segments,
-            ignore_checksums,
-            stored_md5,
-            stored_sha1,
-        })
+        else {
+            Ok(E01Reader {
+                volume,
+                segments,
+                ignore_checksums,
+                stored_md5,
+                stored_sha1,
+            })
+        }
     }
 
     pub fn total_size(&self) -> usize {
