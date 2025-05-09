@@ -69,18 +69,18 @@ impl SegmentFileHeader {
         {
             match EwfFileHeaderV1::read_into::<_, EwfFileHeaderV1>(io, None, None) {
                 Ok(h) => {
-                    return Ok(SegmentFileHeader {
+                    Ok(SegmentFileHeader {
                         major_version: 1,
                         minor_version: 0,
                         compr_method: CompressionMethod::Deflate,
                         segment_number: *h.segment_number(),
-                    });
+                    })
                 }
                 Err(e) => {
-                    return Err(SimpleError::new(format!(
+                    Err(SimpleError::new(format!(
                         "Error while deserializing EwfFileHeaderV1 struct: {:?}",
                         e
-                    )));
+                    )))
                 }
             }
         } else if first_bytes == [0x45, 0x56, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] // EVF2
@@ -90,23 +90,24 @@ impl SegmentFileHeader {
         {
             match EwfFileHeaderV2::read_into::<_, EwfFileHeaderV2>(io, None, None) {
                 Ok(h) => {
-                    return Ok(SegmentFileHeader {
+                    Ok(SegmentFileHeader {
                         major_version: *h.major_version(),
                         minor_version: *h.minor_version(),
                         compr_method: (*h.compression_method()).try_into()?,
                         segment_number: *h.segment_number(),
-                    });
+                    })
                 }
                 Err(e) => {
-                    return Err(SimpleError::new(format!(
+                    Err(SimpleError::new(format!(
                         "Error while deserializing EwfFileHeaderV2 struct: {:?}",
                         e
-                    )));
+                    )))
                 }
             }
         }
-
-        Err(SimpleError::new("invalid segment file"))
+        else {
+            Err(SimpleError::new("invalid segment file"))
+        }
     }
 }
 
