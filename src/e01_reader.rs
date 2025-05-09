@@ -150,13 +150,14 @@ impl VolumeSection {
                 }
             }
 
-            return Ok(VolumeSection {
+            Ok(VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
                 sector_per_chunk: *vol_section.sector_per_chunk(),
                 bytes_per_sector: *vol_section.bytes_per_sector(),
                 total_sector_count: *vol_section.number_of_sectors(),
-            });
-        } else if size == 94 {
+            })
+        }
+        else if size == 94 {
             let vol_section = EwfVolumeSmart::read_into::<_, EwfVolumeSmart>(io, None, None)
                 .map_err(|e| {
                     SimpleError::new(format!(
@@ -184,14 +185,16 @@ impl VolumeSection {
                 }
             }
 
-            return Ok(VolumeSection {
+            Ok(VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
                 sector_per_chunk: *vol_section.sector_per_chunk(),
                 bytes_per_sector: *vol_section.bytes_per_sector(),
                 total_sector_count: *vol_section.number_of_sectors() as u64,
-            });
+            })
         }
-        Err(SimpleError::new(format!("Unknown volume size: {}", size)))
+        else {
+            Err(SimpleError::new(format!("Unknown volume size: {}", size)))
+        }
     }
 
     pub fn chunk_size(&self) -> usize {
