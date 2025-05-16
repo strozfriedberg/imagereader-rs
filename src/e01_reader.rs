@@ -111,6 +111,51 @@ impl SegmentFileHeader {
     }
 }
 
+fn checksum_err(
+    name: &str,
+    crc: u32,
+    crc_stored: u32
+) -> Result<(), SimpleError>
+{
+    Err(SimpleError::new(format!(
+        "{} checksum failed, calculated {}, expected {}",
+        name,
+        crc,
+        crc_stored
+    )))
+}
+
+fn checksum(bytes: &[u8]) -> Result<u32, SimpleError> {
+    adler32::adler32(std::io::Cursor::new(bytes))
+        .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))
+}
+
+fn checksum_reader(
+    reader: &BytesReader,
+    len: usize
+) -> Result<u32, SimpleError>
+{
+    checksum(
+        &reader
+            .read_bytes(len)
+            .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
+    )
+}
+
+fn checksum_ok(
+    section_type: &str,
+    io: &BytesReader,
+    section_io: &BytesReader,
+    crc_stored: u32,
+) -> Result<(), SimpleError>
+{
+    let crc = checksum_reader(section_io, io.pos() - section_io.pos() - 4)?;
+    match crc == crc_stored {
+        true => Ok(()),
+        false => checksum_err(section_type, crc, crc_stored)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct VolumeSection {
     pub chunk_count: u32,
@@ -132,22 +177,12 @@ impl VolumeSection {
                 })?;
 
             if !ignore_checksums {
-                let crc_stored = *vol_section.checksum();
-
-                let crc = adler32::adler32(std::io::Cursor::new(
-                    vol_section
-                        ._io()
-                        .read_bytes(io.pos() - vol_section._io().pos() - 4)
-                        .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
-                ))
-                .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
-
-                if crc != crc_stored {
-                    return Err(SimpleError::new(format!(
-                        "Volume section checksum failed, calculated {}, expected {}",
-                        crc, crc_stored
-                    )));
-                }
+                checksum_ok(
+                    "Volume section",
+                    io,
+                    &vol_section._io(),
+                    *vol_section.checksum(),
+                )?;
             }
 
             let vs = VolumeSection {
@@ -168,22 +203,12 @@ impl VolumeSection {
                 })?;
 
             if !ignore_checksums {
-                let crc_stored = *vol_section.checksum();
-
-                let crc = adler32::adler32(std::io::Cursor::new(
-                    vol_section
-                        ._io()
-                        .read_bytes(io.pos() - vol_section._io().pos() - 4)
-                        .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
-                ))
-                .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
-
-                if crc != crc_stored {
-                    return Err(SimpleError::new(format!(
-                        "Volume section checksum failed, calculated {}, expected {}",
-                        crc, crc_stored
-                    )));
-                }
+                checksum_ok(
+                    "Volume section",
+                    io,
+                    &vol_section._io(),
+                    *vol_section.checksum(),
+                )?;
             }
 
             let vs = VolumeSection {
@@ -246,22 +271,12 @@ impl Segment {
             })?;
 
         if !ignore_checksums {
-            let crc_stored = *table_section.checksum();
-
-            let crc = adler32::adler32(std::io::Cursor::new(
-                table_section
-                    ._io()
-                    .read_bytes(io.pos() - table_section._io().pos() - 4)
-                    .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
-            ))
-            .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
-
-            if crc != crc_stored {
-                return Err(SimpleError::new(format!(
-                    "Volume section checksum failed, calculated {}, expected {}",
-                    crc, crc_stored
-                )));
-            }
+            checksum_ok(
+                "Table section",
+                io,
+                &table_section._io(),
+                *table_section.checksum(),
+            )?;
         }
 
         let io_offsets = Clone::clone(io);
@@ -285,18 +300,13 @@ impl Segment {
                 SimpleError::new(format!("BytesReader::read_u4le() failed: {:?}", e))
             })?;
 
-            let crc = adler32::adler32(std::io::Cursor::new(
-                io_offsets
-                    .read_bytes(*table_section.entry_count() as usize * 4)
-                    .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
-            ))
-            .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+            let crc = checksum_reader(
+                &io_offsets,
+                *table_section.entry_count() as usize * 4
+            )?;
 
             if crc != crc_stored {
-                return Err(SimpleError::new(format!(
-                    "Table offset array is broken, checksum calculated {}, expected {}",
-                    crc, crc_stored
-                )));
+                checksum_err("Table offset array", crc, crc_stored)?;
             }
         }
 
@@ -316,23 +326,14 @@ impl Segment {
             })?;
 
         if !ignore_checksums {
-            let crc_stored = *hash_section.checksum();
-
-            let crc = adler32::adler32(std::io::Cursor::new(
-                hash_section
-                    ._io()
-                    .read_bytes(io.pos() - hash_section._io().pos() - 4)
-                    .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
-            ))
-            .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
-
-            if crc != crc_stored {
-                return Err(SimpleError::new(format!(
-                    "Hash section checksum failed, calculated {}, expected {}",
-                    crc, crc_stored
-                )));
-            }
+            checksum_ok(
+                "Hash section",
+                io,
+                &hash_section._io(),
+                *hash_section.checksum(),
+            )?;
         }
+
         Ok(hash_section.clone())
     }
 
@@ -349,22 +350,12 @@ impl Segment {
             })?;
 
         if !ignore_checksums {
-            let crc_stored = *digest_section.checksum();
-
-            let crc = adler32::adler32(std::io::Cursor::new(
-                digest_section
-                    ._io()
-                    .read_bytes(io.pos() - digest_section._io().pos() - 4)
-                    .map_err(|e| SimpleError::new(format!("read_bytes failed: {:?}", e)))?,
-            ))
-            .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
-
-            if crc != crc_stored {
-                return Err(SimpleError::new(format!(
-                    "Hash section checksum failed, calculated {}, expected {}",
-                    crc, crc_stored
-                )));
-            }
+            checksum_ok(
+                "Digest section",
+                io,
+                &digest_section._io(),
+                *digest_section.checksum(),
+            )?;
         }
 
         Ok(digest_section.clone())
@@ -491,16 +482,14 @@ impl Segment {
                 raw_data.truncate(raw_data.len() - 4);
 
                 // checksum the data
-                let crc = adler32::adler32(std::io::Cursor::new(
-                    &raw_data
-                ))
-                .map_err(|e| SimpleError::new(format!("adler32 error: {:?}", e)))?;
+                let crc = checksum(&raw_data)?;
 
                 if crc != crc_stored {
-                    return Err(SimpleError::new(format!(
-                        "Chunk #{} checksum failed, calculated {}, expected {}",
-                        chunk_number, crc, crc_stored
-                    )));
+                    checksum_err(
+                        &format!("Chunk {}", chunk_number),
+                        crc,
+                        crc_stored
+                    )?;
                 }
             }
 
