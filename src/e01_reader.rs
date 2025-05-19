@@ -254,6 +254,7 @@ pub struct Segment {
 struct Chunk {
     data_offset: u64,
     compressed: bool,
+    end_offset: Option<u64>,
 }
 
 impl Segment {
@@ -291,6 +292,7 @@ impl Segment {
             chunks.push(Chunk {
                 data_offset,
                 compressed: (entry & 0x80000000) > 0,
+                end_offset: None,
             });
         }
 
@@ -411,6 +413,8 @@ impl Segment {
 
             if section_type == "table" {
                 chunks.extend(Segment::read_table(&io, section_size, ignore_checksums)?);
+                let chunks_len = chunks.len();
+                chunks[chunks_len - 1].end_offset = Some(end_of_sectors);
             }
 
             if section_type == "sectors" {
@@ -459,6 +463,9 @@ impl Segment {
 
         let end_offset = if chunk_index == self.chunks.len() - 1 {
             self.end_of_sectors
+        }
+        else if let Some(end_of_section) = chunk.end_offset {
+            end_of_section
         }
         else {
             self.chunks[chunk_index + 1].data_offset
