@@ -1,7 +1,7 @@
 pub mod e01_reader;
 mod generated;
 
-#[allow(unused)]
+#[cfg(test)]
 mod test {
     use crate::e01_reader::E01Reader;
 
