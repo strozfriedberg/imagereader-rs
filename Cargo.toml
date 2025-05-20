@@ -5,8 +5,8 @@ authors = ["Aon"]
 edition = "2021"
 
 [profile.release]
-debug = false 
-lto = true  
+debug = false
+lto = true
 
 [lib]
 name = "e01"
