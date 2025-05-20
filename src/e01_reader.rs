@@ -390,10 +390,10 @@ impl Segment {
                 EwfSectionDescriptorV1::read_into::<_, EwfSectionDescriptorV1>(&io, None, None)
                     .map_err(|e| {
                         SimpleError::new(format!(
-                    "Segment file: {}, error while deserializing EwfFileHeaderV1 struct: {:?}",
-                    f.as_ref().to_string_lossy(),
-                    e
-                ))
+                            "Segment file: {}, error while deserializing EwfFileHeaderV1 struct: {:?}",
+                            f.as_ref().to_string_lossy(),
+                            e
+                        ))
                     })?;
 
             let section_offset = *section.next_offset() as usize;
