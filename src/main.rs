@@ -51,7 +51,7 @@ struct Cli {
 
 use std::process::ExitCode;
 
-fn get_result(
+fn check_hash(
     result: &Option<bool>,
     stored: &str,
     calc: &str,
@@ -86,8 +86,9 @@ fn main() -> ExitCode {
             let calc_hash = hashes.get(&ad_str).unwrap();
             if let Some(md5) = stored_md5 {
                 println!("MD5 hash stored in file:       {}", md5);
-                result = get_result(&result, &md5, &calc_hash);
-            } else {
+                result = check_hash(&result, &md5, &calc_hash);
+            }
+            else {
                 println!("MD5 hash stored in file:       N/A");
             }
             println!("MD5 hash calculated over data: {}", calc_hash);
@@ -97,33 +98,39 @@ fn main() -> ExitCode {
             let calc_hash = hashes.get(&ad_str).unwrap();
             if let Some(sha1) = stored_sha1 {
                 println!("SHA1 hash stored in file:       {}", sha1);
-                result = get_result(&result, &sha1, &calc_hash);
-            } else {
+                result = check_hash(&result, &sha1, &calc_hash);
+            }
+            else {
                 println!("SHA1 hash stored in file:       N/A");
             }
             println!("SHA1 hash calculated over data: {}", calc_hash);
         }
-    } else if let Some(ad) = &cli.additional_digest {
+    }
+    else if let Some(ad) = &cli.additional_digest {
         let ad_str: String = ad.into();
         let calc_hash = hashes.get(&ad_str).unwrap();
         if *ad == AddDigest::md5 {
             if let Some(md5) = &stored_md5 {
                 println!("MD5 hash stored in file:       {}", md5);
                 result = Some(md5 == calc_hash);
-                result = get_result(&result, &md5, &calc_hash);
-            } else {
+                result = check_hash(&result, &md5, &calc_hash);
+            }
+            else {
                 println!("MD5 hash stored in file:       N/A");
             }
             println!("MD5 hash calculated over data: {}", calc_hash);
-        } else if *ad == AddDigest::sha1 {
+        }
+        else if *ad == AddDigest::sha1 {
             if let Some(sha1) = &stored_sha1 {
                 println!("SHA1 hash stored in file:       {}", sha1);
-                result = get_result(&result, &sha1, &calc_hash);
-            } else {
+                result = check_hash(&result, &sha1, &calc_hash);
+            }
+            else {
                 println!("SHA1 hash stored in file:       N/A");
             }
             println!("SHA1 hash calculated over data: {}", calc_hash);
-        } else {
+        }
+        else {
             println!("{} hash stored in file:       N/A", ad_str);
             println!("{} hash calculated over data: {}", ad_str, calc_hash);
         }
@@ -145,7 +152,7 @@ fn main() -> ExitCode {
 
     match result {
         Some(true) => {
-            println!("Hash verification: SUCCESS"); 
+            println!("Hash verification: SUCCESS");
             ExitCode::SUCCESS
         },
         Some(false) => {
