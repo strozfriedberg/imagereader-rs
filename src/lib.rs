@@ -107,16 +107,18 @@ mod test {
     fn test_dademurphy_e01() {
         assert_hash_all(
             "/home/juckelman/Downloads/dademurphy.E01",
+            "caadd3db26d633249fcf9143d67d69bd",
+            "109a68fc6921ea3f30aa5718177a435222b4fd15",
             "6a3720e277f54e9038b8faa5266aaa30cc5912511fbbac7256f570fa46e7060c"
         );
     }
-*/
 
-/*
     #[test]
     fn test_nfury_e01() {
         assert_hash_all(
             "/home/juckelman/Downloads/nfury/win7-64-nfury-c-drive.E01",
+            "a98416e60bb81f57cb99125ec41bfe4c",
+            "829553fd43bbd6d69c85d8285b83410ac679b066",
             "03e762e3f2732f30dd83675469129cb0a7a8e225dcbecdad1829ab4600277763"
         );
     }
