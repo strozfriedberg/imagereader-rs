@@ -617,13 +617,15 @@ impl E01Reader {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
             let mut chunk_index = 0;
+
             let mut data = self
                 .get_segment(chunk_number, &mut chunk_index)?
                 .read_chunk(chunk_number, chunk_index, self.ignore_checksums)?;
 
             if chunk_number * self.chunk_size() + data.len() > total_size {
-                data = data[..total_size - chunk_number * self.chunk_size()].to_vec();
+                data.truncate(total_size - chunk_number * self.chunk_size());
             }
+
             let data_offset = offset % self.chunk_size();
 
             if buf.len() < bytes_read || data.len() < data_offset {
