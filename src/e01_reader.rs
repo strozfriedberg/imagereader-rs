@@ -603,7 +603,12 @@ impl E01Reader {
             })
     }
 
-    pub fn read_at_offset(&self, mut offset: usize, buf: &mut [u8]) -> Result<usize, SimpleError> {
+    pub fn read_at_offset(
+        &self,
+        mut offset: usize,
+        buf: &mut [u8]
+    ) -> Result<usize, SimpleError>
+    {
         let total_size = self.total_size();
         if offset > total_size {
             return Err(SimpleError::new(format!(
