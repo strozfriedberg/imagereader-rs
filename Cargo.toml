@@ -5,7 +5,7 @@ authors = ["Aon"]
 edition = "2021"
 
 [profile.release]
-debug = false
+debug = true 
 lto = true
 
 [lib]
@@ -18,7 +18,6 @@ path = "src/main.rs"
 
 [dependencies]
 kaitai = { git = "https://github.com/Agile86/kaitai_rust.git", branch = "rust_basic_support_v2" }
-simple-error = "^0.3"
 flate2 = "^1"
 byteorder = "^1.5"
 sha1 = "^0.10"
@@ -29,6 +28,7 @@ adler32 = "^1.2"
 rand = "^0.9"
 clap = { version = "^4.5", features = ["derive"] }
 hex = "^0.4"
+thiserror = "2.0.12"
 
 [dev-dependencies]
 hex = "^0.4"

@@ -3,7 +3,6 @@
 use clap::Parser;
 use md5::digest::DynDigest;
 use sha2::Digest;
-use simple_error::SimpleError;
 use std::collections::HashMap;
 
 use e01::e01_reader::*;
@@ -172,7 +171,7 @@ fn dump(
     stored_md5: &mut Option<String>,
     stored_sha1: &mut Option<String>,
     ignore_checksums: bool,
-) -> Result<HashMap<String /*AddDigest*/, String /*hash*/>, SimpleError> {
+) -> Result<HashMap<String /*AddDigest*/, String /*hash*/>, E01Error> {
     use md5::Md5;
     use sha1::Sha1;
     use sha2::{Sha256, Sha512};
