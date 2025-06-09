@@ -5,7 +5,7 @@ use md5::digest::DynDigest;
 use sha2::Digest;
 use std::collections::HashMap;
 
-use e01::e01_reader::*;
+use e01::e01_reader::{E01Error, E01Reader};
 
 #[derive(Clone, Debug, clap::ValueEnum, PartialEq)]
 pub enum AddDigest {
