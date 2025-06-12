@@ -562,14 +562,14 @@ impl E01Reader {
         ignore_checksums: bool
     ) -> Result<Self, E01Error>
     {
+        let mut segment_paths = segment_paths.into_iter();
+
         let mut volume_opt: Option<VolumeSection> = None;
         let mut stored_md5: Option<_> = None;
         let mut stored_sha1: Option<_> = None;
 
         let mut segments = vec![];
         let mut chunks = 0;
-
-        let mut segment_paths = segment_paths.into_iter();
 
         // read first segment, volume section must be contained in it
         let sp = segment_paths.next()
