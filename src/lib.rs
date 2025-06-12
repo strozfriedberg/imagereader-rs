@@ -68,7 +68,7 @@ mod test {
         expected_sha1: &str,
         expected_sha256: &str
     ) {
-        let reader = E01Reader::open(image_path, false).unwrap();
+        let reader = E01Reader::open_glob(image_path, false).unwrap();
 
         let stored_md5 = reader.get_stored_md5().map(hex::encode);
         let stored_sha1 = reader.get_stored_sha1().map(hex::encode);

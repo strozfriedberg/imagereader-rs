@@ -542,32 +542,23 @@ impl Segment {
     }
 }
 
-impl E01Reader {
-
-
-// open a list of files
-// open a single file as a pattern
-
 // Errors should be: ioerror, bad paths, bad input
 
-/*
-    fn open_impl<T: impl IntoIterator<Item = Result<PathBuf, GlobError>>, E01Error> -> Result<Self, E01Error> {
-
-        // do all the crap here
-
-    }
-
-    pub fn open<T: impl IntoIterator<Item = AsRef<Path>>>(
-        paths: T,
+impl E01Reader {
+    pub fn open_glob<T: AsRef<Path>>(
+        example_segment_path: T,
         ignore_checksums: bool
     ) -> Result<Self, E01Error>
     {
-
+        Self::open(
+            find_segment_paths(&example_segment_path)
+                .or(Err(E01Error::InvalidFilename))?,
+            ignore_checksums
+        )
     }
-*/
 
-    pub fn open<T: AsRef<Path>>(
-        f: T,
+    pub fn open<T: IntoIterator<Item: AsRef<Path>>>(
+        segment_paths: T,
         ignore_checksums: bool
     ) -> Result<Self, E01Error>
     {
@@ -578,8 +569,7 @@ impl E01Reader {
         let mut segments = vec![];
         let mut chunks = 0;
 
-        let mut segment_paths = find_segment_paths(&f)
-            .or(Err(E01Error::InvalidFilename))?;
+        let mut segment_paths = segment_paths.into_iter();
 
         // read first segment, volume section must be contained in it
         let sp = segment_paths.next()
