@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    cmp::Ordering,
+    path::{Path, PathBuf}
+};
 use itertools::iproduct; 
 
 fn valid_segment_ext(ext: &str) -> bool {
@@ -14,21 +17,17 @@ fn valid_segment_ext(ext: &str) -> bool {
                 _ => false
             },
             // 10 - 99
-            '1'..='9' => match ext.next().unwrap_or('!') {
-                '0'..='9' => true,
-                _ => false
-            },
+            '1'..='9' => matches!(ext.next().unwrap_or('!'), '0'..='9'),
             // AA - ZZ
-            'A'..='Z' => match ext.next().unwrap_or('!') {
-                'A'..='Z' => true,
-                _ => false
-            },
+            'A'..='Z' => matches!(ext.next().unwrap_or('!'), 'A'..='Z'),
             _ => false
         },
         _ => false
     }) && ext.next().is_none() // we had three characters
 }
 
+// Example segment paths are used as the starting point for path globbing.
+// They must have valid segment extensions and also start with E, L, or S.
 fn valid_example_segment_ext(ext: &str) -> bool {
     valid_segment_ext(ext) &&
     ['E', 'L', 'S'].contains(
@@ -118,28 +117,31 @@ pub fn find_segment_paths<T: AsRef<Path>>(
             Ok(p) => match p.extension() {
                 Some(ext) => {
                     let uc_ext = ext.to_ascii_uppercase();
+                    let uc_ext = uc_ext.to_string_lossy();
 
-                    if !valid_segment_ext(&uc_ext.to_string_lossy()) {
+                    if !valid_segment_ext(&uc_ext) {
                         return Err(SegmentGlobError::UnrecognizedExtension(p));
                     }
 
-                    if *uc_ext > *exp_ext {
-                        // we're expecting a segment earlier in the sequence
-                        // than the one we got => a segment is missing
-                        return Err(SegmentGlobError::MissingSegmentFile(p))
-                    }
-                    else if *uc_ext < *exp_ext {
+                    match (*uc_ext).cmp(&exp_ext) {
+                        // yay, we got a good path
+                        Ordering::Equal => segment_paths.push(p),
+
                         // we're expecting a segment later in the sequence
                         // than the one we got; we have a case-insensitive
                         // duplicate segment (e.g., e02 and E02 both exist)
-                        return Err(SegmentGlobError::DuplicateSegmentFile(
-                            p,
-                            segment_paths.pop()
-                                .expect("impossible, nothing is before E01")
-                        ))
-                    }
+                        Ordering::Less =>
+                            return Err(SegmentGlobError::DuplicateSegmentFile(
+                                p,
+                                segment_paths.pop()
+                                    .expect("impossible, nothing is before E01")
+                            )),
 
-                    segment_paths.push(p);
+                        // we're expecting a segment earlier in the sequence
+                        // than the one we got => a segment is missing
+                        Ordering::Greater =>
+                            return Err(SegmentGlobError::MissingSegmentFile(p))
+                    }
                 },
                 // wtf, how did we get no extension when the glob has one?
                 None => return Err(SegmentGlobError::UnrecognizedExtension(p))
