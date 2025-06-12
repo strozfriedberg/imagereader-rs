@@ -1,5 +1,6 @@
 pub mod e01_reader;
 mod generated;
+mod seg_path;
 
 #[cfg(test)]
 mod test {
