@@ -934,6 +934,7 @@ mod test {
             "EZZ",
             "EZZ",
             "FAA",
+            "YYZ",
             "ZZZ"
         ];
 
