@@ -1,4 +1,5 @@
 use flate2::read::ZlibDecoder;
+use itertools::iproduct;
 use std::{
     convert::TryFrom,
     io::Read
@@ -88,7 +89,13 @@ pub enum E01Error {
     #[error("Missing volume section")]
     MissingVolumeSection,
     #[error("Missing some segment file")]
-    MissingSegmentFile
+    MissingSegmentFile,
+    #[error("Too many chunks")]
+    TooManyChunks,
+    #[error("Too few chunks")]
+    TooFewChunks,
+    #[error("Duplicate volume section")]
+    DuplicateVolumeSection
 }
 
 #[derive(Debug)]
@@ -534,66 +541,291 @@ impl Segment {
     }
 }
 
-impl E01Reader {
-    fn find_all_segments(path: &Path) -> Result<Vec<PathBuf>, E01Error> {
-        let filestem = path
-            .file_stem()
-            .ok_or_else(|| E01Error::InvalidFilename)?
-            .to_str()
-            .ok_or_else(|| E01Error::InvalidFilename)?;
+fn valid_segment_ext(ext: &str) -> bool {
+    let ext = ext.to_ascii_uppercase();
+    let mut ext = ext.chars();
 
-        let ext_str = path
-            .extension()
-            .ok_or_else(|| E01Error::InvalidExtension)?
-            .to_str()
-            .ok_or_else(|| E01Error::InvalidExtension)?;
+    (match ext.next().unwrap_or('!') {
+        'E'..='Z' => match ext.next().unwrap_or('!') {
+            // 01 - E09
+            '0' => match ext.next().unwrap_or('!') {
+                // 00 is not legal
+                '1'..='9' => true,
+                _ => false
+            },
+            // 10 - 99
+            '1'..='9' => match ext.next().unwrap_or('!') {
+                '0'..='9' => true,
+                _ => false
+            },
+            // AA - ZZ
+            'A'..='Z' => match ext.next().unwrap_or('!') {
+                'A'..='Z' => true,
+                _ => false
+            },
+            _ => false
+        },
+        _ => false
+    }) && ext.next().is_none() // we had three characters
+}
 
-        if !['E', 'L', 'S'].contains(&ext_str.chars().next().unwrap().to_ascii_uppercase()) {
-            return Err(E01Error::InvalidFile(path.into()));
-        }
+fn valid_example_segment_ext(ext: &str) -> bool {
+    valid_segment_ext(ext) &&
+    ['E', 'L', 'S'].contains(
+        &ext
+            .chars()
+            .next()
+            .as_ref()
+            .map(char::to_ascii_uppercase)
+            .unwrap_or('!')
+    )
+}
 
-        let pattern = format!("{}/{}.[ELS]??", path.parent().unwrap().display(), filestem);
-        let files = glob::glob(&pattern)
-            .map_err(|_| E01Error::GlobError)?;
+fn segment_ext_iter(start: char) -> impl Iterator<Item = String> {
+    // x01 to x99
+    (1..=99)
+        .map(move |n| format!("{}{:02}", start, n))
+        // xAA - ZZZ
+        .chain(
+            iproduct!(start..='Z', 'A'..='Z', 'A'..='Z')
+                .map(|t| format!("{}{}{}", t.0, t.1, t.2))
+        )
+}
 
-        let mut paths: Vec<PathBuf> = files.filter_map(|f| f.ok()).collect();
-        paths.sort();
-        Ok(paths)
+#[derive(Debug, thiserror::Error)]
+pub enum SegmentGlobError {
+    #[error("File {0} is ambiguous with file {1}")]
+    DuplicateSegmentFile(PathBuf, PathBuf),
+    #[error("Failed to read file {}: {}", .0.path().display(), .0)]
+    GlobError(#[from] glob::GlobError),
+    #[error("File {0} not found")]
+    MissingSegmentFile(PathBuf),
+    #[error("Failed to make glob pattern for file {path}: {source}")]
+    PatternError {
+        path: PathBuf,
+        source: glob::PatternError
+    },
+    #[error("File {0} has an unrecognized extension")]
+    UnrecognizedExtension(PathBuf)
+}
+
+fn find_segment_paths<T: AsRef<Path>>(
+    example_path: T
+) -> Result<impl Iterator<Item = PathBuf>, SegmentGlobError>
+{
+    let example_path = example_path.as_ref();
+
+    // Get the extension from the example path and ensure it's ok
+    let uc_ext = example_path.extension()
+        .ok_or(SegmentGlobError::UnrecognizedExtension(example_path.into()))?
+        .to_ascii_uppercase();
+
+    let uc_ext = uc_ext.to_string_lossy();
+    if !valid_example_segment_ext(&uc_ext) {
+        return Err(SegmentGlobError::UnrecognizedExtension(example_path.into()));
     }
 
-    pub fn open<T: AsRef<Path>>(f: T, ignore_checksums: bool) -> Result<Self, E01Error> {
-        let mut segments: Vec<Segment> = Vec::new();
+    let base = example_path.with_extension("");
+    let ext_start = uc_ext.chars().next()
+        .ok_or(SegmentGlobError::UnrecognizedExtension(example_path.into()))?;
+
+    // Make a pattern where the extension is case-insensitive, but the
+    // base is not. Case insensitively matching the base is wrong.
+    //
+    // Hilariously, EnCase will create .E02 etc. if you start with
+    // .e01, so the extensions can actually differ in case through
+    // the sequence...
+    let glob_pattern = format!(
+        "{}.[{}-Z{}-z][0-9A-Za-z][0-9A-Za-z]",
+        base.display(),
+        ext_start.to_ascii_uppercase(),
+        ext_start.to_ascii_lowercase()
+    );
+
+    let globbed_paths = glob::glob(&glob_pattern)
+        .map_err(|e| SegmentGlobError::PatternError {
+            path: example_path.into(),
+            source: e
+        })?;
+
+    let mut segment_paths = vec![];
+
+    // this is the sequence of extensions segments must have
+    let ext_sequence = segment_ext_iter(ext_start);
+
+    for (p, exp_ext) in globbed_paths.zip(ext_sequence) {
+        match p {
+            Ok(p) => match p.extension() {
+                Some(ext) => {
+                    let uc_ext = ext.to_ascii_uppercase();
+
+                    if !valid_segment_ext(&uc_ext.to_string_lossy()) {
+                        return Err(SegmentGlobError::UnrecognizedExtension(p));
+                    }
+
+                    if *uc_ext > *exp_ext {
+                        // we're expecting a segment earlier in the sequence
+                        // than the one we got => a segment is missing
+                        return Err(SegmentGlobError::MissingSegmentFile(p))
+                    }
+                    else if *uc_ext < *exp_ext {
+                        // we're expecting a segment later in the sequence
+                        // than the one we got; we have a case-insensitive
+                        // duplicate segment (e.g., e02 and E02 both exist)
+                        return Err(SegmentGlobError::DuplicateSegmentFile(
+                            p,
+                            segment_paths.pop()
+                                .expect("impossible, nothing is before E01")
+                        ))
+                    }
+
+                    segment_paths.push(p);
+                },
+                // wtf, how did we get no extension when the glob has one?
+                None => return Err(SegmentGlobError::UnrecognizedExtension(p))
+            }
+            // glob couldn't read this file for some reason
+            Err(e) => return Err(SegmentGlobError::GlobError(e))
+        }
+    }
+
+    Ok(segment_paths.into_iter())
+}
+
+impl E01Reader {
+
+
+// open a list of files
+// open a single file as a pattern
+
+// Errors should be: ioerror, bad paths, bad input
+
+/*
+    fn open_impl<T: impl IntoIterator<Item = Result<PathBuf, GlobError>>, E01Error> -> Result<Self, E01Error> {
+
+        // do all the crap here
+
+    }
+
+    pub fn open<T: impl IntoIterator<Item = AsRef<Path>>>(
+        paths: T,
+        ignore_checksums: bool
+    ) -> Result<Self, E01Error>
+    {
+
+    }
+*/
+
+    pub fn open<T: AsRef<Path>>(
+        f: T,
+        ignore_checksums: bool
+    ) -> Result<Self, E01Error>
+    {
         let mut volume_opt: Option<VolumeSection> = None;
         let mut stored_md5: Option<_> = None;
         let mut stored_sha1: Option<_> = None;
-        let segments_path = E01Reader::find_all_segments(f.as_ref())?;
-        if segments_path.is_empty() {
-            return Err(E01Error::FileNotFound(f.as_ref().into()));
+
+        let mut segments = vec![];
+        let mut chunks = 0;
+
+        let mut segment_paths = find_segment_paths(&f)
+            .or(Err(E01Error::InvalidFilename))?;
+
+        // read first segment, volume section must be contained in it
+        let sp = segment_paths.next()
+            .ok_or(E01Error::InvalidFilename)?;
+
+        let seg = Segment::read(
+            sp,
+            &mut volume_opt,
+            &mut stored_md5,
+            &mut stored_sha1,
+            ignore_checksums,
+        )?;
+
+        let volume = volume_opt.ok_or(E01Error::MissingVolumeSection)?;
+        let exp_chunks = volume.chunk_count as usize;
+
+//        let mut stored_md5_unexpected = None;
+//        let mut stored_sha1_unexpected = None;
+        volume_opt = None;
+
+        chunks += seg.chunks.len();
+        segments.push(seg);
+
+        // continue reading segments
+        for sp in segment_paths {
+            let seg = Segment::read(
+                sp,
+                &mut volume_opt,
+//                &mut stored_md5_unexpected,
+//                &mut stored_sha1_unexpected,
+                &mut stored_md5,
+                &mut stored_sha1,
+                ignore_checksums,
+            )?;
+
+            // we should not see volume, hash, digest sections again
+            if volume_opt.is_some() {
+                return Err(E01Error::DuplicateVolumeSection);
+            }
+
+/*
+            if stored_md5_unexpected.is_some() {
+                return Err(E01Error::DuplicateMD5);
+            }
+
+            if stored_sha1_unexpected.is_some() {
+                return Err(E01Error::DuplicateSHA1);
+            }
+*/
+
+            chunks += seg.chunks.len();
+            segments.push(seg);
         }
-        for s in segments_path {
-            segments.push(Segment::read(
-                s,
+
+        if chunks > exp_chunks {
+            return Err(E01Error::TooManyChunks);
+        }
+        else if chunks < exp_chunks {
+            return Err(E01Error::TooFewChunks);
+        }
+
+/*
+        let segment_paths = candidate_segments(&f)
+            .ok_or(E01Error::InvalidFilename)?;
+
+        for sp in segment_paths {
+            let seg = Segment::read(
+                sp,
                 &mut volume_opt,
                 &mut stored_md5,
                 &mut stored_sha1,
                 ignore_checksums,
-            )?);
-        }
-        let volume = volume_opt.ok_or(E01Error::MissingVolumeSection)?;
-        let chunks = segments.iter().fold(0, |acc, i| acc + i.chunks.len());
+            )?;
 
-        if chunks != volume.chunk_count as usize {
-            Err(E01Error::MissingSegmentFile)
+            chunks += seg.chunks.len();
+            segments.push(seg);
+
+            if let Some(ref volume) = volume_opt {
+                let exp_chunks = volume.chunk_count as usize;
+                if chunks == exp_chunks {
+                    break;
+                }
+                else if chunks > exp_chunks {
+                    return Err(E01Error::TooManyChunks)
+                }
+            }
         }
-        else {
-            Ok(E01Reader {
-                volume,
-                segments,
-                ignore_checksums,
-                stored_md5,
-                stored_sha1,
-            })
-        }
+*/
+
+        Ok(E01Reader {
+            volume,
+            segments,
+            ignore_checksums,
+            stored_md5,
+            stored_sha1,
+        })
     }
 
     pub fn total_size(&self) -> usize {
@@ -681,4 +913,87 @@ impl E01Reader {
     pub fn get_stored_sha1(&self) -> Option<&Vec<u8>> {
         self.stored_sha1.as_ref()
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use std::{
+        path::PathBuf
+    };
+
+    #[test]
+    fn valid_segment_ext_tests() {
+        let good = [
+            "E01",
+            "L01",
+            "S01",
+            "E99",
+            "EAA",
+            "EZZ",
+            "EZZ",
+            "FAA",
+            "ZZZ"
+        ];
+
+        for ext in good {
+            assert!(valid_segment_ext(ext));
+            assert!(valid_segment_ext(&ext.to_ascii_lowercase()));
+        }
+
+        let bad = [
+            "",
+            "E",
+            "E0",
+            "E00",
+            "E0A",
+            "EA0",
+            "AbC",
+            "gtfo",
+            "💩"
+        ];
+
+        for ext in bad {
+            assert!(!valid_segment_ext(ext));
+        }
+    }
+
+    #[test]
+    fn valid_example_segment_ext_tests() {
+        // example segment extensions must start with E, L, or S
+        let good = [
+            "E01",
+            "L01",
+            "S01",
+            "E99",
+            "EAA",
+            "EZZ",
+            "EZZ",
+        ];
+
+        for ext in good {
+            assert!(valid_example_segment_ext(ext));
+            assert!(valid_example_segment_ext(&ext.to_ascii_lowercase()));
+        }
+
+        let bad = [
+            "FAA",
+            "ZZZ"
+            "",
+            "E",
+            "E0",
+            "E00",
+            "E0A",
+            "EA0",
+            "AbC",
+            "gtfo",
+            "💩"
+        ];
+
+        for ext in bad {
+            assert!(!valid_example_segment_ext(ext));
+        }
+    }
+
 }
