@@ -11,12 +11,8 @@ fn valid_segment_ext(ext: &str) -> bool {
 
     (match ext.next().unwrap_or('!') {
         'E'..='Z' => match ext.next().unwrap_or('!') {
-            // 01 - E09
-            '0' => match ext.next().unwrap_or('!') {
-                // 00 is not legal
-                '1'..='9' => true,
-                _ => false
-            },
+            // 01 - 09 ; 00 is not legal
+            '0' => matches!(ext.next().unwrap_or('!'), '1'..='9'),
             // 10 - 99
             '1'..='9' => matches!(ext.next().unwrap_or('!'), '0'..='9'),
             // AA - ZZ
