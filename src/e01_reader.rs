@@ -969,7 +969,7 @@ mod test {
             "E99",
             "EAA",
             "EZZ",
-            "EZZ",
+            "EZZ"
         ];
 
         for ext in good {
@@ -979,7 +979,7 @@ mod test {
 
         let bad = [
             "FAA",
-            "ZZZ"
+            "ZZZ",
             "",
             "E",
             "E0",
@@ -996,4 +996,24 @@ mod test {
         }
     }
 
+    #[test]
+    fn segment_ext_iter_tests() {
+        // check that a sample of extensions are in the expected positions
+        let mut i = segment_ext_iter('E');
+        assert_eq!(i.next(), Some("E01".into()));
+        assert_eq!(i.next(), Some("E02".into()));
+        let mut i = i.skip(96);
+        assert_eq!(i.next(), Some("E99".into()));
+        assert_eq!(i.next(), Some("EAA".into()));
+        assert_eq!(i.next(), Some("EAB".into()));
+        let mut i = i.skip(23);
+        assert_eq!(i.next(), Some("EAZ".into()));
+        assert_eq!(i.next(), Some("EBA".into()));
+        let mut i = i.skip(648);
+        assert_eq!(i.next(), Some("EZZ".into()));
+        assert_eq!(i.next(), Some("FAA".into()));
+        let mut i = i.skip(14194);
+        assert_eq!(i.next(), Some("ZZZ".into()));
+        assert_eq!(i.next(), None);
+    }
 }
