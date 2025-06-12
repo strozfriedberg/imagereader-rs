@@ -1,8 +1,9 @@
+use glob::{GlobError, PatternError};
 use std::{
     cmp::Ordering,
     path::{Path, PathBuf}
 };
-use itertools::iproduct; 
+use itertools::iproduct;
 
 fn valid_segment_ext(ext: &str) -> bool {
     let ext = ext.to_ascii_uppercase();
@@ -68,26 +69,11 @@ pub enum SegmentGlobError {
     UnrecognizedExtension(PathBuf)
 }
 
-pub fn find_segment_paths<T: AsRef<Path>>(
-    example_path: T
-) -> Result<impl Iterator<Item = PathBuf>, SegmentGlobError>
+fn glob_segment_paths<T: AsRef<Path>>(
+    base: T,
+    ext_start: char
+) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>
 {
-    let example_path = example_path.as_ref();
-
-    // Get the extension from the example path and ensure it's ok
-    let uc_ext = example_path.extension()
-        .ok_or(SegmentGlobError::UnrecognizedExtension(example_path.into()))?
-        .to_ascii_uppercase();
-
-    let uc_ext = uc_ext.to_string_lossy();
-    if !valid_example_segment_ext(&uc_ext) {
-        return Err(SegmentGlobError::UnrecognizedExtension(example_path.into()));
-    }
-
-    let base = example_path.with_extension("");
-    let ext_start = uc_ext.chars().next()
-        .ok_or(SegmentGlobError::UnrecognizedExtension(example_path.into()))?;
-
     // Make a pattern where the extension is case-insensitive, but the
     // base is not. Case insensitively matching the base is wrong.
     //
@@ -96,23 +82,25 @@ pub fn find_segment_paths<T: AsRef<Path>>(
     // the sequence...
     let glob_pattern = format!(
         "{}.[{}-Z{}-z][0-9A-Za-z][0-9A-Za-z]",
-        base.display(),
+        base.as_ref().display(),
         ext_start.to_ascii_uppercase(),
         ext_start.to_ascii_lowercase()
     );
 
-    let globbed_paths = glob::glob(&glob_pattern)
-        .map_err(|e| SegmentGlobError::PatternError {
-            path: example_path.into(),
-            source: e
-        })?;
+    glob::glob(&glob_pattern)
+}
 
+fn validate_segment_paths<T: IntoIterator<Item = Result<PathBuf, GlobError>>>(
+    globbed_paths: T,
+    ext_start: char
+) -> Result<impl Iterator<Item = PathBuf>, SegmentGlobError>
+{
     let mut segment_paths = vec![];
 
     // this is the sequence of extensions segments must have
     let ext_sequence = segment_ext_iter(ext_start);
 
-    for (p, exp_ext) in globbed_paths.zip(ext_sequence) {
+    for (p, exp_ext) in globbed_paths.into_iter().zip(ext_sequence) {
         match p {
             Ok(p) => match p.extension() {
                 Some(ext) => {
@@ -152,6 +140,36 @@ pub fn find_segment_paths<T: AsRef<Path>>(
     }
 
     Ok(segment_paths.into_iter())
+}
+
+pub fn find_segment_paths<T: AsRef<Path>>(
+    example_path: T
+) -> Result<impl Iterator<Item = PathBuf>, SegmentGlobError>
+{
+    let example_path = example_path.as_ref();
+
+    // Get the extension from the example path and check it's valid
+    let ext = example_path.extension()
+        .ok_or(SegmentGlobError::UnrecognizedExtension(example_path.into()))?
+        .to_ascii_uppercase();
+
+    let ext = ext.to_string_lossy();
+    if !valid_example_segment_ext(&ext) {
+        return Err(SegmentGlobError::UnrecognizedExtension(example_path.into()));
+    }
+
+    // Get the base path and initial character of extension
+    let base = example_path.with_extension("");
+    let ext_start = ext.chars().next()
+        .ok_or(SegmentGlobError::UnrecognizedExtension(example_path.into()))?;
+
+    let globbed_paths = glob_segment_paths(base, ext_start)
+        .map_err(|e| SegmentGlobError::PatternError {
+            path: example_path.into(),
+            source: e
+        })?;
+
+    validate_segment_paths(globbed_paths, ext_start)
 }
 
 #[cfg(test)]
