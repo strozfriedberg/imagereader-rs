@@ -66,6 +66,34 @@ pub enum SegmentGlobError {
     UnrecognizedExtension(PathBuf)
 }
 
+impl PartialEq for SegmentGlobError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::DuplicateSegmentFile(l),
+                Self::DuplicateSegmentFile(r)
+            ) |
+            (
+                Self::MissingSegmentFile(l),
+                Self::MissingSegmentFile(r)
+            ) |
+            (
+                Self::UnrecognizedExtension(l),
+                Self::UnrecognizedExtension(r)
+            ) |
+            (
+                Self::PatternError { path: l, source: _ },
+                Self::PatternError { path: r, source: _ },
+            ) => l == r,
+            (
+                Self::GlobError(l),
+                Self::GlobError(r)
+            ) => l.path() == r.path(),
+            _ => false
+        }
+    }
+}
+
 fn validate_segment_path(
     p: PathBuf,
     exp_ext: &str
@@ -93,7 +121,7 @@ fn validate_segment_path(
                     // we're expecting a segment earlier in the sequence
                     // than the one we got => a segment is missing
                     Ordering::Greater =>
-                        Err(SegmentGlobError::MissingSegmentFile(p))
+                        Err(SegmentGlobError::MissingSegmentFile(p.with_extension(exp_ext)))
                 }
             }
         },
@@ -317,10 +345,11 @@ mod test {
         ];
 
         for ext in bad {
-            assert!(matches!(
-                validate_proto_extension(format!("img.{ext}")).unwrap_err(),
-                SegmentGlobError::UnrecognizedExtension(_)
-            ));
+            let path = format!("img.{ext}");
+            assert_eq!(
+                validate_proto_extension(&path).unwrap_err(),
+                SegmentGlobError::UnrecognizedExtension(path.into())
+            );
         }
     }
 
@@ -370,10 +399,10 @@ mod test {
         ];
 
         for (p, exp_ext) in unrecognized {
-            assert!(matches!(
-                validate_segment_path(p, exp_ext).unwrap_err(),
-                SegmentGlobError::UnrecognizedExtension(_)
-            ));
+            assert_eq!(
+                validate_segment_path(p.clone(), exp_ext).unwrap_err(),
+                SegmentGlobError::UnrecognizedExtension(p.into())
+            );
         }
     }
 
@@ -384,10 +413,10 @@ mod test {
         ];
 
         for (p, exp_ext) in duplicate {
-            assert!(matches!(
-                validate_segment_path(p, exp_ext).unwrap_err(),
-                SegmentGlobError::DuplicateSegmentFile(_)
-            ));
+            assert_eq!(
+                validate_segment_path(p.clone(), exp_ext).unwrap_err(),
+                SegmentGlobError::DuplicateSegmentFile(p.into())
+            );
         }
     }
 
@@ -398,10 +427,89 @@ mod test {
         ];
 
         for (p, exp_ext) in missing {
-            assert!(matches!(
-                validate_segment_path(p, exp_ext).unwrap_err(),
-                SegmentGlobError::MissingSegmentFile(_)
-            ));
+            assert_eq!(
+                validate_segment_path(p.clone(), exp_ext).unwrap_err(),
+                SegmentGlobError::MissingSegmentFile(p.with_extension(exp_ext))
+            );
         }
+    }
+
+    struct OkGlobber(Vec<PathBuf>);
+
+    impl Globber for OkGlobber {
+        fn glob_segment_paths<T: AsRef<Path>>(
+            self,
+            _base: T,
+            _ext_start: char
+        ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>
+        {
+            Ok(self.0.into_iter().map(Ok))
+        }
+    }
+
+    #[test]
+    fn find_segment_paths_normal() {
+        let cases = [
+            ("a/i.E01", vec!["a/i.E01", "a/i.E02"], None),
+            ("", vec![], Some(SegmentGlobError::UnrecognizedExtension("".into()))),
+            ("a/i", vec![], Some(SegmentGlobError::UnrecognizedExtension("a/i".into()))),
+            ("a/i.", vec![], Some(SegmentGlobError::UnrecognizedExtension("a/i.".into()))),
+            ("a/i.E00", vec![], Some(SegmentGlobError::UnrecognizedExtension("a/i.E00".into()))),
+            ("a/i.E01", vec!["a/i.E01", "a/i.E03"], Some(SegmentGlobError::MissingSegmentFile("a/i.E02".into()))),
+            ("a/i.E01", vec!["a/i.E01", "a/i.e01"], Some(SegmentGlobError::DuplicateSegmentFile("a/i.e01".into()))),
+        ];
+
+        for (proto, glob, err) in cases {
+            let exp_glob = glob.iter().map(PathBuf::from).collect::<Vec<_>>();
+            let globber = OkGlobber(exp_glob.clone());
+
+            // Iterator doesn't impl Debug, so we need to map it
+            // to something that does for the failure case
+            let act_glob = find_segment_paths(proto, globber)
+                .map(Iterator::collect::<Vec<_>>);
+
+            match err {
+                None => assert_eq!(act_glob.unwrap(), exp_glob),
+                Some(err) => {
+                    assert_eq!(
+                        act_glob.unwrap_err(),
+                        err
+                    );
+                }
+            }
+        }
+    }
+
+    // NB: We don't have a test for GlobError due to there being no obvious
+    // way to create one.
+
+    struct PatternErrorGlobber;
+
+    impl Globber for PatternErrorGlobber {
+        fn glob_segment_paths<T: AsRef<Path>>(
+            self,
+            base: T,
+            ext_start: char
+        ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>
+        {
+            Err::<<Vec<_> as IntoIterator>::IntoIter, PatternError>(
+                PatternError { pos: 0, msg: "" }
+            )
+        }
+    }
+
+    #[test]
+    fn find_segment_paths_pattern_error() {
+        assert_eq!(
+            // Iterator doesn't impl Debug, so we need to map it
+            // to something that does for the failure case
+            find_segment_paths("a.E01", PatternErrorGlobber)
+                .map(Iterator::collect::<Vec<_>>)
+                .unwrap_err(),
+            SegmentGlobError::PatternError {
+                path: "a.E01".into(),
+                source: PatternError { pos: 0, msg: "" }
+            }
+        );
     }
 }
