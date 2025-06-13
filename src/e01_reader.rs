@@ -18,7 +18,7 @@ use crate::generated::ewf_table_header::*;
 use crate::generated::ewf_volume::*;
 use crate::generated::ewf_volume_smart::*;
 
-use crate::seg_path::find_segment_paths;
+use crate::seg_path::{FileGlobber, find_segment_paths};
 
 #[derive(Debug)]
 pub struct FuckOffKError(KError);
@@ -551,7 +551,7 @@ impl E01Reader {
     ) -> Result<Self, E01Error>
     {
         Self::open(
-            find_segment_paths(&example_segment_path)
+            find_segment_paths(&example_segment_path, FileGlobber)
                 .or(Err(E01Error::InvalidFilename))?,
             ignore_checksums
         )

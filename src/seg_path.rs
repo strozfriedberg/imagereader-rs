@@ -136,7 +136,7 @@ fn validate_proto_extension<T: AsRef<Path>>(
         .ok_or(SegmentGlobError::UnrecognizedExtension(path.as_ref().into()))
 }
 
-trait Globber {
+pub trait Globber {
     fn glob_segment_paths<T: AsRef<Path>>(
         self,
         base: T,
@@ -144,9 +144,9 @@ trait Globber {
     ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>;
 }
 
-struct RealGlobber;
+pub struct FileGlobber;
 
-impl Globber for RealGlobber {
+impl Globber for FileGlobber {
     fn glob_segment_paths<T: AsRef<Path>>(
         self,
         base: T,
@@ -170,8 +170,9 @@ impl Globber for RealGlobber {
     }
 }
 
-pub fn find_segment_paths<T: AsRef<Path>>(
-    proto_path: T
+pub fn find_segment_paths<T: AsRef<Path>, G: Globber>(
+    proto_path: T,
+    globber : G
 ) -> Result<impl Iterator<Item = PathBuf>, SegmentGlobError>
 {
     let proto_path = proto_path.as_ref();
@@ -185,8 +186,6 @@ pub fn find_segment_paths<T: AsRef<Path>>(
         .ok_or(SegmentGlobError::UnrecognizedExtension(proto_path.into()))?;
 
     // Glob the segment paths
-    let globber = RealGlobber {};
-
     let globbed_paths = globber.glob_segment_paths(base, ext_start)
         .map_err(|e| SegmentGlobError::PatternError {
             path: proto_path.into(),
