@@ -1,6 +1,7 @@
 use glob::{GlobError, PatternError};
 use std::{
     cmp::Ordering,
+    ffi::OsStr,
     path::{Path, PathBuf}
 };
 use itertools::iproduct;
@@ -23,9 +24,9 @@ fn valid_segment_ext(ext: &str) -> bool {
     }) && ext.next().is_none() // we had three characters
 }
 
-// Example segment paths are used as the starting point for path globbing.
+// Prototype segment paths are used as the starting point for path globbing.
 // They must have valid segment extensions and also start with E, L, or S.
-fn valid_example_segment_ext(ext: &str) -> bool {
+fn valid_proto_segment_ext(ext: &str) -> bool {
     valid_segment_ext(ext) &&
     ['E', 'L', 'S'].contains(
         &ext
@@ -63,40 +64,6 @@ pub enum SegmentGlobError {
     },
     #[error("File {0} has an unrecognized extension")]
     UnrecognizedExtension(PathBuf)
-}
-
-trait Globber {
-    fn glob_segment_paths<T: AsRef<Path>>(
-        self,
-        base: T,
-        ext_start: char
-    ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>;
-}
-
-struct RealGlobber;
-
-impl Globber for RealGlobber {
-    fn glob_segment_paths<T: AsRef<Path>>(
-        self,
-        base: T,
-        ext_start: char
-    ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>
-    {
-        // Make a pattern where the extension is case-insensitive, but the
-        // base is not. Case insensitively matching the base is wrong.
-        //
-        // Hilariously, EnCase will create .E02 etc. if you start with
-        // .e01, so the extensions can actually differ in case through
-        // the sequence...
-        let glob_pattern = format!(
-            "{}.[{}-Z{}-z][0-9A-Za-z][0-9A-Za-z]",
-            base.as_ref().display(),
-            ext_start.to_ascii_uppercase(),
-            ext_start.to_ascii_lowercase()
-        );
-
-        glob::glob(&glob_pattern)
-    }
 }
 
 fn validate_segment_path(
@@ -156,33 +123,73 @@ fn validate_segment_paths<T: IntoIterator<Item = Result<PathBuf, GlobError>>>(
     Ok(segment_paths.into_iter())
 }
 
+fn validate_proto_extension<T: AsRef<Path>>(
+    path: T,
+) -> Result<String, SegmentGlobError>
+{
+    path.as_ref()
+        .extension()
+        .map(OsStr::to_string_lossy)
+        .as_deref()
+        .map(str::to_ascii_uppercase)
+        .filter(|ext| valid_proto_segment_ext(&ext))
+        .ok_or(SegmentGlobError::UnrecognizedExtension(path.as_ref().into()))
+}
+
+trait Globber {
+    fn glob_segment_paths<T: AsRef<Path>>(
+        self,
+        base: T,
+        ext_start: char
+    ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>;
+}
+
+struct RealGlobber;
+
+impl Globber for RealGlobber {
+    fn glob_segment_paths<T: AsRef<Path>>(
+        self,
+        base: T,
+        ext_start: char
+    ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>
+    {
+        // Make a pattern where the extension is case-insensitive, but the
+        // base is not. Case insensitively matching the base is wrong.
+        //
+        // Hilariously, EnCase will create .E02 etc. if you start with
+        // .e01, so the extensions can actually differ in case through
+        // the sequence...
+        let glob_pattern = format!(
+            "{}.[{}-Z{}-z][0-9A-Za-z][0-9A-Za-z]",
+            base.as_ref().display(),
+            ext_start.to_ascii_uppercase(),
+            ext_start.to_ascii_lowercase()
+        );
+
+        glob::glob(&glob_pattern)
+    }
+}
+
 pub fn find_segment_paths<T: AsRef<Path>>(
-    example_path: T
+    proto_path: T
 ) -> Result<impl Iterator<Item = PathBuf>, SegmentGlobError>
 {
-    let example_path = example_path.as_ref();
+    let proto_path = proto_path.as_ref();
 
-    // Get the extension from the example path and check it's valid
-    let ext = example_path.extension()
-        .ok_or(SegmentGlobError::UnrecognizedExtension(example_path.into()))?
-        .to_ascii_uppercase();
-
-    let ext = ext.to_string_lossy();
-    if !valid_example_segment_ext(&ext) {
-        return Err(SegmentGlobError::UnrecognizedExtension(example_path.into()));
-    }
+    // Get the extension from the prototype path and check it's valid
+    let ext = validate_proto_extension(proto_path)?;
 
     // Get the base path and initial character of extension
-    let base = example_path.with_extension("");
+    let base = proto_path.with_extension("");
     let ext_start = ext.chars().next()
-        .ok_or(SegmentGlobError::UnrecognizedExtension(example_path.into()))?;
+        .ok_or(SegmentGlobError::UnrecognizedExtension(proto_path.into()))?;
 
     // Glob the segment paths
     let globber = RealGlobber {};
 
     let globbed_paths = globber.glob_segment_paths(base, ext_start)
         .map_err(|e| SegmentGlobError::PatternError {
-            path: example_path.into(),
+            path: proto_path.into(),
             source: e
         })?;
 
@@ -195,7 +202,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn valid_segment_ext_tests() {
+    fn valid_segment_ext_ok() {
         let good = [
             "E01",
             "L01",
@@ -213,7 +220,10 @@ mod test {
             assert!(valid_segment_ext(ext));
             assert!(valid_segment_ext(&ext.to_ascii_lowercase()));
         }
+    }
 
+    #[test]
+    fn valid_segment_ext_bad() {
         let bad = [
             "",
             "E",
@@ -232,8 +242,8 @@ mod test {
     }
 
     #[test]
-    fn valid_example_segment_ext_tests() {
-        // example segment extensions must start with E, L, or S
+    fn valid_proto_segment_ext_ok() {
+        // prototype segment extensions must start with E, L, or S
         let good = [
             "E01",
             "L01",
@@ -245,10 +255,13 @@ mod test {
         ];
 
         for ext in good {
-            assert!(valid_example_segment_ext(ext));
-            assert!(valid_example_segment_ext(&ext.to_ascii_lowercase()));
+            assert!(valid_proto_segment_ext(ext));
+            assert!(valid_proto_segment_ext(&ext.to_ascii_lowercase()));
         }
+    }
 
+    #[test]
+    fn valid_proto_segment_ext_bad() {
         let bad = [
             "FAA",
             "ZZZ",
@@ -264,12 +277,56 @@ mod test {
         ];
 
         for ext in bad {
-            assert!(!valid_example_segment_ext(ext));
+            assert!(!valid_proto_segment_ext(ext));
         }
     }
 
     #[test]
-    fn segment_ext_iter_tests() {
+    fn validate_proto_extension_ok() {
+         let good = [
+            "E01",
+            "L01",
+            "S01",
+            "E99",
+            "EAA",
+            "EZZ",
+            "EZZ"
+        ];
+
+        for ext in good {
+            assert_eq!(
+                validate_proto_extension(format!("img.{ext}")).unwrap(),
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn validate_proto_extension_bad() {
+        let bad = [
+            "FAA",
+            "ZZZ",
+            "",
+            "E",
+            "E0",
+            "E00",
+            "E0A",
+            "EA0",
+            "AbC",
+            "gtfo",
+            "💩"
+        ];
+
+        for ext in bad {
+            assert!(matches!(
+                validate_proto_extension(format!("img.{ext}")).unwrap_err(),
+                SegmentGlobError::UnrecognizedExtension(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn segment_ext_iter_boundaries() {
         // check that a sample of extensions are in the expected positions
         let mut i = segment_ext_iter('E');
         assert_eq!(i.next(), Some("E01".into()));
@@ -287,5 +344,65 @@ mod test {
         let mut i = i.skip(14194);
         assert_eq!(i.next(), Some("ZZZ".into()));
         assert_eq!(i.next(), None);
+    }
+
+    #[test]
+    fn validate_segment_path_ok() {
+        let good = [
+            (PathBuf::from("a/img.E01"), "E01"),
+            (PathBuf::from("a/img.E02"), "E02"),
+            (PathBuf::from("a/img.e02"), "E02")
+        ];
+
+        for (p, exp_ext) in good {
+            assert_eq!(
+                validate_segment_path(p.clone(), exp_ext).unwrap(),
+                p
+            );
+        }
+    }
+
+    #[test]
+    fn validate_segment_path_unrecognized() {
+        let unrecognized = [
+            (PathBuf::from(""), "E01"),
+            (PathBuf::from("img"), "E01"),
+            (PathBuf::from("a/img.E00"), "E01"),
+        ];
+
+        for (p, exp_ext) in unrecognized {
+            assert!(matches!(
+                validate_segment_path(p, exp_ext).unwrap_err(),
+                SegmentGlobError::UnrecognizedExtension(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn validate_segment_path_duplicate() {
+        let duplicate = [
+            (PathBuf::from("img.E01"), "E02")
+        ];
+
+        for (p, exp_ext) in duplicate {
+            assert!(matches!(
+                validate_segment_path(p, exp_ext).unwrap_err(),
+                SegmentGlobError::DuplicateSegmentFile(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn validate_segment_path_missing() {
+        let missing = [
+            (PathBuf::from("img.E02"), "E01")
+        ];
+
+        for (p, exp_ext) in missing {
+            assert!(matches!(
+                validate_segment_path(p, exp_ext).unwrap_err(),
+                SegmentGlobError::MissingSegmentFile(_)
+            ));
+        }
     }
 }
