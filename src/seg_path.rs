@@ -1,6 +1,4 @@
-use glob::{GlobError, PatternError};
 use std::{
-    cmp::Ordering,
     ffi::OsStr,
     path::{Path, PathBuf}
 };
@@ -49,111 +47,17 @@ fn segment_ext_iter(start: char) -> impl Iterator<Item = String> {
         )
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum SegmentGlobError {
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum SegmentPathError {
     #[error("File {0} is case-insensitively ambiguous")]
     DuplicateSegmentFile(PathBuf),
-    #[error("Failed to read file {}: {}", .0.path().display(), .0)]
-    GlobError(#[from] glob::GlobError),
-    #[error("File {0} not found")]
-    MissingSegmentFile(PathBuf),
-    #[error("Failed to make glob pattern for file {path}: {source}")]
-    PatternError {
-        path: PathBuf,
-        source: glob::PatternError
-    },
     #[error("File {0} has an unrecognized extension")]
     UnrecognizedExtension(PathBuf)
 }
 
-impl PartialEq for SegmentGlobError {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::DuplicateSegmentFile(l),
-                Self::DuplicateSegmentFile(r)
-            ) |
-            (
-                Self::MissingSegmentFile(l),
-                Self::MissingSegmentFile(r)
-            ) |
-            (
-                Self::UnrecognizedExtension(l),
-                Self::UnrecognizedExtension(r)
-            ) |
-            (
-                Self::PatternError { path: l, source: _ },
-                Self::PatternError { path: r, source: _ },
-            ) => l == r,
-            (
-                Self::GlobError(l),
-                Self::GlobError(r)
-            ) => l.path() == r.path(),
-            _ => false
-        }
-    }
-}
-
-fn validate_segment_path(
-    p: PathBuf,
-    exp_ext: &str
-) -> Result<PathBuf, SegmentGlobError>
-{
-    match p.extension() {
-        Some(ext) => {
-            let uc_ext = ext.to_ascii_uppercase();
-            let uc_ext = uc_ext.to_string_lossy();
-
-            if !valid_segment_ext(&uc_ext) {
-                Err(SegmentGlobError::UnrecognizedExtension(p))
-            }
-            else {
-                match (*uc_ext).cmp(&exp_ext) {
-                    // yay, we got a good path
-                    Ordering::Equal => Ok(p),
-
-                    // we're expecting a segment later in the sequence
-                    // than the one we got; we have a case-insensitive
-                    // duplicate segment (e.g., e02 and E02 both exist)
-                    Ordering::Less =>
-                        Err(SegmentGlobError::DuplicateSegmentFile(p)),
-
-                    // we're expecting a segment earlier in the sequence
-                    // than the one we got => a segment is missing
-                    Ordering::Greater =>
-                        Err(SegmentGlobError::MissingSegmentFile(p.with_extension(exp_ext)))
-                }
-            }
-        },
-        // wtf, how did we get no extension when the glob has one?
-        None => Err(SegmentGlobError::UnrecognizedExtension(p))
-    }
-}
-
-fn validate_segment_paths<T: IntoIterator<Item = Result<PathBuf, GlobError>>>(
-    globbed_paths: T,
-    ext_start: char
-) -> Result<impl Iterator<Item = PathBuf>, SegmentGlobError>
-{
-    let mut segment_paths = vec![];
-
-    // this is the sequence of extensions segments must have
-    let ext_sequence = segment_ext_iter(ext_start);
-
-    for (p, exp_ext) in globbed_paths.into_iter().zip(ext_sequence) {
-        match p {
-            Ok(p) => segment_paths.push(validate_segment_path(p, &exp_ext)?),
-            // glob couldn't read this file for some reason
-            Err(e) => return Err(SegmentGlobError::GlobError(e))
-        }
-    }
-
-    Ok(segment_paths.into_iter())
-}
-
 fn validate_proto_extension<T: AsRef<Path>>(
     path: T,
-) -> Result<String, SegmentGlobError>
+    ) -> Result<String, SegmentPathError>
 {
     path.as_ref()
         .extension()
@@ -161,47 +65,71 @@ fn validate_proto_extension<T: AsRef<Path>>(
         .as_deref()
         .map(str::to_ascii_uppercase)
         .filter(|ext| valid_proto_segment_ext(&ext))
-        .ok_or(SegmentGlobError::UnrecognizedExtension(path.as_ref().into()))
+        .ok_or(SegmentPathError::UnrecognizedExtension(path.as_ref().into()))
 }
 
-pub trait Globber {
-    fn glob_segment_paths<T: AsRef<Path>>(
-        self,
-        base: T,
-        ext_start: char
-    ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>;
+pub trait ExistsChecker {
+    fn is_file<T: AsRef<Path>>(&mut self, path: T) -> bool;
 }
 
-pub struct FileGlobber;
+pub struct FileChecker;
 
-impl Globber for FileGlobber {
-    fn glob_segment_paths<T: AsRef<Path>>(
-        self,
-        base: T,
-        ext_start: char
-    ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>
-    {
-        // Make a pattern where the extension is case-insensitive, but the
-        // base is not. Case insensitively matching the base is wrong.
-        //
-        // Hilariously, EnCase will create .E02 etc. if you start with
-        // .e01, so the extensions can actually differ in case through
-        // the sequence...
-        let glob_pattern = format!(
-            "{}.[{}-Z{}-z][0-9A-Za-z][0-9A-Za-z]",
-            base.as_ref().display(),
-            ext_start.to_ascii_uppercase(),
-            ext_start.to_ascii_lowercase()
-        );
-
-        glob::glob(&glob_pattern)
+impl ExistsChecker for FileChecker {
+    fn is_file<T: AsRef<Path>>(&mut self, path: T) -> bool {
+        path.as_ref().is_file()
     }
 }
 
-pub fn find_segment_paths<T: AsRef<Path>, G: Globber>(
+fn validate_segment_path<T: AsRef<Path>, C: ExistsChecker>(
+    base_path: T,
+    ext: &str,
+    checker: &mut C
+) -> Result<Option<PathBuf>, SegmentPathError>
+{
+    let base_path = base_path.as_ref();
+
+    // Hilariously, EnCase will create .E02 etc. if you start with
+    // .e01, so the extensions can actually differ in case through
+    // the sequence...
+    let seg_path_uc = base_path.with_extension(ext);
+    let seg_path_lc = base_path.with_extension(ext.to_ascii_lowercase());
+
+    match (checker.is_file(&seg_path_uc), checker.is_file(&seg_path_lc)) {
+        // we found only the uppercase extension
+        (true, false) => Ok(Some(seg_path_uc)),
+        // we found only the lowercase extension
+        (false, true) => Ok(Some(seg_path_lc)),
+        // we found both extensions (!)
+        (true, true) => Err(SegmentPathError::DuplicateSegmentFile(seg_path_uc)),
+        // we found neither extension, maybe end of segments?
+        (false, false) => Ok(None)
+    }
+}
+
+fn validate_segment_paths<T: AsRef<Path>, C: ExistsChecker>(
+    base_path: T,
+    ext_start: char,
+    checker: &mut C
+) -> Result<impl Iterator<Item = PathBuf>, SegmentPathError>
+{
+    let mut segment_paths = vec![];
+
+    // step through the sequence of extensions
+    for ext in segment_ext_iter(ext_start) {
+        match validate_segment_path(&base_path, &ext, checker) {
+            Ok(Some(p)) => segment_paths.push(p),
+            Ok(None) => break,
+            Err(e) => return Err(e)
+        }
+    }
+
+    Ok(segment_paths.into_iter())
+}
+
+pub fn find_segment_paths<T: AsRef<Path>, C: ExistsChecker>(
     proto_path: T,
-    globber : G
-) -> Result<impl Iterator<Item = PathBuf>, SegmentGlobError>
+    checker: &mut C
+) -> Result<impl Iterator<Item = PathBuf>, SegmentPathError>
 {
     let proto_path = proto_path.as_ref();
 
@@ -211,17 +139,9 @@ pub fn find_segment_paths<T: AsRef<Path>, G: Globber>(
     // Get the base path and initial character of extension
     let base = proto_path.with_extension("");
     let ext_start = ext.chars().next()
-        .ok_or(SegmentGlobError::UnrecognizedExtension(proto_path.into()))?;
+        .ok_or(SegmentPathError::UnrecognizedExtension(proto_path.into()))?;
 
-    // Glob the segment paths
-    let globbed_paths = globber.glob_segment_paths(base, ext_start)
-        .map_err(|e| SegmentGlobError::PatternError {
-            path: proto_path.into(),
-            source: e
-        })?;
-
-    // Validate what was globbed
-    validate_segment_paths(globbed_paths, ext_start)
+    validate_segment_paths(base, ext_start, checker)
 }
 
 #[cfg(test)]
@@ -348,7 +268,7 @@ mod test {
             let path = format!("img.{ext}");
             assert_eq!(
                 validate_proto_extension(&path).unwrap_err(),
-                SegmentGlobError::UnrecognizedExtension(path.into())
+                SegmentPathError::UnrecognizedExtension(path.into())
             );
         }
     }
@@ -374,142 +294,99 @@ mod test {
         assert_eq!(i.next(), None);
     }
 
+    struct SeqChecker<S: Iterator<Item = bool>>(S);
+
+    impl<S: Iterator<Item = bool>> SeqChecker<S> {
+        fn new(seq: impl IntoIterator<Item = bool, IntoIter = S>) -> Self
+        {
+            Self(seq.into_iter())
+        }
+    }
+
+    impl<S: Iterator<Item = bool>> ExistsChecker for SeqChecker<S> {
+        fn is_file<T: AsRef<Path>>(&mut self, _path: T) -> bool {
+            self.0.next().unwrap_or(false)
+        }
+    }
+
+    struct TrueChecker;
+
+    impl ExistsChecker for TrueChecker {
+        fn is_file<T: AsRef<Path>>(&mut self, _path: T) -> bool {
+            true
+        }
+    }
+
     #[test]
     fn validate_segment_path_ok() {
         let good = [
-            (PathBuf::from("a/img.E01"), "E01"),
-            (PathBuf::from("a/img.E02"), "E02"),
-            (PathBuf::from("a/img.e02"), "E02")
+            (PathBuf::from("a/img.E01"), "E01", SeqChecker::new([true, false])),
+            (PathBuf::from("a/img.E02"), "E02", SeqChecker::new([true, false])),
+            (PathBuf::from("a/img.e02"), "E02", SeqChecker::new([false, true]))
         ];
 
-        for (p, exp_ext) in good {
+        for (p, exp_ext, mut ch) in good {
             assert_eq!(
-                validate_segment_path(p.clone(), exp_ext).unwrap(),
-                p
+                validate_segment_path(p.clone(), exp_ext, &mut ch).unwrap(),
+                Some(p)
             );
         }
-    }
-
-    #[test]
-    fn validate_segment_path_unrecognized() {
-        let unrecognized = [
-            (PathBuf::from(""), "E01"),
-            (PathBuf::from("img"), "E01"),
-            (PathBuf::from("a/img.E00"), "E01"),
-        ];
-
-        for (p, exp_ext) in unrecognized {
-            assert_eq!(
-                validate_segment_path(p.clone(), exp_ext).unwrap_err(),
-                SegmentGlobError::UnrecognizedExtension(p.into())
-            );
-        }
-    }
+     }
 
     #[test]
     fn validate_segment_path_duplicate() {
         let duplicate = [
-            (PathBuf::from("img.E01"), "E02")
+            (PathBuf::from("img.E01"), "E01")
         ];
+
+        let mut ch = TrueChecker; // both E01 and e01 exist
 
         for (p, exp_ext) in duplicate {
             assert_eq!(
-                validate_segment_path(p.clone(), exp_ext).unwrap_err(),
-                SegmentGlobError::DuplicateSegmentFile(p.into())
+                validate_segment_path(p.clone(), exp_ext, &mut ch).unwrap_err(),
+                SegmentPathError::DuplicateSegmentFile(p.into())
             );
         }
     }
 
     #[test]
-    fn validate_segment_path_missing() {
-        let missing = [
-            (PathBuf::from("img.E02"), "E01")
-        ];
-
-        for (p, exp_ext) in missing {
-            assert_eq!(
-                validate_segment_path(p.clone(), exp_ext).unwrap_err(),
-                SegmentGlobError::MissingSegmentFile(p.with_extension(exp_ext))
-            );
-        }
-    }
-
-    struct OkGlobber(Vec<PathBuf>);
-
-    impl Globber for OkGlobber {
-        fn glob_segment_paths<T: AsRef<Path>>(
-            self,
-            _base: T,
-            _ext_start: char
-        ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>
-        {
-            Ok(self.0.into_iter().map(Ok))
-        }
-    }
-
-    #[test]
-    fn find_segment_paths_normal() {
+    fn find_segment_paths_ok() {
         let cases = [
-            ("a/i.E01", vec!["a/i.E01", "a/i.E02"], None),
-            ("", vec![], Some(SegmentGlobError::UnrecognizedExtension("".into()))),
-            ("a/i", vec![], Some(SegmentGlobError::UnrecognizedExtension("a/i".into()))),
-            ("a/i.", vec![], Some(SegmentGlobError::UnrecognizedExtension("a/i.".into()))),
-            ("a/i.E00", vec![], Some(SegmentGlobError::UnrecognizedExtension("a/i.E00".into()))),
-            ("a/i.E01", vec!["a/i.E01", "a/i.E03"], Some(SegmentGlobError::MissingSegmentFile("a/i.E02".into()))),
-            ("a/i.E01", vec!["a/i.E01", "a/i.e01"], Some(SegmentGlobError::DuplicateSegmentFile("a/i.e01".into()))),
+            ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, false, true, false])),
+            ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, false, true, false])),
+            ("a/i.e01", vec!["a/i.e01", "a/i.E02"], SeqChecker::new([false, true, true, false])),
+            ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, false, true]))
         ];
 
-        for (proto, glob, err) in cases {
-            let exp_glob = glob.iter().map(PathBuf::from).collect::<Vec<_>>();
-            let globber = OkGlobber(exp_glob.clone());
+        for (proto, paths, mut ch) in cases {
+            let exp_paths = paths.iter().map(PathBuf::from).collect::<Vec<_>>();
 
             // Iterator doesn't impl Debug, so we need to map it
             // to something that does for the failure case
-            let act_glob = find_segment_paths(proto, globber)
+            let act_paths = find_segment_paths(proto, &mut ch)
                 .map(Iterator::collect::<Vec<_>>);
 
-            match err {
-                None => assert_eq!(act_glob.unwrap(), exp_glob),
-                Some(err) => {
-                    assert_eq!(
-                        act_glob.unwrap_err(),
-                        err
-                    );
-                }
-            }
-        }
-    }
-
-    // NB: We don't have a test for GlobError due to there being no obvious
-    // way to create one.
-
-    struct PatternErrorGlobber;
-
-    impl Globber for PatternErrorGlobber {
-        fn glob_segment_paths<T: AsRef<Path>>(
-            self,
-            base: T,
-            ext_start: char
-        ) -> Result<impl Iterator<Item = Result<PathBuf, GlobError>>, PatternError>
-        {
-            Err::<<Vec<_> as IntoIterator>::IntoIter, PatternError>(
-                PatternError { pos: 0, msg: "" }
-            )
+            assert_eq!(act_paths.unwrap(), exp_paths);
         }
     }
 
     #[test]
-    fn find_segment_paths_pattern_error() {
-        assert_eq!(
+    fn find_segment_paths_err() {
+        let cases = [
+            ("", TrueChecker, SegmentPathError::UnrecognizedExtension("".into())),
+            ("a/i", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i".into())),
+            ("a/i.", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i.".into())),
+            ("a/i.E00", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i.E00".into())),
+            ("a/i.E01", TrueChecker, SegmentPathError::DuplicateSegmentFile("a/i.E01".into()))
+        ];
+
+        for (proto, mut ch, err) in cases {
             // Iterator doesn't impl Debug, so we need to map it
             // to something that does for the failure case
-            find_segment_paths("a.E01", PatternErrorGlobber)
-                .map(Iterator::collect::<Vec<_>>)
-                .unwrap_err(),
-            SegmentGlobError::PatternError {
-                path: "a.E01".into(),
-                source: PatternError { pos: 0, msg: "" }
-            }
-        );
+            let act_paths = find_segment_paths(proto, &mut ch)
+                .map(Iterator::collect::<Vec<_>>);
+
+            assert_eq!(act_paths.unwrap_err(), err);
+        }
     }
 }
