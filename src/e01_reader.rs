@@ -397,6 +397,58 @@ impl Segment {
         Ok(digest_section.clone())
     }
 
+    fn read_section(
+        io: &BytesReader,
+        chunks: &mut Vec<Chunk>,
+        volume: &mut Option<VolumeSection>,
+        stored_md5: &mut Option<Vec<u8>>,
+        stored_sha1: &mut Option<Vec<u8>>,
+        end_of_sectors: &mut u64,
+        ignore_checksums: bool
+    ) -> Result<(usize, String), E01Error> {
+        let section =
+            EwfSectionDescriptorV1::read_into::<_, EwfSectionDescriptorV1>(io, None, None)
+                .map_err(|e| E01Error::DeserializationFailed { name: "EwfFileHeaderV1".into(), source: FuckOffKError(e) })?;
+
+        let section_offset = *section.next_offset() as usize;
+        let section_size = if *section.size() > 0x4c
+        /* header size */
+        {
+            *section.size() - 0x4c
+        } else {
+            0
+        };
+        let section_type_full = section.type_string();
+        let section_type = section_type_full.trim_matches(char::from(0));
+
+        if section_type == "disk" || section_type == "volume" {
+            *volume = Some(VolumeSection::new(&io, section_size, ignore_checksums)?);
+        }
+
+        if section_type == "table" {
+            chunks.extend(Segment::read_table(&io, section_size, ignore_checksums)?);
+            let chunks_len = chunks.len();
+            chunks[chunks_len - 1].end_offset = Some(*end_of_sectors);
+        }
+
+        if section_type == "sectors" {
+            *end_of_sectors = io.pos() as u64 + section_size;
+        }
+
+        if section_type == "hash" {
+            let hash_section = Self::get_hash_section(&io, ignore_checksums)?;
+            *stored_md5 = Some(hash_section.md5().clone());
+        }
+
+        if section_type == "digest" {
+            let digest_section = Self::get_digest_section(&io, ignore_checksums)?;
+            *stored_md5 = Some(digest_section.md5().clone());
+            *stored_sha1 = Some(digest_section.sha1().clone());
+        }
+
+        Ok((section_offset, section_type.into()))
+    }
+
     pub fn read<T: AsRef<Path>>(
         f: T,
         volume: &mut Option<VolumeSection>,
@@ -419,45 +471,15 @@ impl Segment {
                 }
             )?;
 
-            let section =
-                EwfSectionDescriptorV1::read_into::<_, EwfSectionDescriptorV1>(&io, None, None)
-                    .map_err(|e| E01Error::DeserializationFailed { name: format!("Segment file {} EwfFileHeaderV1", f.as_ref().to_string_lossy()), source: FuckOffKError(e) })?;
-
-            let section_offset = *section.next_offset() as usize;
-            let section_size = if *section.size() > 0x4c
-            /* header size */
-            {
-                *section.size() - 0x4c
-            } else {
-                0
-            };
-            let section_type_full = section.type_string();
-            let section_type = section_type_full.trim_matches(char::from(0));
-
-            if section_type == "disk" || section_type == "volume" {
-                *volume = Some(VolumeSection::new(&io, section_size, ignore_checksums)?);
-            }
-
-            if section_type == "table" {
-                chunks.extend(Segment::read_table(&io, section_size, ignore_checksums)?);
-                let chunks_len = chunks.len();
-                chunks[chunks_len - 1].end_offset = Some(end_of_sectors);
-            }
-
-            if section_type == "sectors" {
-                end_of_sectors = io.pos() as u64 + section_size;
-            }
-
-            if section_type == "hash" {
-                let hash_section = Self::get_hash_section(&io, ignore_checksums)?;
-                *stored_md5 = Some(hash_section.md5().clone());
-            }
-
-            if section_type == "digest" {
-                let digest_section = Self::get_digest_section(&io, ignore_checksums)?;
-                *stored_md5 = Some(digest_section.md5().clone());
-                *stored_sha1 = Some(digest_section.sha1().clone());
-            }
+            let (section_offset, section_type) = Self::read_section(
+                &io,
+                &mut chunks,
+                volume,
+                stored_md5,
+                stored_sha1,
+                &mut end_of_sectors,
+                ignore_checksums
+            )?;
 
             if current_offset == section_offset || section_type == "done" {
                 break;
