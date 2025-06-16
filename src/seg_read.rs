@@ -1,0 +1,91 @@
+use crate::e01_reader::{Chunk, E01Error, FuckOffKError, Segment, VolumeSection, checksum_ok};
+use crate::generated::ewf_digest_section::EwfDigestSection;
+use crate::generated::ewf_hash_section::EwfHashSection;
+use crate::generated::ewf_section_descriptor_v1::EwfSectionDescriptorV1;
+
+use kaitai::{BytesReader, KStream, KStruct, OptRc};
+
+pub enum Section {
+    Volume(VolumeSection),
+    Table(Vec<Chunk>),
+    Sectors(u64),
+    Hash(OptRc<EwfHashSection>),
+    Digest(OptRc<EwfDigestSection>),
+    Done,
+    Other
+}
+
+pub fn read_section(
+    io: &BytesReader,
+    ignore_checksums: bool
+) -> Result<(usize, Section), E01Error> {
+
+    let sd = EwfSectionDescriptorV1::read_into::<_, EwfSectionDescriptorV1>(io, None, None)
+        .map_err(|e| E01Error::DeserializationFailed { name: "EwfFileHeaderV1".into(), source: FuckOffKError(e) })?;
+
+    let section_size = if *sd.size() > 0x4c {
+        /* header size */
+        *sd.size() - 0x4c
+    }
+    else {
+        0
+    };
+
+    let section_type_full = sd.type_string();
+    let section_type = section_type_full.trim_matches(char::from(0));
+
+    let section = match section_type {
+        "disk" | "volume" =>
+            Section::Volume(VolumeSection::new(&io, section_size, ignore_checksums)?),
+        "table" =>
+            Section::Table(Segment::read_table(&io, section_size, ignore_checksums)?),
+        "sectors" => Section::Sectors(io.pos() as u64 + section_size),
+        "hash" => Section::Hash(get_hash_section(&io, ignore_checksums)?),
+        "digest" => Section::Digest(get_digest_section(&io, ignore_checksums)?),
+        "done" => Section::Done,
+        _ => Section::Other
+    };
+
+    let section_offset = *sd.next_offset() as usize;
+
+    Ok((section_offset, section))
+}
+
+fn get_hash_section(
+    io: &BytesReader,
+    ignore_checksums: bool,
+) -> Result<OptRc<EwfHashSection>, E01Error> {
+    let hash_section =
+        EwfHashSection::read_into::<_, EwfHashSection>(io, None, None)
+            .map_err(|e| E01Error::DeserializationFailed { name: "EwfHashSection".into(), source: FuckOffKError(e) })?;
+
+    if !ignore_checksums {
+        checksum_ok(
+            "Hash section",
+            io,
+            &hash_section._io(),
+            *hash_section.checksum(),
+        )?;
+    }
+
+    Ok(hash_section.clone())
+}
+
+fn get_digest_section(
+    io: &BytesReader,
+    ignore_checksums: bool,
+) -> Result<OptRc<EwfDigestSection>, E01Error> {
+    let digest_section = EwfHashSection::read_into::<_, EwfDigestSection>(io, None, None)
+        .map_err(|e| E01Error::DeserializationFailed { name: "EwfDigestSection".into(), source: FuckOffKError(e) })?;
+
+    if !ignore_checksums {
+        checksum_ok(
+            "Digest section",
+            io,
+            &digest_section._io(),
+            *digest_section.checksum(),
+        )?;
+    }
+
+    Ok(digest_section.clone())
+}

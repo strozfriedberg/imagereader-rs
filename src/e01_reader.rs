@@ -10,18 +10,16 @@ use self::kaitai::*;
 
 use crate::generated::ewf_file_header_v1::*;
 use crate::generated::ewf_file_header_v2::*;
-use crate::generated::ewf_section_descriptor_v1::*;
 //use crate::generated::ewf_section_descriptor_v2::*;
-use crate::generated::ewf_digest_section::*;
-use crate::generated::ewf_hash_section::*;
 use crate::generated::ewf_table_header::*;
 use crate::generated::ewf_volume::*;
 use crate::generated::ewf_volume_smart::*;
 
 use crate::seg_path::{FileChecker, find_segment_paths};
+use crate::seg_read::{self, Section};
 
 #[derive(Debug)]
-pub struct FuckOffKError(KError);
+pub struct FuckOffKError(pub KError);
 
 impl std::fmt::Display for FuckOffKError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -197,7 +195,7 @@ fn checksum_reader(
     )
 }
 
-fn checksum_ok(
+pub fn checksum_ok(
     section_type: &str,
     io: &BytesReader,
     section_io: &BytesReader,
@@ -297,14 +295,14 @@ pub struct Segment {
 }
 
 #[derive(Debug)]
-struct Chunk {
+pub struct Chunk {
     data_offset: u64,
     compressed: bool,
     end_offset: Option<u64>,
 }
 
 impl Segment {
-    fn read_table(
+    pub fn read_table(
         io: &BytesReader,
         _size: u64,
         ignore_checksums: bool,
@@ -358,97 +356,6 @@ impl Segment {
         Ok(chunks)
     }
 
-    fn get_hash_section(
-        io: &BytesReader,
-        ignore_checksums: bool,
-    ) -> Result<OptRc<EwfHashSection>, E01Error> {
-        let hash_section =
-            EwfHashSection::read_into::<_, EwfHashSection>(io, None, None)
-                .map_err(|e| E01Error::DeserializationFailed { name: "EwfHashSection".into(), source: FuckOffKError(e) })?;
-
-        if !ignore_checksums {
-            checksum_ok(
-                "Hash section",
-                io,
-                &hash_section._io(),
-                *hash_section.checksum(),
-            )?;
-        }
-
-        Ok(hash_section.clone())
-    }
-
-    fn get_digest_section(
-        io: &BytesReader,
-        ignore_checksums: bool,
-    ) -> Result<OptRc<EwfDigestSection>, E01Error> {
-        let digest_section = EwfHashSection::read_into::<_, EwfDigestSection>(io, None, None)
-            .map_err(|e| E01Error::DeserializationFailed { name: "EwfDigestSection".into(), source: FuckOffKError(e) })?;
-
-        if !ignore_checksums {
-            checksum_ok(
-                "Digest section",
-                io,
-                &digest_section._io(),
-                *digest_section.checksum(),
-            )?;
-        }
-
-        Ok(digest_section.clone())
-    }
-
-    fn read_section(
-        io: &BytesReader,
-        chunks: &mut Vec<Chunk>,
-        volume: &mut Option<VolumeSection>,
-        stored_md5: &mut Option<Vec<u8>>,
-        stored_sha1: &mut Option<Vec<u8>>,
-        end_of_sectors: &mut u64,
-        ignore_checksums: bool
-    ) -> Result<(usize, String), E01Error> {
-        let section =
-            EwfSectionDescriptorV1::read_into::<_, EwfSectionDescriptorV1>(io, None, None)
-                .map_err(|e| E01Error::DeserializationFailed { name: "EwfFileHeaderV1".into(), source: FuckOffKError(e) })?;
-
-        let section_offset = *section.next_offset() as usize;
-        let section_size = if *section.size() > 0x4c
-        /* header size */
-        {
-            *section.size() - 0x4c
-        } else {
-            0
-        };
-        let section_type_full = section.type_string();
-        let section_type = section_type_full.trim_matches(char::from(0));
-
-        if section_type == "disk" || section_type == "volume" {
-            *volume = Some(VolumeSection::new(&io, section_size, ignore_checksums)?);
-        }
-
-        if section_type == "table" {
-            chunks.extend(Segment::read_table(&io, section_size, ignore_checksums)?);
-            let chunks_len = chunks.len();
-            chunks[chunks_len - 1].end_offset = Some(*end_of_sectors);
-        }
-
-        if section_type == "sectors" {
-            *end_of_sectors = io.pos() as u64 + section_size;
-        }
-
-        if section_type == "hash" {
-            let hash_section = Self::get_hash_section(&io, ignore_checksums)?;
-            *stored_md5 = Some(hash_section.md5().clone());
-        }
-
-        if section_type == "digest" {
-            let digest_section = Self::get_digest_section(&io, ignore_checksums)?;
-            *stored_md5 = Some(digest_section.md5().clone());
-            *stored_sha1 = Some(digest_section.sha1().clone());
-        }
-
-        Ok((section_offset, section_type.into()))
-    }
-
     pub fn read<T: AsRef<Path>>(
         f: T,
         volume: &mut Option<VolumeSection>,
@@ -471,20 +378,31 @@ impl Segment {
                 }
             )?;
 
-            let (section_offset, section_type) = Self::read_section(
-                &io,
-                &mut chunks,
-                volume,
-                stored_md5,
-                stored_sha1,
-                &mut end_of_sectors,
-                ignore_checksums
+            let (section_offset, section) = seg_read::read_section(
+                &io, ignore_checksums
             )?;
 
-            if current_offset == section_offset || section_type == "done" {
-                break;
+            match section {
+                Section::Volume(v) => *volume = Some(v),
+                Section::Table(t) => {
+                    chunks.extend(t);
+                    let chunks_len = chunks.len();
+                    chunks[chunks_len - 1].end_offset = Some(end_of_sectors);
+                },
+                Section::Sectors(eos) => end_of_sectors = eos,
+                Section::Hash(h) => *stored_md5 = Some(h.md5().clone()),
+                Section::Digest(d) => {
+                    *stored_md5 = Some(d.md5().clone());
+                    *stored_sha1 = Some(d.sha1().clone());
+                },
+                Section::Done => break,
+                _ => {}
             }
 
+            if current_offset == section_offset {
+                break;
+            }
+            
             current_offset = section_offset;
         }
 
@@ -572,10 +490,9 @@ impl E01Reader {
         ignore_checksums: bool
     ) -> Result<Self, E01Error>
     {
-        let mut checker = FileChecker;
-
         Self::open(
-            find_segment_paths(&example_segment_path, &mut checker)
+            find_segment_paths(&example_segment_path, &mut FileChecker)
+// TODO: report actual error
                 .or(Err(E01Error::InvalidFilename))?,
             ignore_checksums
         )
@@ -595,7 +512,7 @@ impl E01Reader {
         let mut segments = vec![];
         let mut chunks = 0;
 
-        // read first segment, volume section must be contained in it
+        // read first segment; volume section must be contained in it
         let sp = segment_paths.next()
             .ok_or(E01Error::InvalidFilename)?;
 
