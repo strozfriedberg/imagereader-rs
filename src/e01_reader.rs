@@ -1,11 +1,8 @@
-use std::convert::TryFrom;
 use std::path::{Path, PathBuf};
 
 extern crate kaitai;
 use self::kaitai::*;
 
-use crate::generated::ewf_file_header_v1::*;
-use crate::generated::ewf_file_header_v2::*;
 //use crate::generated::ewf_section_descriptor_v2::*;
 
 use crate::sec_read::VolumeSection;
@@ -89,88 +86,6 @@ pub enum E01Error {
     TooFewChunks,
     #[error("Duplicate volume section")]
     DuplicateVolumeSection
-}
-
-#[derive(Debug)]
-pub enum CompressionMethod {
-    None = 0,
-    Deflate = 1,
-    Bzip = 2,
-}
-
-impl TryFrom<u16> for CompressionMethod {
-    type Error = E01Error;
-
-    fn try_from(v: u16) -> Result<Self, Self::Error> {
-        match v {
-            x if x == Self::None as u16 => Ok(Self::None),
-            x if x == Self::Deflate as u16 => Ok(Self::Deflate),
-            x if x == Self::Bzip as u16 => Ok(Self::Bzip),
-            _ => Err(E01Error::UnknownCompressionMethod(v))
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SegmentFileHeader {
-    pub major_version: u8,
-    pub minor_version: u8,
-    pub compr_method: CompressionMethod,
-    pub segment_number: u16,
-}
-
-impl SegmentFileHeader {
-    pub fn new(io: &BytesReader) -> Result<Self, E01Error> {
-        let first_bytes = io
-            .read_bytes(8)
-            .map_err(|e| E01Error::ReadError { source: FuckOffKError(e) })?;
-
-        io.seek(0)
-            .map_err(|e| E01Error::SeekError { source: FuckOffKError(e) })?;
-
-        // read file header
-
-        if first_bytes == [0x45, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00] // EWF, EWF-E01, EWF-S01
-            || first_bytes == [0x4c, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00]
-        // EWF-L01
-        // V1
-        {
-            match EwfFileHeaderV1::read_into::<_, EwfFileHeaderV1>(io, None, None) {
-                Ok(h) => {
-                    Ok(SegmentFileHeader {
-                        major_version: 1,
-                        minor_version: 0,
-                        compr_method: CompressionMethod::Deflate,
-                        segment_number: *h.segment_number(),
-                    })
-                }
-                Err(e) => {
-                    Err(E01Error::DeserializationFailed { name: "EwfFileHeaderV1".into(), source: FuckOffKError(e) })
-                }
-            }
-        } else if first_bytes == [0x45, 0x56, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] // EVF2
-            || first_bytes == [0x4c, 0x45, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00]
-        // LEF2
-        // V2
-        {
-            match EwfFileHeaderV2::read_into::<_, EwfFileHeaderV2>(io, None, None) {
-                Ok(h) => {
-                    Ok(SegmentFileHeader {
-                        major_version: *h.major_version(),
-                        minor_version: *h.minor_version(),
-                        compr_method: (*h.compression_method()).try_into()?,
-                        segment_number: *h.segment_number(),
-                    })
-                }
-                Err(e) => {
-                    Err(E01Error::DeserializationFailed { name: "EwfFileHeaderV2".into(), source: FuckOffKError(e) })
-                }
-            }
-        }
-        else {
-            Err(E01Error::InvalidSegmentFile)
-        }
-    }
 }
 
 #[derive(Debug)]
