@@ -156,7 +156,7 @@ impl Segment {
             io,
             _header: header,
             chunks,
-            end_of_sectors,
+            end_of_sectors
         };
 
         Ok(segment)
