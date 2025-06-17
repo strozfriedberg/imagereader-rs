@@ -25,7 +25,7 @@ pub enum Section {
     Other
 }
 
-pub fn checksum_reader(
+fn checksum_reader(
     reader: &BytesReader,
     len: usize
 ) -> Result<u32, E01Error>
@@ -39,7 +39,7 @@ pub fn checksum_reader(
     )?)
 }
 
-pub fn checksum_ok(
+fn checksum_ok(
     section_type: &str,
     io: &BytesReader,
     section_io: &BytesReader,
