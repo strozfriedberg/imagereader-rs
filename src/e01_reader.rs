@@ -11,10 +11,10 @@ use self::kaitai::*;
 use crate::generated::ewf_file_header_v1::*;
 use crate::generated::ewf_file_header_v2::*;
 //use crate::generated::ewf_section_descriptor_v2::*;
-use crate::generated::ewf_table_header::*;
 use crate::generated::ewf_volume::*;
 use crate::generated::ewf_volume_smart::*;
 
+use crate::checksum::{checksum, checksum_ok};
 use crate::sec_read::{self, Section};
 use crate::seg_path::{FileChecker, find_segment_paths};
 
@@ -179,36 +179,6 @@ impl SegmentFileHeader {
     }
 }
 
-fn checksum(bytes: &[u8]) -> Result<u32, E01Error> {
-    Ok(adler32::adler32(std::io::Cursor::new(bytes))?)
-}
-
-fn checksum_reader(
-    reader: &BytesReader,
-    len: usize
-) -> Result<u32, E01Error>
-{
-    checksum(
-        &reader
-            .read_bytes(len)
-            .map_err(|e| E01Error::ReadError { source: FuckOffKError(e) })?
-    )
-}
-
-pub fn checksum_ok(
-    section_type: &str,
-    io: &BytesReader,
-    section_io: &BytesReader,
-    crc_stored: u32,
-) -> Result<(), E01Error>
-{
-    let crc = checksum_reader(section_io, io.pos() - section_io.pos() - 4)?;
-    match crc == crc_stored {
-        true => Ok(()),
-        false => Err(E01Error::BadChecksum(section_type.into(), crc, crc_stored))
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct VolumeSection {
     pub chunk_count: u32,
@@ -296,66 +266,12 @@ pub struct Segment {
 
 #[derive(Debug)]
 pub struct Chunk {
-    data_offset: u64,
-    compressed: bool,
-    end_offset: Option<u64>,
+    pub data_offset: u64,
+    pub compressed: bool,
+    pub end_offset: Option<u64>,
 }
 
 impl Segment {
-    pub fn read_table(
-        io: &BytesReader,
-        _size: u64,
-        ignore_checksums: bool,
-    ) -> Result<Vec<Chunk>, E01Error> {
-        let table_section = EwfTableHeader::read_into::<_, EwfTableHeader>(io, None, None)
-            .map_err(|e| E01Error::DeserializationFailed { name: "EwfTableHeader".into(), source: FuckOffKError(e) })?;
-
-        if !ignore_checksums {
-            checksum_ok(
-                "Table section",
-                io,
-                &table_section._io(),
-                *table_section.checksum(),
-            )?;
-        }
-
-        let io_offsets = Clone::clone(io);
-        let mut data_offset: u64;
-        let mut chunks: Vec<Chunk> = Vec::new();
-        for _ in 0..*table_section.entry_count() {
-            let entry = io.read_u4le().map_err(|e|
-                E01Error::ReadError { source: FuckOffKError(e) })?;
-            data_offset = (entry & 0x7fffffff) as u64;
-            data_offset += *table_section.table_base_offset();
-            chunks.push(Chunk {
-                data_offset,
-                compressed: (entry & 0x80000000) > 0,
-                end_offset: None,
-            });
-        }
-
-        if !ignore_checksums {
-            // table footer
-            let crc_stored = io.read_u4le().map_err(|e|
-                E01Error::ReadError { source: FuckOffKError(e) })?;
-
-            let crc = checksum_reader(
-                &io_offsets,
-                *table_section.entry_count() as usize * 4
-            )?;
-
-            if crc != crc_stored {
-                return Err(E01Error::BadChecksum(
-                    "Table offset array".into(),
-                    crc,
-                    crc_stored
-                ));
-            }
-        }
-
-        Ok(chunks)
-    }
-
     pub fn read<T: AsRef<Path>>(
         f: T,
         volume: &mut Option<VolumeSection>,

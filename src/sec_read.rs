@@ -1,7 +1,9 @@
-use crate::e01_reader::{Chunk, E01Error, FuckOffKError, Segment, VolumeSection, checksum_ok};
+use crate::checksum::{checksum_ok, checksum_reader};
+use crate::e01_reader::{Chunk, E01Error, FuckOffKError, Segment, VolumeSection};
 use crate::generated::ewf_digest_section::EwfDigestSection;
 use crate::generated::ewf_hash_section::EwfHashSection;
 use crate::generated::ewf_section_descriptor_v1::EwfSectionDescriptorV1;
+use crate::generated::ewf_table_header::EwfTableHeader;
 
 use kaitai::{BytesReader, KStream, KStruct, OptRc};
 
@@ -38,7 +40,7 @@ pub fn read_section(
         "disk" | "volume" =>
             Section::Volume(VolumeSection::new(&io, section_size, ignore_checksums)?),
         "table" =>
-            Section::Table(Segment::read_table(&io, section_size, ignore_checksums)?),
+            Section::Table(read_table(&io, section_size, ignore_checksums)?),
         "sectors" => Section::Sectors(io.pos() as u64 + section_size),
         "hash" => Section::Hash(get_hash_section(&io, ignore_checksums)?),
         "digest" => Section::Digest(get_digest_section(&io, ignore_checksums)?),
@@ -88,4 +90,58 @@ fn get_digest_section(
     }
 
     Ok(digest_section.clone())
+}
+
+pub fn read_table(
+    io: &BytesReader,
+    _size: u64,
+    ignore_checksums: bool,
+) -> Result<Vec<Chunk>, E01Error> {
+    let table_section = EwfTableHeader::read_into::<_, EwfTableHeader>(io, None, None)
+        .map_err(|e| E01Error::DeserializationFailed { name: "EwfTableHeader".into(), source: FuckOffKError(e) })?;
+
+    if !ignore_checksums {
+        checksum_ok(
+            "Table section",
+            io,
+            &table_section._io(),
+            *table_section.checksum(),
+        )?;
+    }
+
+    let io_offsets = Clone::clone(io);
+    let mut data_offset: u64;
+    let mut chunks: Vec<Chunk> = Vec::new();
+    for _ in 0..*table_section.entry_count() {
+        let entry = io.read_u4le().map_err(|e|
+            E01Error::ReadError { source: FuckOffKError(e) })?;
+        data_offset = (entry & 0x7fffffff) as u64;
+        data_offset += *table_section.table_base_offset();
+        chunks.push(Chunk {
+            data_offset,
+            compressed: (entry & 0x80000000) > 0,
+            end_offset: None,
+        });
+    }
+
+    if !ignore_checksums {
+        // table footer
+        let crc_stored = io.read_u4le().map_err(|e|
+            E01Error::ReadError { source: FuckOffKError(e) })?;
+
+        let crc = checksum_reader(
+            &io_offsets,
+            *table_section.entry_count() as usize * 4
+        )?;
+
+        if crc != crc_stored {
+            return Err(E01Error::BadChecksum(
+                "Table offset array".into(),
+                crc,
+                crc_stored
+            ));
+        }
+    }
+
+    Ok(chunks)
 }

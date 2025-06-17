@@ -1,4 +1,5 @@
 pub mod e01_reader;
+mod checksum;
 mod generated;
 mod sec_read;
 mod seg_path;
