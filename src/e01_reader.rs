@@ -545,7 +545,7 @@ impl E01Reader {
                 chunks += s.chunks.len();
                 false
             })
-            .ok_or_else(|| E01Error::BadChunkNumber(chunk_number))
+            .ok_or(E01Error::BadChunkNumber(chunk_number))
     }
 
     pub fn read_at_offset(
@@ -562,7 +562,7 @@ impl E01Reader {
         let mut bytes_read = 0;
         let mut remaining_buf = &mut buf[..];
 
-        while remaining_buf.len() > 0 && offset < total_size {
+        while !remaining_buf.is_empty() && offset < total_size {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
             let mut chunk_index = 0;
@@ -573,7 +573,7 @@ impl E01Reader {
                     chunk_number,
                     chunk_index,
                     self.ignore_checksums,
-                    &mut remaining_buf
+                    remaining_buf
                 )?;
 
             if chunk_number * self.chunk_size() + data.len() > total_size {

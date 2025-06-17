@@ -38,12 +38,12 @@ pub fn read_section(
 
     let section = match section_type {
         "disk" | "volume" =>
-            Section::Volume(VolumeSection::new(&io, section_size, ignore_checksums)?),
+            Section::Volume(VolumeSection::new(io, section_size, ignore_checksums)?),
         "table" =>
-            Section::Table(read_table(&io, section_size, ignore_checksums)?),
+            Section::Table(read_table(io, section_size, ignore_checksums)?),
         "sectors" => Section::Sectors(io.pos() as u64 + section_size),
-        "hash" => Section::Hash(get_hash_section(&io, ignore_checksums)?),
-        "digest" => Section::Digest(get_digest_section(&io, ignore_checksums)?),
+        "hash" => Section::Hash(get_hash_section(io, ignore_checksums)?),
+        "digest" => Section::Digest(get_digest_section(io, ignore_checksums)?),
         "done" => Section::Done,
         _ => Section::Other
     };

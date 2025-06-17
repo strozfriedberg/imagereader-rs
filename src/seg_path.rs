@@ -64,7 +64,7 @@ fn validate_proto_extension<T: AsRef<Path>>(
         .map(OsStr::to_string_lossy)
         .as_deref()
         .map(str::to_ascii_uppercase)
-        .filter(|ext| valid_proto_segment_ext(&ext))
+        .filter(|ext| valid_proto_segment_ext(ext))
         .ok_or(SegmentPathError::UnrecognizedExtension(path.as_ref().into()))
 }
 

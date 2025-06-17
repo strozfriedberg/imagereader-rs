@@ -56,11 +56,11 @@ fn check_hash(
     calc: &str,
 ) -> Option<bool> {
     if let Some(r) = result {
-        if *r == false {
+        if !*r {
             return Some(false);
         }
     }
-    return Some(stored == calc);
+    Some(stored == calc)
 }
 
 fn main() -> ExitCode {
@@ -85,7 +85,7 @@ fn main() -> ExitCode {
             let calc_hash = hashes.get(&ad_str).unwrap();
             if let Some(md5) = stored_md5 {
                 println!("MD5 hash stored in file:       {}", md5);
-                result = check_hash(&result, &md5, &calc_hash);
+                result = check_hash(&result, &md5, calc_hash);
             }
             else {
                 println!("MD5 hash stored in file:       N/A");
@@ -97,7 +97,7 @@ fn main() -> ExitCode {
             let calc_hash = hashes.get(&ad_str).unwrap();
             if let Some(sha1) = stored_sha1 {
                 println!("SHA1 hash stored in file:       {}", sha1);
-                result = check_hash(&result, &sha1, &calc_hash);
+                result = check_hash(&result, &sha1, calc_hash);
             }
             else {
                 println!("SHA1 hash stored in file:       N/A");
@@ -112,7 +112,7 @@ fn main() -> ExitCode {
             if let Some(md5) = &stored_md5 {
                 println!("MD5 hash stored in file:       {}", md5);
                 result = Some(md5 == calc_hash);
-                result = check_hash(&result, &md5, &calc_hash);
+                result = check_hash(&result, md5, calc_hash);
             }
             else {
                 println!("MD5 hash stored in file:       N/A");
@@ -122,7 +122,7 @@ fn main() -> ExitCode {
         else if *ad == AddDigest::sha1 {
             if let Some(sha1) = &stored_sha1 {
                 println!("SHA1 hash stored in file:       {}", sha1);
-                result = check_hash(&result, &sha1, &calc_hash);
+                result = check_hash(&result, sha1, calc_hash);
             }
             else {
                 println!("SHA1 hash stored in file:       N/A");
