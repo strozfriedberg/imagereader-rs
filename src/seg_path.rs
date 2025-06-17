@@ -126,7 +126,7 @@ fn validate_segment_paths<T: AsRef<Path>, C: ExistsChecker>(
     Ok(segment_paths.into_iter())
 }
 
-pub fn find_segment_paths<T: AsRef<Path>, C: ExistsChecker>(
+fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
     proto_path: T,
     checker: &mut C
 ) -> Result<impl Iterator<Item = PathBuf>, SegmentPathError>
@@ -142,6 +142,13 @@ pub fn find_segment_paths<T: AsRef<Path>, C: ExistsChecker>(
         .ok_or(SegmentPathError::UnrecognizedExtension(proto_path.into()))?;
 
     validate_segment_paths(base, ext_start, checker)
+}
+
+pub fn find_segment_paths<T: AsRef<Path>>(
+    proto_path: T
+) -> Result<impl Iterator<Item = PathBuf>, SegmentPathError>
+{
+    find_segment_paths_impl(proto_path, &mut FileChecker)
 }
 
 #[cfg(test)]
@@ -350,7 +357,7 @@ mod test {
     }
 
     #[test]
-    fn find_segment_paths_ok() {
+    fn find_segment_paths_impl_ok() {
         let cases = [
             ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, false, true, false])),
             ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, false, true, false])),
@@ -363,7 +370,7 @@ mod test {
 
             // Iterator doesn't impl Debug, so we need to map it
             // to something that does for the failure case
-            let act_paths = find_segment_paths(proto, &mut ch)
+            let act_paths = find_segment_paths_impl(proto, &mut ch)
                 .map(Iterator::collect::<Vec<_>>);
 
             assert_eq!(act_paths.unwrap(), exp_paths);
@@ -371,7 +378,7 @@ mod test {
     }
 
     #[test]
-    fn find_segment_paths_err() {
+    fn find_segment_paths_impl_err() {
         let cases = [
             ("", TrueChecker, SegmentPathError::UnrecognizedExtension("".into())),
             ("a/i", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i".into())),
@@ -383,7 +390,7 @@ mod test {
         for (proto, mut ch, err) in cases {
             // Iterator doesn't impl Debug, so we need to map it
             // to something that does for the failure case
-            let act_paths = find_segment_paths(proto, &mut ch)
+            let act_paths = find_segment_paths_impl(proto, &mut ch)
                 .map(Iterator::collect::<Vec<_>>);
 
             assert_eq!(act_paths.unwrap_err(), err);

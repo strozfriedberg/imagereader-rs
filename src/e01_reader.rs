@@ -6,7 +6,7 @@ use self::kaitai::*;
 //use crate::generated::ewf_section_descriptor_v2::*;
 
 use crate::sec_read::VolumeSection;
-use crate::seg_path::{FileChecker, find_segment_paths};
+use crate::seg_path::find_segment_paths;
 use crate::segment::Segment;
 
 #[derive(Debug)]
@@ -118,7 +118,7 @@ impl E01Reader {
     ) -> Result<Self, E01Error>
     {
         Self::open(
-            find_segment_paths(&example_segment_path, &mut FileChecker)
+            find_segment_paths(&example_segment_path)
 // TODO: report actual error
                 .or(Err(E01Error::InvalidFilename))?,
             ignore_checksums
