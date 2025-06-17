@@ -3,6 +3,7 @@ mod checksum;
 mod generated;
 mod sec_read;
 mod seg_path;
+mod segment;
 
 #[cfg(test)]
 mod test {

@@ -1,11 +1,20 @@
 use crate::checksum::{checksum_ok, checksum_reader};
-use crate::e01_reader::{Chunk, E01Error, FuckOffKError, Segment, VolumeSection};
+use crate::e01_reader::{E01Error, FuckOffKError};
 use crate::generated::ewf_digest_section::EwfDigestSection;
 use crate::generated::ewf_hash_section::EwfHashSection;
 use crate::generated::ewf_section_descriptor_v1::EwfSectionDescriptorV1;
 use crate::generated::ewf_table_header::EwfTableHeader;
+use crate::generated::ewf_volume::EwfVolume;
+use crate::generated::ewf_volume_smart::EwfVolumeSmart;
 
 use kaitai::{BytesReader, KStream, KStruct, OptRc};
+
+#[derive(Debug)]
+pub struct Chunk {
+    pub data_offset: u64,
+    pub compressed: bool,
+    pub end_offset: Option<u64>,
+}
 
 pub enum Section {
     Volume(VolumeSection),
@@ -144,4 +153,72 @@ pub fn read_table(
     }
 
     Ok(chunks)
+}
+
+#[derive(Debug, Default)]
+pub struct VolumeSection {
+    pub chunk_count: u32,
+    pub sector_per_chunk: u32,
+    pub bytes_per_sector: u32,
+    pub total_sector_count: u64
+}
+
+impl VolumeSection {
+    pub fn new(io: &BytesReader, size: u64, ignore_checksums: bool) -> Result<Self, E01Error> {
+        // read volume section
+        if size == 1052 {
+            let vol_section =
+                EwfVolume::read_into::<_, EwfVolume>(io, None, None)
+                    .map_err(|e| E01Error::DeserializationFailed { name: "EwfVolume".into(), source: FuckOffKError(e) })?;
+
+            if !ignore_checksums {
+                checksum_ok(
+                    "Volume section",
+                    io,
+                    &vol_section._io(),
+                    *vol_section.checksum(),
+                )?;
+            }
+
+            let vs = VolumeSection {
+                chunk_count: *vol_section.number_of_chunks(),
+                sector_per_chunk: *vol_section.sector_per_chunk(),
+                bytes_per_sector: *vol_section.bytes_per_sector(),
+                total_sector_count: *vol_section.number_of_sectors(),
+            };
+            Ok(vs)
+        }
+        else if size == 94 {
+            let vol_section = EwfVolumeSmart::read_into::<_, EwfVolumeSmart>(io, None, None)
+                .map_err(|e| E01Error::DeserializationFailed { name: "EwfVolumeSmart".into(), source: FuckOffKError(e) })?;
+
+            if !ignore_checksums {
+                checksum_ok(
+                    "Volume section",
+                    io,
+                    &vol_section._io(),
+                    *vol_section.checksum(),
+                )?;
+            }
+
+            let vs = VolumeSection {
+                chunk_count: *vol_section.number_of_chunks(),
+                sector_per_chunk: *vol_section.sector_per_chunk(),
+                bytes_per_sector: *vol_section.bytes_per_sector(),
+                total_sector_count: *vol_section.number_of_sectors() as u64,
+            };
+            Ok(vs)
+        }
+        else {
+            Err(E01Error::UnknownVolumeSize(size))
+        }
+    }
+
+    pub fn chunk_size(&self) -> usize {
+        self.sector_per_chunk as usize * self.bytes_per_sector as usize
+    }
+
+    pub fn max_offset(&self) -> usize {
+        self.total_sector_count as usize * self.bytes_per_sector as usize
+    }
 }
