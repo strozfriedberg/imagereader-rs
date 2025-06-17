@@ -15,8 +15,8 @@ use crate::generated::ewf_table_header::*;
 use crate::generated::ewf_volume::*;
 use crate::generated::ewf_volume_smart::*;
 
+use crate::sec_read::{self, Section};
 use crate::seg_path::{FileChecker, find_segment_paths};
-use crate::seg_read::{self, Section};
 
 #[derive(Debug)]
 pub struct FuckOffKError(pub KError);
@@ -378,7 +378,7 @@ impl Segment {
                 }
             )?;
 
-            let (section_offset, section) = seg_read::read_section(
+            let (section_offset, section) = sec_read::read_section(
                 &io, ignore_checksums
             )?;
 
