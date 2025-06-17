@@ -1,4 +1,3 @@
-use crate::checksum::checksum;
 use crate::e01_reader::{E01Error, FuckOffKError};
 use crate::generated::ewf_file_header_v1::EwfFileHeaderV1;
 use crate::generated::ewf_file_header_v2::EwfFileHeaderV2;
@@ -205,7 +204,7 @@ impl Segment {
                 raw_data.truncate(raw_data.len() - 4);
 
                 // checksum the data
-                let crc = checksum(&raw_data)?;
+                let crc = adler32::adler32(std::io::Cursor::new(&raw_data))?;
 
                 if crc != crc_stored {
                     return Err(E01Error::BadChecksum(

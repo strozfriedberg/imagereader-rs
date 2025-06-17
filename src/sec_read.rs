@@ -1,4 +1,3 @@
-use crate::checksum::checksum;
 use crate::e01_reader::{E01Error, FuckOffKError};
 use crate::generated::ewf_digest_section::EwfDigestSection;
 use crate::generated::ewf_hash_section::EwfHashSection;
@@ -31,11 +30,13 @@ pub fn checksum_reader(
     len: usize
 ) -> Result<u32, E01Error>
 {
-    checksum(
-        &reader
-            .read_bytes(len)
-            .map_err(|e| E01Error::ReadError { source: FuckOffKError(e) })?
-    )
+    Ok(adler32::adler32(
+        std::io::Cursor::new(
+            &reader
+                .read_bytes(len)
+                .map_err(|e| E01Error::ReadError { source: FuckOffKError(e) })?
+        )
+    )?)
 }
 
 pub fn checksum_ok(
