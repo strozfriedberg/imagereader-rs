@@ -13,7 +13,7 @@ use kaitai::{BytesReader, KStream, KStruct, OptRc};
 pub struct Chunk {
     pub data_offset: u64,
     pub compressed: bool,
-    pub end_offset: Option<u64>,
+    pub end_offset: Option<u64>
 }
 
 pub enum Section {
