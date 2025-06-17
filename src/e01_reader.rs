@@ -92,9 +92,9 @@ pub enum E01Error {
 pub struct E01Reader {
     volume: VolumeSection,
     segments: Vec<Segment>,
-    ignore_checksums: bool,
     stored_md5: Option<Vec<u8>>,
     stored_sha1: Option<Vec<u8>>,
+    ignore_checksums: bool
 }
 
 /*
@@ -230,9 +230,9 @@ impl E01Reader {
         Ok(E01Reader {
             volume,
             segments,
-            ignore_checksums,
             stored_md5,
             stored_sha1,
+            ignore_checksums
         })
     }
 
