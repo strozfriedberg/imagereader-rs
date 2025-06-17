@@ -70,8 +70,6 @@ pub enum E01Error {
     FileNotFound(PathBuf),
     #[error("Invalid EWF file: {0}")]
     InvalidFile(PathBuf),
-    #[error("Glob error")]
-    GlobError,
     #[error("Invalid filename")]
     InvalidFilename,
     #[error("Invalid extension")]
