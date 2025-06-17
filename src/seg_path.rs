@@ -68,11 +68,11 @@ fn validate_proto_extension<T: AsRef<Path>>(
         .ok_or(SegmentPathError::UnrecognizedExtension(path.as_ref().into()))
 }
 
-pub trait ExistsChecker {
+trait ExistsChecker {
     fn is_file<T: AsRef<Path>>(&mut self, path: T) -> bool;
 }
 
-pub struct FileChecker;
+struct FileChecker;
 
 impl ExistsChecker for FileChecker {
     fn is_file<T: AsRef<Path>>(&mut self, path: T) -> bool {
