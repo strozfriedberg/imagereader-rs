@@ -1,4 +1,4 @@
-use crate::checksum::{checksum_ok, checksum_reader};
+use crate::checksum::checksum;
 use crate::e01_reader::{E01Error, FuckOffKError};
 use crate::generated::ewf_digest_section::EwfDigestSection;
 use crate::generated::ewf_hash_section::EwfHashSection;
@@ -24,6 +24,32 @@ pub enum Section {
     Digest(OptRc<EwfDigestSection>),
     Done,
     Other
+}
+
+pub fn checksum_reader(
+    reader: &BytesReader,
+    len: usize
+) -> Result<u32, E01Error>
+{
+    checksum(
+        &reader
+            .read_bytes(len)
+            .map_err(|e| E01Error::ReadError { source: FuckOffKError(e) })?
+    )
+}
+
+pub fn checksum_ok(
+    section_type: &str,
+    io: &BytesReader,
+    section_io: &BytesReader,
+    crc_stored: u32,
+) -> Result<(), E01Error>
+{
+    let crc = checksum_reader(section_io, io.pos() - section_io.pos() - 4)?;
+    match crc == crc_stored {
+        true => Ok(()),
+        false => Err(E01Error::BadChecksum(section_type.into(), crc, crc_stored))
+    }
 }
 
 pub fn read_section(
