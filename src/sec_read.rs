@@ -39,6 +39,7 @@ pub struct Chunk {
     pub end_offset: Option<u64>
 }
 
+#[derive(Debug)]
 pub enum Section {
     Volume(VolumeSection),
     Table(Vec<Chunk>),
