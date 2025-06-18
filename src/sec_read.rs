@@ -1,12 +1,36 @@
-use crate::e01_reader::{E01Error, FuckOffKError};
 use crate::generated::ewf_digest_section::EwfDigestSection;
 use crate::generated::ewf_hash_section::EwfHashSection;
 use crate::generated::ewf_section_descriptor_v1::EwfSectionDescriptorV1;
 use crate::generated::ewf_table_header::EwfTableHeader;
 use crate::generated::ewf_volume::EwfVolume;
 use crate::generated::ewf_volume_smart::EwfVolumeSmart;
+use crate::kerror_wrapper::FuckOffKError;
 
 use kaitai::{BytesReader, KStream, KStruct, OptRc};
+
+#[derive(Debug, thiserror::Error)]
+pub enum SectionError {
+    #[error("{0}")]
+    IoError(#[from] std::io::Error),
+    #[error("{0}")]
+    ReadError(#[from] FuckOffKError),
+    #[error("Seek to {offset} failed: {source}")]
+    SeekError {
+        offset: usize,
+        #[source]
+        source: FuckOffKError
+    },
+    #[error("{0} checksum failed, calculated {1}, expected {2}")]
+    BadChecksum(String, u32, u32),
+    #[error("Error while deserializing {name} struct: {source}")]
+    DeserializationFailed {
+        name: String,
+        #[source]
+        source: FuckOffKError
+    },
+    #[error("Unknown volume size: {0}")]
+    UnknownVolumeSize(u64)
+}
 
 #[derive(Debug)]
 pub struct Chunk {
@@ -28,13 +52,13 @@ pub enum Section {
 fn checksum_reader(
     reader: &BytesReader,
     len: usize
-) -> Result<u32, E01Error>
+) -> Result<u32, SectionError>
 {
     Ok(adler32::adler32(
         std::io::Cursor::new(
             &reader
                 .read_bytes(len)
-                .map_err(|e| E01Error::ReadError { source: FuckOffKError(e) })?
+                .map_err(|e| SectionError::ReadError(FuckOffKError(e)))?
         )
     )?)
 }
@@ -44,22 +68,22 @@ fn checksum_ok(
     io: &BytesReader,
     section_io: &BytesReader,
     crc_stored: u32,
-) -> Result<(), E01Error>
+) -> Result<(), SectionError>
 {
     let crc = checksum_reader(section_io, io.pos() - section_io.pos() - 4)?;
     match crc == crc_stored {
         true => Ok(()),
-        false => Err(E01Error::BadChecksum(section_type.into(), crc, crc_stored))
+        false => Err(SectionError::BadChecksum(section_type.into(), crc, crc_stored))
     }
 }
 
-pub fn read_section(
+fn read_section(
     io: &BytesReader,
     ignore_checksums: bool
-) -> Result<(usize, Section), E01Error> {
+) -> Result<(usize, Section), SectionError> {
 
     let sd = EwfSectionDescriptorV1::read_into::<_, EwfSectionDescriptorV1>(io, None, None)
-        .map_err(|e| E01Error::DeserializationFailed { name: "EwfFileHeaderV1".into(), source: FuckOffKError(e) })?;
+        .map_err(|e| SectionError::DeserializationFailed { name: "EwfFileHeaderV1".into(), source: FuckOffKError(e) })?;
 
     let section_size = if *sd.size() > 0x4c {
         /* header size */
@@ -92,10 +116,10 @@ pub fn read_section(
 fn get_hash_section(
     io: &BytesReader,
     ignore_checksums: bool,
-) -> Result<OptRc<EwfHashSection>, E01Error> {
+) -> Result<OptRc<EwfHashSection>, SectionError> {
     let hash_section =
         EwfHashSection::read_into::<_, EwfHashSection>(io, None, None)
-            .map_err(|e| E01Error::DeserializationFailed { name: "EwfHashSection".into(), source: FuckOffKError(e) })?;
+            .map_err(|e| SectionError::DeserializationFailed { name: "EwfHashSection".into(), source: FuckOffKError(e) })?;
 
     if !ignore_checksums {
         checksum_ok(
@@ -112,9 +136,9 @@ fn get_hash_section(
 fn get_digest_section(
     io: &BytesReader,
     ignore_checksums: bool,
-) -> Result<OptRc<EwfDigestSection>, E01Error> {
+) -> Result<OptRc<EwfDigestSection>, SectionError> {
     let digest_section = EwfHashSection::read_into::<_, EwfDigestSection>(io, None, None)
-        .map_err(|e| E01Error::DeserializationFailed { name: "EwfDigestSection".into(), source: FuckOffKError(e) })?;
+        .map_err(|e| SectionError::DeserializationFailed { name: "EwfDigestSection".into(), source: FuckOffKError(e) })?;
 
     if !ignore_checksums {
         checksum_ok(
@@ -132,9 +156,9 @@ pub fn read_table(
     io: &BytesReader,
     _size: u64,
     ignore_checksums: bool,
-) -> Result<Vec<Chunk>, E01Error> {
+) -> Result<Vec<Chunk>, SectionError> {
     let table_section = EwfTableHeader::read_into::<_, EwfTableHeader>(io, None, None)
-        .map_err(|e| E01Error::DeserializationFailed { name: "EwfTableHeader".into(), source: FuckOffKError(e) })?;
+        .map_err(|e| SectionError::DeserializationFailed { name: "EwfTableHeader".into(), source: FuckOffKError(e) })?;
 
     if !ignore_checksums {
         checksum_ok(
@@ -149,8 +173,7 @@ pub fn read_table(
     let mut data_offset: u64;
     let mut chunks: Vec<Chunk> = Vec::new();
     for _ in 0..*table_section.entry_count() {
-        let entry = io.read_u4le().map_err(|e|
-            E01Error::ReadError { source: FuckOffKError(e) })?;
+        let entry = io.read_u4le().map_err(|e| SectionError::ReadError(FuckOffKError(e)))?;
         data_offset = (entry & 0x7fffffff) as u64;
         data_offset += *table_section.table_base_offset();
         chunks.push(Chunk {
@@ -162,8 +185,7 @@ pub fn read_table(
 
     if !ignore_checksums {
         // table footer
-        let crc_stored = io.read_u4le().map_err(|e|
-            E01Error::ReadError { source: FuckOffKError(e) })?;
+        let crc_stored = io.read_u4le().map_err(|e| SectionError::ReadError(FuckOffKError(e)))?;
 
         let crc = checksum_reader(
             &io_offsets,
@@ -171,7 +193,7 @@ pub fn read_table(
         )?;
 
         if crc != crc_stored {
-            return Err(E01Error::BadChecksum(
+            return Err(SectionError::BadChecksum(
                 "Table offset array".into(),
                 crc,
                 crc_stored
@@ -191,12 +213,12 @@ pub struct VolumeSection {
 }
 
 impl VolumeSection {
-    pub fn new(io: &BytesReader, size: u64, ignore_checksums: bool) -> Result<Self, E01Error> {
+    pub fn new(io: &BytesReader, size: u64, ignore_checksums: bool) -> Result<Self, SectionError> {
         // read volume section
         if size == 1052 {
             let vol_section =
                 EwfVolume::read_into::<_, EwfVolume>(io, None, None)
-                    .map_err(|e| E01Error::DeserializationFailed { name: "EwfVolume".into(), source: FuckOffKError(e) })?;
+                    .map_err(|e| SectionError::DeserializationFailed { name: "EwfVolume".into(), source: FuckOffKError(e) })?;
 
             if !ignore_checksums {
                 checksum_ok(
@@ -217,7 +239,7 @@ impl VolumeSection {
         }
         else if size == 94 {
             let vol_section = EwfVolumeSmart::read_into::<_, EwfVolumeSmart>(io, None, None)
-                .map_err(|e| E01Error::DeserializationFailed { name: "EwfVolumeSmart".into(), source: FuckOffKError(e) })?;
+                .map_err(|e| SectionError::DeserializationFailed { name: "EwfVolumeSmart".into(), source: FuckOffKError(e) })?;
 
             if !ignore_checksums {
                 checksum_ok(
@@ -237,7 +259,7 @@ impl VolumeSection {
             Ok(vs)
         }
         else {
-            Err(E01Error::UnknownVolumeSize(size))
+            Err(SectionError::UnknownVolumeSize(size))
         }
     }
 
@@ -247,5 +269,62 @@ impl VolumeSection {
 
     pub fn max_offset(&self) -> usize {
         self.total_sector_count as usize * self.bytes_per_sector as usize
+    }
+}
+
+pub struct SectionIterator<'a> {
+    io: &'a BytesReader,
+    current_offset: usize,
+    ignore_checksums: bool
+}
+
+impl<'a> SectionIterator<'a> {
+    pub fn new(
+        io: &'a BytesReader,
+        ignore_checksums: bool
+    ) -> Self {
+        Self {
+            io,
+            current_offset: io.pos(),
+            ignore_checksums
+        }
+    }
+}
+
+impl Iterator for SectionIterator<'_> {
+    type Item = Result<Section, SectionError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_offset < self.io.size() {
+            if let Err(e) = self.io.seek(self.current_offset)
+                .map_err(|e|
+                    SectionError::SeekError {
+                        offset: self.current_offset,
+                        source: FuckOffKError(e)
+                    }
+                )
+            {
+                return Some(Err(e));
+            }
+
+            match read_section(self.io, self.ignore_checksums) {
+                Ok((section_offset, section)) => {
+                    self.current_offset = if self.current_offset == section_offset {
+                        // ensure that the next() next is None
+                        self.io.size()
+                    }
+                    else {
+                        // otherwise advance to end of section
+                        section_offset
+                    };
+
+                    Some(Ok(section))
+                },
+                Err(e) => Some(Err(e))
+            }
+        }
+        else {
+            None
+        }
     }
 }

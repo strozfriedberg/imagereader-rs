@@ -114,21 +114,9 @@ impl Segment {
         let header = SegmentFileHeader::new(&io)?;
         let mut chunks: Vec<Chunk> = Vec::new();
         let mut end_of_sectors = 0;
-        let mut current_offset = io.pos();
-        while current_offset < io.size() {
-            io.seek(current_offset).map_err(|e|
-                E01Error::SegmentSeekError {
-                    file: f.as_ref().into(),
-                    offset: current_offset,
-                    source: FuckOffKError(e)
-                }
-            )?;
 
-            let (section_offset, section) = sec_read::read_section(
-                &io, ignore_checksums
-            )?;
-
-            match section {
+        for section in SectionIterator::new(&io, ignore_checksums) {
+            match section? {
                 Section::Volume(v) => *volume = Some(v),
                 Section::Table(t) => {
                     chunks.extend(t);
@@ -144,22 +132,14 @@ impl Segment {
                 Section::Done => break,
                 _ => {}
             }
-
-            if current_offset == section_offset {
-                break;
-            }
-
-            current_offset = section_offset;
         }
 
-        let segment = Segment {
+        Ok(Segment {
             io,
             _header: header,
             chunks,
             end_of_sectors
-        };
-
-        Ok(segment)
+        })
     }
 
     pub fn read_chunk(

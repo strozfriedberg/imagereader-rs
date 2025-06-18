@@ -1,5 +1,6 @@
 pub mod e01_reader;
 mod generated;
+mod kerror_wrapper;
 mod sec_read;
 mod seg_path;
 mod segment;

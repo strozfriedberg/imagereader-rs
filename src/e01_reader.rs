@@ -4,21 +4,10 @@ extern crate kaitai;
 use self::kaitai::*;
 
 //use crate::generated::ewf_section_descriptor_v2::*;
-
-use crate::sec_read::VolumeSection;
+use crate::kerror_wrapper::FuckOffKError;
+use crate::sec_read::{SectionError, VolumeSection};
 use crate::seg_path::find_segment_paths;
 use crate::segment::Segment;
-
-#[derive(Debug)]
-pub struct FuckOffKError(pub KError);
-
-impl std::fmt::Display for FuckOffKError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
-}
-
-impl std::error::Error for FuckOffKError {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum E01Error {
@@ -84,6 +73,19 @@ pub enum E01Error {
     TooFewChunks,
     #[error("Duplicate volume section")]
     DuplicateVolumeSection
+}
+
+impl From<SectionError> for E01Error {
+    fn from(e: SectionError) -> E01Error {
+        match e {
+            SectionError::IoError(e) => E01Error::IoError(e),
+            SectionError::ReadError(e) => E01Error::ReadError { source: e },
+            SectionError::SeekError { offset, source } => E01Error::SeekError { source },
+            SectionError::BadChecksum(s, a, e) => E01Error::BadChecksum(s, a, e),
+            SectionError::DeserializationFailed { name, source } => E01Error::DeserializationFailed { name, source },
+            SectionError::UnknownVolumeSize(s) => E01Error::UnknownVolumeSize(s)
+        }
+    }
 }
 
 #[derive(Debug)]
