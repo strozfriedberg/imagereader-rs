@@ -41,8 +41,8 @@ pub enum E01Error {
         #[source]
         source: FuckOffKError
     },
-    #[error("Unknown volume size: {0}")]
-    UnknownVolumeSize(u64),
+    #[error("Unexpected volume size: {0}")]
+    UnexpectedVolumeSize(u64),
     #[error("{0}")]
     IoError(#[from] std::io::Error),
     #[error("Invalid segment file")]
@@ -83,7 +83,7 @@ impl From<SectionError> for E01Error {
             SectionError::SeekError { offset, source } => E01Error::SeekError { source },
             SectionError::BadChecksum(s, a, e) => E01Error::BadChecksum(s, a, e),
             SectionError::DeserializationFailed { name, source } => E01Error::DeserializationFailed { name, source },
-            SectionError::UnknownVolumeSize(s) => E01Error::UnknownVolumeSize(s)
+            SectionError::UnexpectedVolumeSize(s) => E01Error::UnexpectedVolumeSize(s)
         }
     }
 }

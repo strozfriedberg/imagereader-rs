@@ -28,8 +28,8 @@ pub enum SectionError {
         #[source]
         source: FuckOffKError
     },
-    #[error("Unknown volume size: {0}")]
-    UnknownVolumeSize(u64)
+    #[error("Unexpected volume size: {0}")]
+    UnexpectedVolumeSize(u64)
 }
 
 #[derive(Debug)]
@@ -260,7 +260,7 @@ impl VolumeSection {
             Ok(vs)
         }
         else {
-            Err(SectionError::UnknownVolumeSize(size))
+            Err(SectionError::UnexpectedVolumeSize(size))
         }
     }
 
