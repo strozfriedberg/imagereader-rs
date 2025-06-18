@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 extern crate kaitai;
 
+use kaitai::BytesReader;
+
 //use crate::generated::ewf_section_descriptor_v2::*;
 use crate::error::{IoError, LibError, FuckOffKError};
 use crate::sec_read::VolumeSection;
@@ -144,8 +146,11 @@ impl E01Reader {
         let sp = segment_paths.next()
             .ok_or(E01Error::InvalidFilename)?;
 
+        let io = BytesReader::open(sp)
+            .map_err(|e| LibError::OpenError(FuckOffKError(e)))?;
+
         let seg = Segment::read(
-            sp,
+            io,
             &mut volume_opt,
             &mut stored_md5,
             &mut stored_sha1,
@@ -164,8 +169,11 @@ impl E01Reader {
 
         // continue reading segments
         for sp in segment_paths {
+            let io = BytesReader::open(sp)
+                .map_err(|e| LibError::OpenError(FuckOffKError(e)))?;
+
             let seg = Segment::read(
-                sp,
+                io,
                 &mut volume_opt,
 //                &mut stored_md5_unexpected,
 //                &mut stored_sha1_unexpected,

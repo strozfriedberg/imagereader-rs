@@ -8,7 +8,6 @@ use kaitai::{BytesReader, KStream, KStruct};
 use std::{
     convert::TryFrom,
     io::Read,
-    path::Path
 };
 
 #[derive(Debug)]
@@ -102,15 +101,13 @@ pub struct Segment {
 }
 
 impl Segment {
-    pub fn read<T: AsRef<Path>>(
-        f: T,
+    pub fn read(
+        io: BytesReader,
         volume: &mut Option<VolumeSection>,
         stored_md5: &mut Option<Vec<u8>>,
         stored_sha1: &mut Option<Vec<u8>>,
         ignore_checksums: bool,
     ) -> Result<Self, LibError> {
-        let io = BytesReader::open(f.as_ref())
-            .map_err(|e| LibError::OpenError(FuckOffKError(e)))?;
         let header = SegmentFileHeader::new(&io)?;
         let mut chunks: Vec<Chunk> = Vec::new();
         let mut end_of_sectors = 0;
