@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
 
 extern crate kaitai;
-use self::kaitai::*;
 
 //use crate::generated::ewf_section_descriptor_v2::*;
-use crate::kerror_wrapper::FuckOffKError;
-use crate::sec_read::{SectionError, VolumeSection};
+use crate::error::{IoError, LibError, FuckOffKError};
+use crate::sec_read::VolumeSection;
 use crate::seg_path::find_segment_paths;
 use crate::segment::Segment;
 
@@ -44,7 +43,7 @@ pub enum E01Error {
     #[error("Unexpected volume size: {0}")]
     UnexpectedVolumeSize(u64),
     #[error("{0}")]
-    IoError(#[from] std::io::Error),
+    IoError(IoError),
     #[error("Invalid segment file")]
     InvalidSegmentFile,
     #[error("{0} checksum failed, calculated {1}, expected {2}")]
@@ -75,15 +74,17 @@ pub enum E01Error {
     DuplicateVolumeSection
 }
 
-impl From<SectionError> for E01Error {
-    fn from(e: SectionError) -> E01Error {
+impl From<LibError> for E01Error {
+    fn from(e: LibError) -> E01Error {
         match e {
-            SectionError::IoError(e) => E01Error::IoError(e),
-            SectionError::ReadError(e) => E01Error::ReadError { source: e },
-            SectionError::SeekError { offset, source } => E01Error::SeekError { source },
-            SectionError::BadChecksum(s, a, e) => E01Error::BadChecksum(s, a, e),
-            SectionError::DeserializationFailed { name, source } => E01Error::DeserializationFailed { name, source },
-            SectionError::UnexpectedVolumeSize(s) => E01Error::UnexpectedVolumeSize(s)
+            LibError::IoError(e) => E01Error::IoError(e),
+            LibError::BadChecksum(s, a, e) => E01Error::BadChecksum(s, a, e),
+            LibError::DeserializationFailed { name, source } => E01Error::DeserializationFailed { name, source },
+            LibError::UnexpectedVolumeSize(s) => E01Error::UnexpectedVolumeSize(s),
+            LibError::UnknownCompressionMethod(m) => E01Error::UnknownCompressionMethod(m),
+            LibError::InvalidSegmentFile => E01Error::InvalidSegmentFile,
+            LibError::DecompressionFailed(e) => E01Error::DecompressionFailed(e),
+            LibError::OpenError(e) => E01Error::OpenError { source: e }
         }
     }
 }

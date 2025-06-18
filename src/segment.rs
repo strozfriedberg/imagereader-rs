@@ -1,7 +1,7 @@
-use crate::e01_reader::{E01Error, FuckOffKError};
 use crate::generated::ewf_file_header_v1::EwfFileHeaderV1;
 use crate::generated::ewf_file_header_v2::EwfFileHeaderV2;
-use crate::sec_read::{self, Chunk, Section, VolumeSection};
+use crate::error::{FuckOffKError, IoError, LibError};
+use crate::sec_read::{Chunk, Section, SectionIterator, VolumeSection};
 
 use flate2::read::ZlibDecoder;
 use kaitai::{BytesReader, KStream, KStruct};
@@ -19,14 +19,14 @@ enum CompressionMethod {
 }
 
 impl TryFrom<u16> for CompressionMethod {
-    type Error = E01Error;
+    type Error = LibError;
 
     fn try_from(v: u16) -> Result<Self, Self::Error> {
         match v {
             x if x == Self::None as u16 => Ok(Self::None),
             x if x == Self::Deflate as u16 => Ok(Self::Deflate),
             x if x == Self::Bzip as u16 => Ok(Self::Bzip),
-            _ => Err(E01Error::UnknownCompressionMethod(v))
+            _ => Err(LibError::UnknownCompressionMethod(v))
         }
     }
 }
@@ -40,13 +40,13 @@ struct SegmentFileHeader {
 }
 
 impl SegmentFileHeader {
-    pub fn new(io: &BytesReader) -> Result<Self, E01Error> {
+    pub fn new(io: &BytesReader) -> Result<Self, LibError> {
         let first_bytes = io
             .read_bytes(8)
-            .map_err(|e| E01Error::ReadError { source: FuckOffKError(e) })?;
+            .map_err(|e| LibError::IoError(IoError::ReadError(FuckOffKError(e))))?;
 
         io.seek(0)
-            .map_err(|e| E01Error::SeekError { source: FuckOffKError(e) })?;
+            .map_err(|e| LibError::IoError(IoError::SeekError { offset: 0, source: FuckOffKError(e) }))?;
 
         // read file header
 
@@ -65,7 +65,7 @@ impl SegmentFileHeader {
                     })
                 }
                 Err(e) => {
-                    Err(E01Error::DeserializationFailed { name: "EwfFileHeaderV1".into(), source: FuckOffKError(e) })
+                    Err(LibError::DeserializationFailed { name: "EwfFileHeaderV1".into(), source: FuckOffKError(e) })
                 }
             }
         } else if first_bytes == [0x45, 0x56, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] // EVF2
@@ -83,12 +83,12 @@ impl SegmentFileHeader {
                     })
                 }
                 Err(e) => {
-                    Err(E01Error::DeserializationFailed { name: "EwfFileHeaderV2".into(), source: FuckOffKError(e) })
+                    Err(LibError::DeserializationFailed { name: "EwfFileHeaderV2".into(), source: FuckOffKError(e) })
                 }
             }
         }
         else {
-            Err(E01Error::InvalidSegmentFile)
+            Err(LibError::InvalidSegmentFile)
         }
     }
 }
@@ -108,9 +108,9 @@ impl Segment {
         stored_md5: &mut Option<Vec<u8>>,
         stored_sha1: &mut Option<Vec<u8>>,
         ignore_checksums: bool,
-    ) -> Result<Self, E01Error> {
+    ) -> Result<Self, LibError> {
         let io = BytesReader::open(f.as_ref())
-            .map_err(|e| E01Error::OpenError { source: FuckOffKError(e) })?;
+            .map_err(|e| LibError::OpenError(FuckOffKError(e)))?;
         let header = SegmentFileHeader::new(&io)?;
         let mut chunks: Vec<Chunk> = Vec::new();
         let mut end_of_sectors = 0;
@@ -148,13 +148,13 @@ impl Segment {
         chunk_index: usize,
         ignore_checksums: bool,
         buf: &mut [u8]
-    ) -> Result<Vec<u8>, E01Error>
+    ) -> Result<Vec<u8>, LibError>
     {
         debug_assert!(chunk_index < self.chunks.len());
         let chunk = &self.chunks[chunk_index];
         self.io
             .seek(chunk.data_offset as usize)
-            .map_err(|e| E01Error::SeekError { source: FuckOffKError(e) })?;
+            .map_err(|e| LibError::IoError(IoError::SeekError { offset: chunk.data_offset as usize, source: FuckOffKError(e) }))?;
 
         let end_offset = if chunk_index == self.chunks.len() - 1 {
             self.end_of_sectors
@@ -169,7 +169,7 @@ impl Segment {
         let mut raw_data = self
             .io
             .read_bytes(end_offset as usize - chunk.data_offset as usize)
-            .map_err(|e| E01Error::ReadError { source: FuckOffKError(e) })?;
+            .map_err(|e| LibError::IoError(IoError::ReadError(FuckOffKError(e))))?;
 
         if !chunk.compressed {
             if !ignore_checksums {
@@ -184,10 +184,11 @@ impl Segment {
                 raw_data.truncate(raw_data.len() - 4);
 
                 // checksum the data
-                let crc = adler32::adler32(std::io::Cursor::new(&raw_data))?;
+                let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
+                    .map_err(|e| LibError::IoError(IoError::IoError(e)))?;
 
                 if crc != crc_stored {
-                    return Err(E01Error::BadChecksum(
+                    return Err(LibError::BadChecksum(
                         format!("Chunk {}", chunk_number),
                         crc,
                         crc_stored
@@ -202,7 +203,7 @@ impl Segment {
             let mut data = Vec::new();
             decoder
                 .read_to_end(&mut data)
-                .map_err(E01Error::DecompressionFailed)?;
+                .map_err(LibError::DecompressionFailed)?;
             Ok(data)
         }
     }
