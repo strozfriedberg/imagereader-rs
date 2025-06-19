@@ -22,8 +22,8 @@ pub enum LibError {
     UnexpectedVolumeSize(u64),
     #[error("Unknown compression method value: {0}")]
     UnknownCompressionMethod(u16),
-    #[error("Invalid segment file")]
-    InvalidSegmentFile,
+    #[error("Invalid segment file header")]
+    InvalidSegmentFileHeader,
     #[error("Decompression failed: {0}")]
     DecompressionFailed(#[source] std::io::Error)
 }

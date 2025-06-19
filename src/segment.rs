@@ -86,7 +86,7 @@ impl SegmentFileHeader {
             }
         }
         else {
-            Err(LibError::InvalidSegmentFile)
+            Err(LibError::InvalidSegmentFileHeader)
         }
     }
 }
