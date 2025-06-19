@@ -10,12 +10,6 @@ pub enum IoError {
     SeekError(usize, KError)
 }
 
-impl From<KError> for IoError {
-    fn from(e: KError) -> Self {
-        Self::ReadError(e)
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum LibError {
     #[error("{0}")]
