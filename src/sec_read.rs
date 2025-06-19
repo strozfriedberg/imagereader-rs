@@ -63,7 +63,7 @@ fn read_section(
 ) -> Result<(usize, Section), LibError> {
 
     let sd = EwfSectionDescriptorV1::read_into::<_, EwfSectionDescriptorV1>(io, None, None)
-        .map_err(|e| LibError::DeserializationFailed("EwfFileHeaderV1".into(), e))?;
+        .map_err(|e| LibError::DeserializationFailed("EwfFileHeaderV1", e))?;
 
     let section_size = if *sd.size() > 0x4c {
         /* header size */
@@ -99,7 +99,7 @@ fn get_hash_section(
 ) -> Result<OptRc<EwfHashSection>, LibError> {
     let hash_section =
         EwfHashSection::read_into::<_, EwfHashSection>(io, None, None)
-            .map_err(|e| LibError::DeserializationFailed("EwfHashSection".into(), e))?;
+            .map_err(|e| LibError::DeserializationFailed("EwfHashSection", e))?;
 
     if !ignore_checksums {
         checksum_ok(
@@ -118,7 +118,7 @@ fn get_digest_section(
     ignore_checksums: bool,
 ) -> Result<OptRc<EwfDigestSection>, LibError> {
     let digest_section = EwfHashSection::read_into::<_, EwfDigestSection>(io, None, None)
-        .map_err(|e| LibError::DeserializationFailed("EwfDigestSection".into(), e))?;
+        .map_err(|e| LibError::DeserializationFailed("EwfDigestSection", e))?;
 
     if !ignore_checksums {
         checksum_ok(
@@ -138,7 +138,7 @@ pub fn read_table(
     ignore_checksums: bool,
 ) -> Result<Vec<Chunk>, LibError> {
     let table_section = EwfTableHeader::read_into::<_, EwfTableHeader>(io, None, None)
-        .map_err(|e| LibError::DeserializationFailed("EwfTableHeader".into(), e))?;
+        .map_err(|e| LibError::DeserializationFailed("EwfTableHeader", e))?;
 
     if !ignore_checksums {
         checksum_ok(
@@ -198,7 +198,7 @@ impl VolumeSection {
         if size == 1052 {
             let vol_section =
                 EwfVolume::read_into::<_, EwfVolume>(io, None, None)
-                    .map_err(|e| LibError::DeserializationFailed("EwfVolume".into(), e))?;
+                    .map_err(|e| LibError::DeserializationFailed("EwfVolume", e))?;
 
             if !ignore_checksums {
                 checksum_ok(
@@ -219,7 +219,7 @@ impl VolumeSection {
         }
         else if size == 94 {
             let vol_section = EwfVolumeSmart::read_into::<_, EwfVolumeSmart>(io, None, None)
-                .map_err(|e| LibError::DeserializationFailed("EwfVolumeSmart".into(), e))?;
+                .map_err(|e| LibError::DeserializationFailed("EwfVolumeSmart", e))?;
 
             if !ignore_checksums {
                 checksum_ok(

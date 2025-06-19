@@ -63,7 +63,7 @@ impl SegmentFileHeader {
                     })
                 }
                 Err(e) => {
-                    Err(LibError::DeserializationFailed("EwfFileHeaderV1".into(), e))
+                    Err(LibError::DeserializationFailed("EwfFileHeaderV1", e))
                 }
             }
         } else if first_bytes == [0x45, 0x56, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] // EVF2
@@ -81,7 +81,7 @@ impl SegmentFileHeader {
                     })
                 }
                 Err(e) => {
-                    Err(LibError::DeserializationFailed("EwfFileHeaderV2".into(), e))
+                    Err(LibError::DeserializationFailed("EwfFileHeaderV2", e))
                 }
             }
         }

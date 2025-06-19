@@ -23,7 +23,7 @@ pub enum LibError {
     #[error("{0} checksum failed, calculated {1}, expected {2}")]
     BadChecksum(String, u32, u32),
     #[error("Error while deserializing {0} struct: {1:?}")]
-    DeserializationFailed(String, KError),
+    DeserializationFailed(&'static str, KError),
     #[error("Unexpected volume size: {0}")]
     UnexpectedVolumeSize(u64),
     #[error("Unknown compression method value: {0}")]
