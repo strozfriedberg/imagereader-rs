@@ -34,13 +34,11 @@ fn checksum_reader(
     len: usize
 ) -> Result<u32, IoError>
 {
-    Ok(adler32::adler32(
-        std::io::Cursor::new(
-            &reader
-                .read_bytes(len)
-                .map_err(IoError::ReadError)?
-        )
-    )?)
+    Ok(adler32::adler32(std::io::Cursor::new(
+        &reader
+            .read_bytes(len)
+            .map_err(IoError::ReadError)?
+    ))?)
 }
 
 fn checksum_ok(
