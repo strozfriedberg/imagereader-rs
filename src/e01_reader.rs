@@ -4,69 +4,19 @@ extern crate kaitai;
 
 use kaitai::BytesReader;
 
-use crate::error::{IoError, LibError, FuckOffKError};
+use crate::error::{LibError, FuckOffKError};
 use crate::sec_read::VolumeSection;
-use crate::seg_path::find_segment_paths;
+use crate::seg_path::{find_segment_paths, SegmentPathError};
 use crate::segment::Segment;
 
 #[derive(Debug, thiserror::Error)]
-pub enum E01Error {
-    #[error("Decompression failed")]
-    DecompressionFailed(#[source] std::io::Error),
-    #[error("Error while deserializing {name} struct: {source}")]
-    DeserializationFailed {
-        name: String,
-        #[source]
-        source: FuckOffKError
-    },
-    #[error("{source}")]
-    OpenError {
-        #[source]
-        source: FuckOffKError
-    },
-    #[error("{source}")]
-    ReadError {
-        #[source]
-        source: FuckOffKError
-    },
-    #[error("{source}")]
-    SeekError {
-        #[source]
-        source: FuckOffKError
-    },
-    #[error("Segment file {file}, seek to {offset} failed: {source}")]
-    SegmentSeekError {
-        file: PathBuf,
-        offset: usize,
-        #[source]
-        source: FuckOffKError
-    },
-    #[error("Unexpected volume size: {0}")]
-    UnexpectedVolumeSize(u64),
-    #[error("{0}")]
-    IoError(IoError),
-    #[error("Invalid segment file")]
-    InvalidSegmentFile,
-    #[error("{0} checksum failed, calculated {1}, expected {2}")]
-    BadChecksum(String, u32, u32),
-    #[error("Unknown compression method value: {0}")]
-    UnknownCompressionMethod(u16),
+pub enum BadData {
     #[error("Requested chunk number {0} is wrong")]
     BadChunkNumber(usize),
     #[error("Requested offset {0} is over max offset {1}")]
     OffsetBeyondEnd(usize, usize),
-    #[error("Can't find file: {0}")]
-    FileNotFound(PathBuf),
-    #[error("Invalid EWF file: {0}")]
-    InvalidFile(PathBuf),
-    #[error("Invalid filename")]
-    InvalidFilename,
-    #[error("Invalid extension")]
-    InvalidExtension,
     #[error("Missing volume section")]
     MissingVolumeSection,
-    #[error("Missing some segment file")]
-    MissingSegmentFile,
     #[error("Too many chunks")]
     TooManyChunks,
     #[error("Too few chunks")]
@@ -75,54 +25,76 @@ pub enum E01Error {
     DuplicateVolumeSection
 }
 
-impl From<LibError> for E01Error {
-    fn from(e: LibError) -> E01Error {
-        match e {
-            LibError::IoError(e) => E01Error::IoError(e),
-            LibError::BadChecksum(s, a, e) => E01Error::BadChecksum(s, a, e),
-            LibError::DeserializationFailed { name, source } => E01Error::DeserializationFailed { name, source },
-            LibError::UnexpectedVolumeSize(s) => E01Error::UnexpectedVolumeSize(s),
-            LibError::UnknownCompressionMethod(m) => E01Error::UnknownCompressionMethod(m),
-            LibError::InvalidSegmentFile => E01Error::InvalidSegmentFile,
-            LibError::DecompressionFailed(e) => E01Error::DecompressionFailed(e),
-            LibError::OpenError(e) => E01Error::OpenError { source: e }
-        }
+#[derive(Debug, thiserror::Error)]
+pub enum OpenError {
+    #[error("{0}")]
+    PathGlobError(#[from] SegmentPathError),
+    #[error("No segment files given")]
+    NoSegmentFiles,
+    #[error("Missing volume section in {0}")]
+    MissingVolumeSection(PathBuf),
+    #[error("Duplicate volume section in {0}")]
+    DuplicateVolumeSection(PathBuf),
+    #[error("Too many chunks found: actual {0}, expected {1}")]
+    TooManyChunks(usize, usize),
+    #[error("Too few chunks found: actual {0}, expected {1}")]
+    TooFewChunks(usize, usize),
+    #[error("Error reading {path}: {source}")]
+    IoError {
+        path: PathBuf,
+        source: Box<dyn std::error::Error>
+    },
+    #[error("Bad data in {path}: {source}")]
+    BadData {
+        path: PathBuf,
+        source: Box<dyn std::error::Error>
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReadError {
+    #[error("Requested chunk number {0} does not exist")]
+    BadChunkNumber(usize),
+    #[error("Requested offset {0} is beyond end of image {1}")]
+    OffsetBeyondEnd(usize, usize),
+    #[error("Error reading {path}: {source}")]
+    IoError {
+        path: PathBuf,
+        #[source]
+        source: LibError
+    },
+    #[error("Bad data in {path}: {source}")]
+    BadData {
+        path: PathBuf,
+        source: Box<dyn std::error::Error>
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum E01Error {
+    #[error("{0}")]
+    OpenError(#[from] OpenError),
+    #[error("{0}")]
+    ReadError(#[from] ReadError)
 }
 
 #[derive(Debug)]
 pub struct E01Reader {
     volume: VolumeSection,
-    segments: Vec<Segment>,
+    segments: Vec<(PathBuf, Segment)>,
     stored_md5: Option<Vec<u8>>,
     stored_sha1: Option<Vec<u8>>,
     ignore_checksums: bool
 }
 
-/*
-#[derive(Debug, thiserror::Error)]
-pub enum SegmentReadError {
-    #[error("{}")]
-    DeserializationFailed {
-        name: String,
-        #[source]
-        source: FuckOffKError
-    }
-}
-*/
-
-// Errors should be: ioerror, bad paths, bad input
-
 impl E01Reader {
     pub fn open_glob<T: AsRef<Path>>(
         example_segment_path: T,
         ignore_checksums: bool
-    ) -> Result<Self, E01Error>
+    ) -> Result<Self, OpenError>
     {
         Self::open(
-            find_segment_paths(&example_segment_path)
-// TODO: report actual error
-                .or(Err(E01Error::InvalidFilename))?,
+            find_segment_paths(&example_segment_path)?,
             ignore_checksums
         )
     }
@@ -130,7 +102,7 @@ impl E01Reader {
     pub fn open<T: IntoIterator<Item: AsRef<Path>>>(
         segment_paths: T,
         ignore_checksums: bool
-    ) -> Result<Self, E01Error>
+    ) -> Result<Self, OpenError>
     {
         let mut segment_paths = segment_paths.into_iter();
 
@@ -142,11 +114,10 @@ impl E01Reader {
         let mut chunks = 0;
 
         // read first segment; volume section must be contained in it
-        let sp = segment_paths.next()
-            .ok_or(E01Error::InvalidFilename)?;
+        let sp = segment_paths.next().ok_or(OpenError::NoSegmentFiles)?;
 
-        let io = BytesReader::open(sp)
-            .map_err(|e| LibError::OpenError(FuckOffKError(e)))?;
+        let io = BytesReader::open(&sp)
+            .map_err(|e| OpenError::IoError { path: sp.as_ref().into(), source: Box::new(FuckOffKError(e)) })?;
 
         let seg = Segment::read(
             io,
@@ -154,9 +125,15 @@ impl E01Reader {
             &mut stored_md5,
             &mut stored_sha1,
             ignore_checksums,
-        )?;
+        ).map_err(|e| {
+            match e {
+                LibError::IoError(_) => OpenError::IoError { path: sp.as_ref().into(), source: Box::new(e) },
+                _ => OpenError::BadData { path: sp.as_ref().into(), source: Box::new(e) }
+            }
+        })?;
 
-        let volume = volume_opt.ok_or(E01Error::MissingVolumeSection)?;
+        let volume = volume_opt
+            .ok_or(OpenError::MissingVolumeSection(sp.as_ref().into()))?;
         let exp_chunks = volume.chunk_count as usize;
 
 //        let mut stored_md5_unexpected = None;
@@ -164,12 +141,12 @@ impl E01Reader {
         volume_opt = None;
 
         chunks += seg.chunk_count();
-        segments.push(seg);
+        segments.push((sp.as_ref().into(), seg));
 
         // continue reading segments
         for sp in segment_paths {
-            let io = BytesReader::open(sp)
-                .map_err(|e| LibError::OpenError(FuckOffKError(e)))?;
+            let io = BytesReader::open(&sp)
+                .map_err(|e| OpenError::IoError { path: sp.as_ref().into(), source: Box::new(FuckOffKError(e)) })?;
 
             let seg = Segment::read(
                 io,
@@ -178,12 +155,17 @@ impl E01Reader {
 //                &mut stored_sha1_unexpected,
                 &mut stored_md5,
                 &mut stored_sha1,
-                ignore_checksums,
-            )?;
+                ignore_checksums
+            ).map_err(|e| {
+                match e {
+                    LibError::IoError(_) => OpenError::IoError { path: sp.as_ref().into(), source: Box::new(e) },
+                    _ => OpenError::BadData { path: sp.as_ref().into(), source: Box::new(e) }
+                }
+            })?;
 
             // we should not see volume, hash, digest sections again
             if volume_opt.is_some() {
-                return Err(E01Error::DuplicateVolumeSection);
+                return Err(OpenError::DuplicateVolumeSection(sp.as_ref().into()));
             }
 
 /*
@@ -197,14 +179,14 @@ impl E01Reader {
 */
 
             chunks += seg.chunk_count();
-            segments.push(seg);
+            segments.push((sp.as_ref().into(), seg));
         }
 
         if chunks > exp_chunks {
-            return Err(E01Error::TooManyChunks);
+            return Err(OpenError::TooManyChunks(chunks, exp_chunks));
         }
         else if chunks < exp_chunks {
-            return Err(E01Error::TooFewChunks);
+            return Err(OpenError::TooFewChunks(chunks, exp_chunks));
         }
 
 /*
@@ -252,11 +234,12 @@ impl E01Reader {
         &self,
         chunk_number: usize,
         chunk_index: &mut usize,
-    ) -> Result<&Segment, E01Error> {
+    ) -> Result<&(PathBuf, Segment), ReadError> {
         let mut chunks = 0;
+// FIXME: Don't use an O(n) algorithm for locating chunks!
         self.segments
             .iter()
-            .find(|s| {
+            .find(|(_, s)| {
                 if chunk_number >= chunks && chunk_number < chunks + s.chunk_count() {
                     *chunk_index = chunk_number - chunks;
                     return true;
@@ -264,18 +247,18 @@ impl E01Reader {
                 chunks += s.chunk_count();
                 false
             })
-            .ok_or(E01Error::BadChunkNumber(chunk_number))
+            .ok_or(ReadError::BadChunkNumber(chunk_number))
     }
 
     pub fn read_at_offset(
         &self,
         mut offset: usize,
         buf: &mut [u8]
-    ) -> Result<usize, E01Error>
+    ) -> Result<usize, ReadError>
     {
         let total_size = self.total_size();
         if offset > total_size {
-            return Err(E01Error::OffsetBeyondEnd(offset, total_size));
+            return Err(ReadError::OffsetBeyondEnd(offset, total_size));
         }
 
         let mut bytes_read = 0;
@@ -284,16 +267,16 @@ impl E01Reader {
         while !remaining_buf.is_empty() && offset < total_size {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
-            let mut chunk_index = 0;
 
-            let mut data = self
-                .get_segment(chunk_number, &mut chunk_index)?
-                .read_chunk(
+            let mut chunk_index = 0;
+            let (sp, seg) = self.get_segment(chunk_number, &mut chunk_index)?;
+
+            let mut data = seg.read_chunk(
                     chunk_number,
                     chunk_index,
                     self.ignore_checksums,
                     remaining_buf
-                )?;
+            ).map_err(|e| ReadError::IoError { path: sp.into(), source: e })?;
 
             if chunk_number * self.chunk_size() + data.len() > total_size {
                 data.truncate(total_size - chunk_number * self.chunk_size());

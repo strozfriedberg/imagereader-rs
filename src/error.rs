@@ -46,7 +46,5 @@ pub enum LibError {
     #[error("Invalid segment file")]
     InvalidSegmentFile,
     #[error("Decompression failed")]
-    DecompressionFailed(#[source] std::io::Error),
-    #[error("{0}")]
-    OpenError(#[source] FuckOffKError)
+    DecompressionFailed(#[source] std::io::Error)
 }

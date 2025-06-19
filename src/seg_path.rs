@@ -52,7 +52,9 @@ pub enum SegmentPathError {
     #[error("File {0} is case-insensitively ambiguous")]
     DuplicateSegmentFile(PathBuf),
     #[error("File {0} has an unrecognized extension")]
-    UnrecognizedExtension(PathBuf)
+    UnrecognizedExtension(PathBuf),
+    #[error("File {0} not found")]
+    FileNotFound(PathBuf)
 }
 
 fn validate_proto_extension<T: AsRef<Path>>(
@@ -110,7 +112,7 @@ fn validate_segment_paths<T: AsRef<Path>, C: ExistsChecker>(
     base_path: T,
     ext_start: char,
     checker: &mut C
-) -> Result<impl Iterator<Item = PathBuf>, SegmentPathError>
+) -> Result<Vec<PathBuf>, SegmentPathError>
 {
     let mut segment_paths = vec![];
 
@@ -123,7 +125,7 @@ fn validate_segment_paths<T: AsRef<Path>, C: ExistsChecker>(
         }
     }
 
-    Ok(segment_paths.into_iter())
+    Ok(segment_paths)
 }
 
 fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
@@ -137,11 +139,20 @@ fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
     let ext = validate_proto_extension(proto_path)?;
 
     // Get the base path and initial character of extension
-    let base = proto_path.with_extension("");
+    let base_path = proto_path.with_extension("");
     let ext_start = ext.chars().next()
         .ok_or(SegmentPathError::UnrecognizedExtension(proto_path.into()))?;
 
-    validate_segment_paths(base, ext_start, checker)
+    let segment_paths = validate_segment_paths(
+        base_path,
+        ext_start,
+        checker
+    )?;
+
+    match segment_paths.is_empty() {
+        false => Ok(segment_paths.into_iter()),
+        true => Err(SegmentPathError::FileNotFound(proto_path.into()))
+    }
 }
 
 pub fn find_segment_paths<T: AsRef<Path>>(
