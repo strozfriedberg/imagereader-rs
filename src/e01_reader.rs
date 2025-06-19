@@ -355,12 +355,12 @@ impl E01Reader {
         self.volume.chunk_size()
     }
 
-    pub fn get_stored_md5(&self) -> Option<&Vec<u8>> {
-        self.stored_md5.as_ref()
+    pub fn get_stored_md5(&self) -> Option<&[u8]> {
+        self.stored_md5.as_ref().map(Vec::as_slice)
     }
 
-    pub fn get_stored_sha1(&self) -> Option<&Vec<u8>> {
-        self.stored_sha1.as_ref()
+    pub fn get_stored_sha1(&self) -> Option<&[u8]> {
+        self.stored_sha1.as_ref().map(Vec::as_slice)
     }
 }
 
