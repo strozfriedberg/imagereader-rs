@@ -47,13 +47,10 @@ impl SegmentFileHeader {
         io.seek(0).map_err(|e| IoError::SeekError(0, e))?;
 
         // read file header
-
-        if first_bytes == [0x45, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00] // EWF, EWF-E01, EWF-S01
-            || first_bytes == [0x4c, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00]
-        // EWF-L01
-        // V1
-        {
-            match EwfFileHeaderV1::read_into::<_, EwfFileHeaderV1>(io, None, None) {
+        match first_bytes.as_slice() {
+            [0x45, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00] | // EWF, EWF-E01, EWF-S01
+            [0x4c, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00] // EWF-L01
+            => match EwfFileHeaderV1::read_into::<_, EwfFileHeaderV1>(io, None, None) {
                 Ok(h) => {
                     Ok(SegmentFileHeader {
                         major_version: 1,
@@ -65,13 +62,10 @@ impl SegmentFileHeader {
                 Err(e) => {
                     Err(LibError::DeserializationFailed("EwfFileHeaderV1", e))
                 }
-            }
-        } else if first_bytes == [0x45, 0x56, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] // EVF2
-            || first_bytes == [0x4c, 0x45, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00]
-        // LEF2
-        // V2
-        {
-            match EwfFileHeaderV2::read_into::<_, EwfFileHeaderV2>(io, None, None) {
+            },
+            [0x45, 0x56, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] | // EVF2
+            [0x4c, 0x45, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] // LEF2
+            => match EwfFileHeaderV2::read_into::<_, EwfFileHeaderV2>(io, None, None) {
                 Ok(h) => {
                     Ok(SegmentFileHeader {
                         major_version: *h.major_version(),
@@ -83,10 +77,8 @@ impl SegmentFileHeader {
                 Err(e) => {
                     Err(LibError::DeserializationFailed("EwfFileHeaderV2", e))
                 }
-            }
-        }
-        else {
-            Err(LibError::InvalidSegmentFileHeader)
+            },
+            _ => Err(LibError::InvalidSegmentFileHeader)
         }
     }
 }
