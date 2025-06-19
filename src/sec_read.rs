@@ -7,6 +7,7 @@ use crate::generated::{
     ewf_volume::EwfVolume,
     ewf_volume_smart::EwfVolumeSmart
 };
+//use crate::generated::ewf_section_descriptor_v2::*;
 
 use kaitai::{BytesReader, KStream, KStruct, OptRc};
 

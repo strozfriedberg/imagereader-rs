@@ -4,7 +4,6 @@ extern crate kaitai;
 
 use kaitai::BytesReader;
 
-//use crate::generated::ewf_section_descriptor_v2::*;
 use crate::error::{IoError, LibError, FuckOffKError};
 use crate::sec_read::VolumeSection;
 use crate::seg_path::find_segment_paths;
