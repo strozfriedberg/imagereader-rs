@@ -1,6 +1,6 @@
 use crate::generated::ewf_file_header_v1::EwfFileHeaderV1;
 use crate::generated::ewf_file_header_v2::EwfFileHeaderV2;
-use crate::error::{FuckOffKError, IoError, LibError};
+use crate::error::{IoError, LibError};
 use crate::sec_read::{Chunk, Section, SectionIterator, VolumeSection};
 
 use flate2::read::ZlibDecoder;
@@ -63,7 +63,7 @@ impl SegmentFileHeader {
                     })
                 }
                 Err(e) => {
-                    Err(LibError::DeserializationFailed { name: "EwfFileHeaderV1".into(), source: FuckOffKError(e) })
+                    Err(LibError::DeserializationFailed("EwfFileHeaderV1".into(), e))
                 }
             }
         } else if first_bytes == [0x45, 0x56, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] // EVF2
@@ -81,7 +81,7 @@ impl SegmentFileHeader {
                     })
                 }
                 Err(e) => {
-                    Err(LibError::DeserializationFailed { name: "EwfFileHeaderV2".into(), source: FuckOffKError(e) })
+                    Err(LibError::DeserializationFailed("EwfFileHeaderV2".into(), e))
                 }
             }
         }

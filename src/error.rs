@@ -1,18 +1,5 @@
 use kaitai::KError;
 
-use std::fmt;
-
-#[derive(Debug)]
-pub struct FuckOffKError(pub KError);
-
-impl fmt::Display for FuckOffKError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
-}
-
-impl std::error::Error for FuckOffKError {}
-
 #[derive(Debug, thiserror::Error)]
 pub enum IoError {
     #[error("{0}")]
@@ -35,12 +22,8 @@ pub enum LibError {
     IoError(#[from] IoError),
     #[error("{0} checksum failed, calculated {1}, expected {2}")]
     BadChecksum(String, u32, u32),
-    #[error("Error while deserializing {name} struct: {source}")]
-    DeserializationFailed {
-        name: String,
-        #[source]
-        source: FuckOffKError
-    },
+    #[error("Error while deserializing {0} struct: {1:?}")]
+    DeserializationFailed(String, KError),
     #[error("Unexpected volume size: {0}")]
     UnexpectedVolumeSize(u64),
     #[error("Unknown compression method value: {0}")]
