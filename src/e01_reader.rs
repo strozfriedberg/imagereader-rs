@@ -360,11 +360,11 @@ impl E01Reader {
     }
 
     pub fn get_stored_md5(&self) -> Option<&[u8]> {
-        self.stored_md5.as_ref().map(Vec::as_slice)
+        self.stored_md5.as_deref()
     }
 
     pub fn get_stored_sha1(&self) -> Option<&[u8]> {
-        self.stored_sha1.as_ref().map(Vec::as_slice)
+        self.stored_sha1.as_deref()
     }
 }
 
