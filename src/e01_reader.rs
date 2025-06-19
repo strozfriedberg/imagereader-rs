@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 extern crate kaitai;
 
-use kaitai::BytesReader;
+use kaitai::{BytesReader, KError};
 
-use crate::error::{LibError, FuckOffKError};
+use crate::error::{IoError, LibError, FuckOffKError};
 use crate::sec_read::VolumeSection;
 use crate::seg_path::{find_segment_paths, SegmentPathError};
 use crate::segment::Segment;
@@ -42,12 +42,54 @@ pub enum OpenError {
     #[error("Error reading {path}: {source}")]
     IoError {
         path: PathBuf,
-        source: Box<dyn std::error::Error>
+        #[source]
+        source: LibError
     },
     #[error("Bad data in {path}: {source}")]
     BadData {
         path: PathBuf,
-        source: Box<dyn std::error::Error>
+        #[source]
+        source: LibError
+    }
+}
+
+impl From<LibError> for OpenError {
+    fn from(e: LibError) -> Self {
+        match e {
+            LibError::IoError(_) => Self::IoError {
+                path: "".into(),
+                source: e
+            },
+            _ => Self::BadData {
+                path: "".into(),
+                source: e
+            }
+        }
+    }
+}
+
+impl From<KError> for OpenError {
+    fn from(e: KError) -> Self {
+        Self::IoError {
+            path: "".into(),
+            source: LibError::IoError(IoError::ReadError(FuckOffKError(e)))
+        }
+    }
+}
+
+impl OpenError {
+    fn with_path<T: AsRef<Path>>(self, path: T) -> Self {
+        match self {
+            Self::IoError { source, .. } => Self::IoError {
+                path: path.as_ref().into(),
+                source
+            },
+            Self::BadData { source, .. } => Self::BadData {
+                path: path.as_ref().into(),
+                source
+            },
+            _ => self
+        }
     }
 }
 
@@ -66,7 +108,39 @@ pub enum ReadError {
     #[error("Bad data in {path}: {source}")]
     BadData {
         path: PathBuf,
-        source: Box<dyn std::error::Error>
+        #[source]
+        source: LibError
+    }
+}
+
+impl From<LibError> for ReadError {
+    fn from(e: LibError) -> Self {
+        match e {
+            LibError::IoError(_) => Self::IoError {
+                path: "".into(),
+                source: e
+            },
+            _ => Self::BadData {
+                path: "".into(),
+                source: e
+            }
+        }
+    }
+}
+
+impl ReadError {
+    fn with_path<T: AsRef<Path>>(self, path: T) -> Self {
+        match self {
+            Self::IoError { source, .. } => Self::IoError {
+                path: path.as_ref().into(),
+                source
+            },
+            Self::BadData { source, .. } => Self::BadData {
+                path: path.as_ref().into(),
+                source
+            },
+            _ => self
+        }
     }
 }
 
@@ -117,7 +191,8 @@ impl E01Reader {
         let sp = segment_paths.next().ok_or(OpenError::NoSegmentFiles)?;
 
         let io = BytesReader::open(&sp)
-            .map_err(|e| OpenError::IoError { path: sp.as_ref().into(), source: Box::new(FuckOffKError(e)) })?;
+            .map_err(OpenError::from)
+            .map_err(|e| e.with_path(&sp))?;
 
         let seg = Segment::read(
             io,
@@ -125,12 +200,7 @@ impl E01Reader {
             &mut stored_md5,
             &mut stored_sha1,
             ignore_checksums,
-        ).map_err(|e| {
-            match e {
-                LibError::IoError(_) => OpenError::IoError { path: sp.as_ref().into(), source: Box::new(e) },
-                _ => OpenError::BadData { path: sp.as_ref().into(), source: Box::new(e) }
-            }
-        })?;
+        ).map_err(OpenError::from).map_err(|e| e.with_path(&sp))?;
 
         let volume = volume_opt
             .ok_or(OpenError::MissingVolumeSection(sp.as_ref().into()))?;
@@ -146,7 +216,8 @@ impl E01Reader {
         // continue reading segments
         for sp in segment_paths {
             let io = BytesReader::open(&sp)
-                .map_err(|e| OpenError::IoError { path: sp.as_ref().into(), source: Box::new(FuckOffKError(e)) })?;
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(&sp))?;
 
             let seg = Segment::read(
                 io,
@@ -156,12 +227,7 @@ impl E01Reader {
                 &mut stored_md5,
                 &mut stored_sha1,
                 ignore_checksums
-            ).map_err(|e| {
-                match e {
-                    LibError::IoError(_) => OpenError::IoError { path: sp.as_ref().into(), source: Box::new(e) },
-                    _ => OpenError::BadData { path: sp.as_ref().into(), source: Box::new(e) }
-                }
-            })?;
+            ).map_err(OpenError::from).map_err(|e| e.with_path(&sp))?;
 
             // we should not see volume, hash, digest sections again
             if volume_opt.is_some() {
@@ -272,11 +338,11 @@ impl E01Reader {
             let (sp, seg) = self.get_segment(chunk_number, &mut chunk_index)?;
 
             let mut data = seg.read_chunk(
-                    chunk_number,
-                    chunk_index,
-                    self.ignore_checksums,
-                    remaining_buf
-            ).map_err(|e| ReadError::IoError { path: sp.into(), source: e })?;
+                chunk_number,
+                chunk_index,
+                self.ignore_checksums,
+                remaining_buf
+            ).map_err(ReadError::from).map_err(|e| e.with_path(sp))?;
 
             if chunk_number * self.chunk_size() + data.len() > total_size {
                 data.truncate(total_size - chunk_number * self.chunk_size());
