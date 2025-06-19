@@ -186,8 +186,10 @@ impl E01Reader {
             ignore_checksums,
         ).map_err(OpenError::from).map_err(|e| e.with_path(&sp))?;
 
+        let sp = sp.as_ref();
+
         let volume = volume_opt
-            .ok_or(OpenError::MissingVolumeSection(sp.as_ref().into()))?;
+            .ok_or(OpenError::MissingVolumeSection(sp.into()))?;
         let exp_chunks = volume.chunk_count as usize;
 
 //        let mut stored_md5_unexpected = None;
@@ -195,7 +197,7 @@ impl E01Reader {
         volume_opt = None;
 
         chunks += seg.chunk_count();
-        segments.push((sp.as_ref().into(), seg));
+        segments.push((sp.into(), seg));
 
         // continue reading segments
         for sp in segment_paths {
@@ -213,9 +215,11 @@ impl E01Reader {
                 ignore_checksums
             ).map_err(OpenError::from).map_err(|e| e.with_path(&sp))?;
 
+            let sp = sp.as_ref();
+
             // we should not see volume, hash, digest sections again
             if volume_opt.is_some() {
-                return Err(OpenError::DuplicateVolumeSection(sp.as_ref().into()));
+                return Err(OpenError::DuplicateVolumeSection(sp.into()));
             }
 
 /*
@@ -229,7 +233,7 @@ impl E01Reader {
 */
 
             chunks += seg.chunk_count();
-            segments.push((sp.as_ref().into(), seg));
+            segments.push((sp.into(), seg));
         }
 
         if chunks > exp_chunks {
