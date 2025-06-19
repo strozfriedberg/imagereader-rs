@@ -164,9 +164,9 @@ impl E01Reader {
     {
         let mut segment_paths = segment_paths.into_iter();
 
-        let mut volume_opt: Option<VolumeSection> = None;
-        let mut stored_md5: Option<_> = None;
-        let mut stored_sha1: Option<_> = None;
+        let mut volume_opt = None;
+        let mut stored_md5 = None;
+        let mut stored_sha1 = None;
 
         let mut segments = vec![];
         let mut chunks = 0;
