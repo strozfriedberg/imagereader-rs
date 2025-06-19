@@ -10,22 +10,6 @@ use crate::seg_path::{find_segment_paths, SegmentPathError};
 use crate::segment::Segment;
 
 #[derive(Debug, thiserror::Error)]
-pub enum BadData {
-    #[error("Requested chunk number {0} is wrong")]
-    BadChunkNumber(usize),
-    #[error("Requested offset {0} is over max offset {1}")]
-    OffsetBeyondEnd(usize, usize),
-    #[error("Missing volume section")]
-    MissingVolumeSection,
-    #[error("Too many chunks")]
-    TooManyChunks,
-    #[error("Too few chunks")]
-    TooFewChunks,
-    #[error("Duplicate volume section")]
-    DuplicateVolumeSection
-}
-
-#[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error("{0}")]
     PathGlobError(#[from] SegmentPathError),
