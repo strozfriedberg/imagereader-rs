@@ -42,10 +42,10 @@ impl SegmentFileHeader {
     pub fn new(io: &BytesReader) -> Result<Self, LibError> {
         let first_bytes = io
             .read_bytes(8)
-            .map_err(|e| LibError::IoError(IoError::ReadError(FuckOffKError(e))))?;
+            .map_err(|e| IoError::ReadError(FuckOffKError(e)))?;
 
         io.seek(0)
-            .map_err(|e| LibError::IoError(IoError::SeekError { offset: 0, source: FuckOffKError(e) }))?;
+            .map_err(|e| IoError::SeekError { offset: 0, source: FuckOffKError(e) })?;
 
         // read file header
 
@@ -151,7 +151,7 @@ impl Segment {
         let chunk = &self.chunks[chunk_index];
         self.io
             .seek(chunk.data_offset as usize)
-            .map_err(|e| LibError::IoError(IoError::SeekError { offset: chunk.data_offset as usize, source: FuckOffKError(e) }))?;
+            .map_err(|e| IoError::SeekError { offset: chunk.data_offset as usize, source: FuckOffKError(e) })?;
 
         let end_offset = if chunk_index == self.chunks.len() - 1 {
             self.end_of_sectors
@@ -166,7 +166,7 @@ impl Segment {
         let mut raw_data = self
             .io
             .read_bytes(end_offset as usize - chunk.data_offset as usize)
-            .map_err(|e| LibError::IoError(IoError::ReadError(FuckOffKError(e))))?;
+            .map_err(|e| IoError::ReadError(FuckOffKError(e)))?;
 
         if !chunk.compressed {
             if !ignore_checksums {
@@ -182,7 +182,7 @@ impl Segment {
 
                 // checksum the data
                 let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
-                    .map_err(|e| LibError::IoError(IoError::IoError(e)))?;
+                    .map_err(|e| IoError::IoError(e))?;
 
                 if crc != crc_stored {
                     return Err(LibError::BadChecksum(
