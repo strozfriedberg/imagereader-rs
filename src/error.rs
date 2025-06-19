@@ -17,13 +17,15 @@ impl std::error::Error for FuckOffKError {}
 pub enum IoError {
     #[error("{0}")]
     IoError(#[from] std::io::Error),
-    #[error("{0}")]
-    ReadError(#[from] FuckOffKError),
-    #[error("Seek to {offset} failed: {source}")]
-    SeekError {
-        offset: usize,
-        #[source]
-        source: FuckOffKError
+    #[error("{0:?}")]
+    ReadError(KError),
+    #[error("Seek to {0} failed: {1:?}")]
+    SeekError(usize, KError)
+}
+
+impl From<KError> for IoError {
+    fn from(e: KError) -> Self {
+        Self::ReadError(e)
     }
 }
 

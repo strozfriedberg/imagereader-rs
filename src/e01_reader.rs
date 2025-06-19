@@ -4,7 +4,7 @@ extern crate kaitai;
 
 use kaitai::{BytesReader, KError};
 
-use crate::error::{IoError, LibError, FuckOffKError};
+use crate::error::{IoError, LibError};
 use crate::sec_read::VolumeSection;
 use crate::seg_path::{find_segment_paths, SegmentPathError};
 use crate::segment::Segment;
@@ -72,7 +72,7 @@ impl From<KError> for OpenError {
     fn from(e: KError) -> Self {
         Self::IoError {
             path: "".into(),
-            source: LibError::IoError(IoError::ReadError(FuckOffKError(e)))
+            source: LibError::IoError(IoError::ReadError(e))
         }
     }
 }

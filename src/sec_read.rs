@@ -38,7 +38,7 @@ fn checksum_reader(
         std::io::Cursor::new(
             &reader
                 .read_bytes(len)
-                .map_err(|e| IoError::ReadError(FuckOffKError(e)))?
+                .map_err(IoError::ReadError)?
         )
     )?)
 }
@@ -153,7 +153,7 @@ pub fn read_table(
     let mut data_offset: u64;
     let mut chunks: Vec<Chunk> = Vec::new();
     for _ in 0..*table_section.entry_count() {
-        let entry = io.read_u4le().map_err(|e| IoError::ReadError(FuckOffKError(e)))?;
+        let entry = io.read_u4le().map_err(IoError::ReadError)?;
         data_offset = (entry & 0x7fffffff) as u64;
         data_offset += *table_section.table_base_offset();
         chunks.push(Chunk {
@@ -165,7 +165,7 @@ pub fn read_table(
 
     if !ignore_checksums {
         // table footer
-        let crc_stored = io.read_u4le().map_err(|e| IoError::ReadError(FuckOffKError(e)))?;
+        let crc_stored = io.read_u4le().map_err(IoError::ReadError)?;
 
         let crc = checksum_reader(
             &io_offsets,
@@ -276,17 +276,12 @@ impl Iterator for SectionIterator<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_offset < self.io.size() {
-            if let Err(e) = self.io.seek(self.current_offset)
-                .map_err(|e|
+            if let Err(e) = self.io.seek(self.current_offset) {
+                return Some(Err(
                     LibError::IoError(
-                        IoError::SeekError {
-                            offset: self.current_offset,
-                            source: FuckOffKError(e)
-                        }
+                        IoError::SeekError(self.current_offset, e)
                     )
-                )
-            {
-                return Some(Err(e));
+                ))
             }
 
             match read_section(self.io, self.ignore_checksums) {
