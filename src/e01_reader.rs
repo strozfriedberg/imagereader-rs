@@ -243,34 +243,6 @@ impl E01Reader {
             return Err(OpenError::TooFewChunks(chunks, exp_chunks));
         }
 
-/*
-        let segment_paths = candidate_segments(&f)
-            .ok_or(E01Error::InvalidFilename)?;
-
-        for sp in segment_paths {
-            let seg = Segment::read(
-                sp,
-                &mut volume_opt,
-                &mut stored_md5,
-                &mut stored_sha1,
-                ignore_checksums,
-            )?;
-
-            chunks += seg.chunks.len();
-            segments.push(seg);
-
-            if let Some(ref volume) = volume_opt {
-                let exp_chunks = volume.chunk_count as usize;
-                if chunks == exp_chunks {
-                    break;
-                }
-                else if chunks > exp_chunks {
-                    return Err(E01Error::TooManyChunks)
-                }
-            }
-        }
-*/
-
         Ok(E01Reader {
             volume,
             segments,
