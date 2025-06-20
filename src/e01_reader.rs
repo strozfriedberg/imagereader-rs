@@ -40,11 +40,11 @@ impl From<LibError> for OpenError {
     fn from(e: LibError) -> Self {
         match e {
             LibError::IoError(_) => Self::IoError {
-                path: "".into(),
+                path: "".into(), // set using with_path()
                 source: e
             },
             _ => Self::BadData {
-                path: "".into(),
+                path: "".into(), // set using with_path()
                 source: e
             }
         }
@@ -54,7 +54,7 @@ impl From<LibError> for OpenError {
 impl From<KError> for OpenError {
     fn from(e: KError) -> Self {
         Self::IoError {
-            path: "".into(),
+            path: "".into(), // set using with_path()
             source: LibError::IoError(IoError::ReadError(e))
         }
     }
