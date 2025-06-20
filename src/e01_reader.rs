@@ -100,11 +100,11 @@ impl From<LibError> for ReadError {
     fn from(e: LibError) -> Self {
         match e {
             LibError::IoError(_) => Self::IoError {
-                path: "".into(),
+                path: "".into(), // set using with_path()
                 source: e
             },
             _ => Self::BadData {
-                path: "".into(),
+                path: "".into(), // set using with_path()
                 source: e
             }
         }
