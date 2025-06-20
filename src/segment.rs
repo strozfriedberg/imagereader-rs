@@ -204,7 +204,7 @@ impl Segment {
         }
         else {
             let mut decoder = ZlibDecoder::new(&raw_data[..]);
-            let mut data = Vec::new();
+            let mut data = vec![];
             decoder
                 .read_to_end(&mut data)
                 .map_err(LibError::DecompressionFailed)?;

@@ -149,7 +149,7 @@ pub fn read_table(
 
     let io_offsets = Clone::clone(io);
     let mut data_offset: u64;
-    let mut chunks: Vec<Chunk> = Vec::new();
+    let mut chunks = vec![];
     for _ in 0..*table_section.entry_count() {
         let entry = io.read_u4le().map_err(IoError::ReadError)?;
         data_offset = (entry & 0x7fffffff) as u64;
