@@ -113,7 +113,7 @@ impl Segment {
         volume: &mut Option<VolumeSection>,
         stored_md5: &mut Option<Vec<u8>>,
         stored_sha1: &mut Option<Vec<u8>>,
-        ignore_checksums: bool,
+        ignore_checksums: bool
     ) -> Result<Self, LibError> {
         let header = SegmentFileHeader::new(&io)?;
         let mut chunks: Vec<Chunk> = Vec::new();
