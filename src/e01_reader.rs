@@ -252,10 +252,6 @@ impl E01Reader {
         })
     }
 
-    pub fn total_size(&self) -> usize {
-        self.volume.max_offset()
-    }
-
     fn get_segment(
         &self,
         chunk_number: usize,
@@ -329,6 +325,10 @@ impl E01Reader {
 
     pub fn chunk_size(&self) -> usize {
         self.volume.chunk_size()
+    }
+
+    pub fn total_size(&self) -> usize {
+        self.volume.max_offset()
     }
 
     pub fn get_stored_md5(&self) -> Option<&[u8]> {
