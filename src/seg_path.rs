@@ -4,6 +4,7 @@ use std::{
 };
 use itertools::iproduct;
 
+#[allow(clippy::manual_is_ascii_check)]
 fn valid_segment_ext(ext: &str) -> bool {
     let ext = ext.to_ascii_uppercase();
     let mut ext = ext.chars();
