@@ -228,10 +228,15 @@ impl E01Reader {
 
             // take the volume section if it's the first one
             match (seg_volume, &volume) {
+                // we have no volume section, and saw one
                 (Some(sv), None) => volume = Some(sv),
+                // we have a volume section, and didn't see a new one
                 (None, Some(_)) => {},
+                // we have no volume section, and saw none;
+                // this can happen only on the first segment
                 (None, None) =>
                     return Err(OpenError::MissingVolumeSection(sp.into())),
+                // we have a volume section and saw another one!
                 (Some(_), Some(_)) =>
                     warn!("duplicate volume section")
             }
