@@ -116,7 +116,7 @@ impl Segment {
         ignore_checksums: bool
     ) -> Result<Self, LibError> {
         let header = SegmentFileHeader::new(&io)?;
-        let mut chunks: Vec<Chunk> = Vec::new();
+        let mut chunks = vec![];
         let mut end_of_sectors = 0;
 
         for section in SectionIterator::new(&io, ignore_checksums) {
