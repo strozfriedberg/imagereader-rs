@@ -4,6 +4,11 @@ use clap::Parser;
 use md5::digest::DynDigest;
 use sha2::Digest;
 use std::collections::HashMap;
+use tracing_subscriber::{
+    filter::LevelFilter,
+    layer::SubscriberExt,
+    util::SubscriberInitExt
+};
 
 use e01::e01_reader::{E01Error, E01Reader};
 
@@ -64,6 +69,22 @@ fn check_hash(
 }
 
 fn main() -> ExitCode {
+    let stderr_layer = tracing_subscriber::fmt::layer()
+//        .with_current_span(true)
+        .without_time()
+        .with_file(false)
+        .with_line_number(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_target(false)
+        .with_writer(std::io::stderr);
+
+    tracing_subscriber::registry()
+        .with(stderr_layer)
+//        .with(LevelFilter::INFO)
+        .with(LevelFilter::DEBUG)
+        .init();
+
     let cli = Cli::parse();
     let mut stored_md5 = None;
     let mut stored_sha1 = None;

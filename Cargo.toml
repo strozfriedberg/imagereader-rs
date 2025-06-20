@@ -30,6 +30,8 @@ clap = { version = "^4.5", features = ["derive"] }
 hex = "^0.4"
 thiserror = "2.0.12"
 itertools = "0.14.0"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["json"] }
 
 [dev-dependencies]
 hex = "^0.4"
