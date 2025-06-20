@@ -1,13 +1,14 @@
 use std::path::{Path, PathBuf};
+use tracing::{debug, debug_span, warn};
 
 extern crate kaitai;
 
 use kaitai::{BytesReader, KError};
 
 use crate::error::{IoError, LibError};
-use crate::sec_read::VolumeSection;
+use crate::sec_read::{VolumeSection, Section, SectionIterator};
 use crate::seg_path::{find_segment_paths, SegmentPathError};
-use crate::segment::Segment;
+use crate::segment::{Segment, SegmentFileHeader};
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
@@ -17,8 +18,6 @@ pub enum OpenError {
     NoSegmentFiles,
     #[error("Missing volume section in {0}")]
     MissingVolumeSection(PathBuf),
-    #[error("Duplicate volume section in {0}")]
-    DuplicateVolumeSection(PathBuf),
     #[error("Too many chunks found: actual {0}, expected {1}")]
     TooManyChunks(usize, usize),
     #[error("Too few chunks found: actual {0}, expected {1}")]
@@ -162,85 +161,130 @@ impl E01Reader {
         ignore_checksums: bool
     ) -> Result<Self, OpenError>
     {
-        let mut segment_paths = segment_paths.into_iter();
+        let mut segment_paths = segment_paths.into_iter().peekable();
 
-        let mut volume_opt = None;
+        // check that there are some segment files
+        segment_paths.peek().ok_or(OpenError::NoSegmentFiles)?;
+
+        let mut segments: Vec<(PathBuf, Segment)> = vec![];
+        let mut chunk_count = 0;
+
+        let mut volume = None;
         let mut stored_md5 = None;
         let mut stored_sha1 = None;
+        let mut done = false;
 
-        let mut segments = vec![];
-        let mut chunks = 0;
+        // read segments
+        for sp in segment_paths.by_ref() {
+            let span = debug_span!("span", segment_path = ?sp.as_ref());
+            debug!("opening {}", sp.as_ref().display());
 
-        // read first segment; volume section must be contained in it
-        let sp = segment_paths.next().ok_or(OpenError::NoSegmentFiles)?;
-
-        let io = BytesReader::open(&sp)
-            .map_err(OpenError::from)
-            .map_err(|e| e.with_path(&sp))?;
-
-        let seg = Segment::read(
-            io,
-            &mut volume_opt,
-            &mut stored_md5,
-            &mut stored_sha1,
-            ignore_checksums,
-        ).map_err(OpenError::from).map_err(|e| e.with_path(&sp))?;
-
-        let sp = sp.as_ref();
-
-        let volume = volume_opt
-            .ok_or(OpenError::MissingVolumeSection(sp.into()))?;
-        let exp_chunks = volume.chunk_count as usize;
-
-//        let mut stored_md5_unexpected = None;
-//        let mut stored_sha1_unexpected = None;
-        volume_opt = None;
-
-        chunks += seg.chunk_count();
-        segments.push((sp.into(), seg));
-
-        // continue reading segments
-        for sp in segment_paths {
             let io = BytesReader::open(&sp)
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(&sp))?;
 
-            let seg = Segment::read(
-                io,
-                &mut volume_opt,
-//                &mut stored_md5_unexpected,
-//                &mut stored_sha1_unexpected,
-                &mut stored_md5,
-                &mut stored_sha1,
-                ignore_checksums
-            ).map_err(OpenError::from).map_err(|e| e.with_path(&sp))?;
+            debug!("reading sections {}", sp.as_ref().display());
+
+            let header = SegmentFileHeader::new(&io)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(&sp))?;
+
+            let mut chunks = vec![];
+            let mut end_of_sectors = 0;
+
+            let mut seg_volume = None;
+            let mut seg_stored_md5 = None;
+            let mut seg_stored_sha1 = None;
+
+            let mut sections = SectionIterator::new(&io, ignore_checksums);
+
+            for section in sections.by_ref() {
+                match section
+                    .map_err(OpenError::from)
+                    .map_err(|e| e.with_path(&sp))?
+                {
+                    Section::Volume(v) => seg_volume = Some(v),
+                    Section::Table(t) => {
+                        chunks.extend(t);
+                        let chunks_len = chunks.len();
+                        chunks[chunks_len - 1].end_offset = Some(end_of_sectors);
+                    },
+                    Section::Sectors(eos) => end_of_sectors = eos,
+                    Section::Hash(h) => seg_stored_md5 = Some(h.md5().clone()),
+                    Section::Digest(d) => {
+                        seg_stored_md5 = Some(d.md5().clone());
+                        seg_stored_sha1 = Some(d.sha1().clone());
+                    },
+                    Section::Done => { done = true; break; },
+                    _ => {}
+                }
+            }
+
+            if done && sections.next().is_some() {
+                warn!("more sections after done");
+            }
 
             let sp = sp.as_ref();
 
-            // we should not see volume, hash, digest sections again
-            if volume_opt.is_some() {
-                return Err(OpenError::DuplicateVolumeSection(sp.into()));
+            // take the volume section if it's the first one
+            match (seg_volume, &volume) {
+                (Some(sv), None) => volume = Some(sv),
+                (None, Some(_)) => {},
+                (None, None) =>
+                    return Err(OpenError::MissingVolumeSection(sp.into())),
+                (Some(_), Some(_)) =>
+                    warn!("duplicate volume section")
             }
 
-/*
-            if stored_md5_unexpected.is_some() {
-                return Err(E01Error::DuplicateMD5);
+            // take the stored MD5 if it's the first one
+            match (seg_stored_md5, &stored_md5) {
+                (Some(h), None) => stored_md5 = Some(h),
+                (Some(new), Some(old)) if new != *old =>
+                    warn!("duplicate stored MD5s disagree"),
+                _ => {}
             }
 
-            if stored_sha1_unexpected.is_some() {
-                return Err(E01Error::DuplicateSHA1);
+            // take the stored SHA1 if it's the first one
+            match (seg_stored_sha1, &stored_sha1) {
+                (Some(h), None) => stored_sha1 = Some(h),
+                (Some(new), Some(old)) if new != *old =>
+                    warn!("duplicate stored SHA1s disagree"),
+                _ => {}
             }
-*/
 
-            chunks += seg.chunk_count();
+            let seg = Segment {
+                io,
+                _header: header,
+                chunks,
+                end_of_sectors
+            };
+
+            chunk_count += seg.chunk_count();
             segments.push((sp.into(), seg));
+
+            if done {
+                break;
+            }
         }
 
-        if chunks > exp_chunks {
-            return Err(OpenError::TooManyChunks(chunks, exp_chunks));
+        if done {
+            if segment_paths.next().is_some() {
+                warn!("more segments after finding done section");
+            }
         }
-        else if chunks < exp_chunks {
-            return Err(OpenError::TooFewChunks(chunks, exp_chunks));
+        else {
+            warn!("read all segments without finding done section");
+        }
+
+        let volume = volume.expect("volume section must have been found");
+
+        let exp_chunk_count = volume.chunk_count as usize;
+
+        if chunk_count > exp_chunk_count {
+            return Err(OpenError::TooManyChunks(chunk_count, exp_chunk_count));
+        }
+        else if chunk_count < exp_chunk_count {
+            return Err(OpenError::TooFewChunks(chunk_count, exp_chunk_count));
         }
 
         Ok(E01Reader {

@@ -1,7 +1,7 @@
 use crate::generated::ewf_file_header_v1::EwfFileHeaderV1;
 use crate::generated::ewf_file_header_v2::EwfFileHeaderV2;
 use crate::error::{IoError, LibError};
-use crate::sec_read::{Chunk, Section, SectionIterator, VolumeSection};
+use crate::sec_read::Chunk;
 
 use flate2::read::ZlibDecoder;
 use kaitai::{BytesReader, KStream, KStruct};
@@ -31,7 +31,7 @@ impl TryFrom<u16> for CompressionMethod {
 }
 
 #[derive(Debug)]
-struct SegmentFileHeader {
+pub struct SegmentFileHeader {
     major_version: u8,
     minor_version: u8,
     compr_method: CompressionMethod,
@@ -101,51 +101,13 @@ impl SegmentFileHeader {
 
 #[derive(Debug)]
 pub struct Segment {
-    io: BytesReader,
-    _header: SegmentFileHeader,
-    chunks: Vec<Chunk>,
-    end_of_sectors: u64,
+    pub io: BytesReader,
+    pub _header: SegmentFileHeader,
+    pub chunks: Vec<Chunk>,
+    pub end_of_sectors: u64
 }
 
 impl Segment {
-    pub fn read(
-        io: BytesReader,
-        volume: &mut Option<VolumeSection>,
-        stored_md5: &mut Option<Vec<u8>>,
-        stored_sha1: &mut Option<Vec<u8>>,
-        ignore_checksums: bool
-    ) -> Result<Self, LibError> {
-        let header = SegmentFileHeader::new(&io)?;
-        let mut chunks = vec![];
-        let mut end_of_sectors = 0;
-
-        for section in SectionIterator::new(&io, ignore_checksums) {
-            match section? {
-                Section::Volume(v) => *volume = Some(v),
-                Section::Table(t) => {
-                    chunks.extend(t);
-                    let chunks_len = chunks.len();
-                    chunks[chunks_len - 1].end_offset = Some(end_of_sectors);
-                },
-                Section::Sectors(eos) => end_of_sectors = eos,
-                Section::Hash(h) => *stored_md5 = Some(h.md5().clone()),
-                Section::Digest(d) => {
-                    *stored_md5 = Some(d.md5().clone());
-                    *stored_sha1 = Some(d.sha1().clone());
-                },
-                Section::Done => break,
-                _ => {}
-            }
-        }
-
-        Ok(Segment {
-            io,
-            _header: header,
-            chunks,
-            end_of_sectors
-        })
-    }
-
     pub fn read_chunk(
         &self,
         chunk_number: usize,
