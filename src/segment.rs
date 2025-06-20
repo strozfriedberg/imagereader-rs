@@ -43,19 +43,13 @@ fn try_ewf_file_header_v1(
 ) -> Result<SegmentFileHeader, LibError>
 {
     match EwfFileHeaderV1::read_into::<_, EwfFileHeaderV1>(io, None, None) {
-        Ok(h) => {
-            Ok(
-                SegmentFileHeader {
-                    major_version: 1,
-                    minor_version: 0,
-                    compr_method: CompressionMethod::Deflate,
-                    segment_number: *h.segment_number(),
-                }
-            )
-        }
-        Err(e) => {
-            Err(LibError::DeserializationFailed("EwfFileHeaderV1", e))
-        }
+        Ok(h) => Ok(SegmentFileHeader {
+            major_version: 1,
+            minor_version: 0,
+            compr_method: CompressionMethod::Deflate,
+            segment_number: *h.segment_number(),
+        }),
+        Err(e) => Err(LibError::DeserializationFailed("EwfFileHeaderV1", e))
     }
 }
 
@@ -64,17 +58,13 @@ fn try_ewf_file_header_v2(
 ) -> Result<SegmentFileHeader, LibError>
 {
     match EwfFileHeaderV2::read_into::<_, EwfFileHeaderV2>(io, None, None) {
-        Ok(h) => {
-            Ok(SegmentFileHeader {
-                major_version: *h.major_version(),
-                minor_version: *h.minor_version(),
-                compr_method: (*h.compression_method()).try_into()?,
-                segment_number: *h.segment_number(),
-            })
-        }
-        Err(e) => {
-            Err(LibError::DeserializationFailed("EwfFileHeaderV2", e))
-        }
+        Ok(h) => Ok(SegmentFileHeader {
+            major_version: *h.major_version(),
+            minor_version: *h.minor_version(),
+            compr_method: (*h.compression_method()).try_into()?,
+            segment_number: *h.segment_number(),
+        }),
+        Err(e) => Err(LibError::DeserializationFailed("EwfFileHeaderV2", e))
     }
 }
 
