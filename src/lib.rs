@@ -10,8 +10,10 @@ mod test {
     use crate::e01_reader::E01Reader;
 
     use hex;
-    use md5::digest::DynDigest;
-    use md5::Md5;
+    use md5::{
+        Md5,
+        digest::DynDigest
+    };
     use rand::Rng;
     use sha1::Sha1;
     use sha2::{Digest, Sha256};
