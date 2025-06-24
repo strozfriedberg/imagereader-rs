@@ -176,7 +176,7 @@ impl E01Reader {
 
         // read segments
         for sp in segment_paths.by_ref() {
-            let span = debug_span!("span", segment_path = ?sp.as_ref());
+            let _span = debug_span!("", segment_path = ?sp.as_ref()).entered();
             debug!("opening {}", sp.as_ref().display());
 
             let io = BytesReader::open(&sp)
