@@ -50,8 +50,6 @@ fn segment_ext_iter(start: char) -> impl Iterator<Item = String> {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SegmentPathError {
-    #[error("File {0} is case-insensitively ambiguous")]
-    DuplicateSegmentFile(PathBuf),
     #[error("File {0} has an unrecognized extension")]
     UnrecognizedExtension(PathBuf),
     #[error("File {0} not found")]
@@ -87,7 +85,7 @@ fn validate_segment_path<T: AsRef<Path>, C: ExistsChecker>(
     base_path: T,
     ext: &str,
     checker: &mut C
-) -> Result<Option<PathBuf>, SegmentPathError>
+) -> Option<PathBuf>
 {
     let base_path = base_path.as_ref();
 
@@ -95,17 +93,17 @@ fn validate_segment_path<T: AsRef<Path>, C: ExistsChecker>(
     // .e01, so the extensions can actually differ in case through
     // the sequence...
     let seg_path_uc = base_path.with_extension(ext);
-    let seg_path_lc = base_path.with_extension(ext.to_ascii_lowercase());
-
-    match (checker.is_file(&seg_path_uc), checker.is_file(&seg_path_lc)) {
-        // we found only the uppercase extension
-        (true, false) => Ok(Some(seg_path_uc)),
-        // we found only the lowercase extension
-        (false, true) => Ok(Some(seg_path_lc)),
-        // we found both extensions (!)
-        (true, true) => Err(SegmentPathError::DuplicateSegmentFile(seg_path_uc)),
-        // we found neither extension, maybe end of segments?
-        (false, false) => Ok(None)
+    if checker.is_file(&seg_path_uc) {
+        Some(seg_path_uc)
+    }
+    else {
+        let seg_path_lc = base_path.with_extension(ext.to_ascii_lowercase());
+        if checker.is_file(&seg_path_lc) {
+            Some(seg_path_lc)
+        }
+        else {
+            None
+        }
     }
 }
 
@@ -113,20 +111,19 @@ fn validate_segment_paths<T: AsRef<Path>, C: ExistsChecker>(
     base_path: T,
     ext_start: char,
     checker: &mut C
-) -> Result<Vec<PathBuf>, SegmentPathError>
+) -> Vec<PathBuf>
 {
     let mut segment_paths = vec![];
 
     // step through the sequence of extensions
     for ext in segment_ext_iter(ext_start) {
         match validate_segment_path(&base_path, &ext, checker) {
-            Ok(Some(p)) => segment_paths.push(p),
-            Ok(None) => break,
-            Err(e) => return Err(e)
+            Some(p) => segment_paths.push(p),
+            None => break,
         }
     }
 
-    Ok(segment_paths)
+    segment_paths
 }
 
 fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
@@ -148,7 +145,7 @@ fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
         base_path,
         ext_start,
         checker
-    )?;
+    );
 
     match segment_paths.is_empty() {
         false => Ok(segment_paths.into_iter()),
@@ -347,34 +344,18 @@ mod test {
         for (p, exp_ext, mut ch) in good {
             assert_eq!(
                 validate_segment_path(p.clone(), exp_ext, &mut ch).unwrap(),
-                Some(p)
+                p
             );
         }
      }
 
     #[test]
-    fn validate_segment_path_duplicate() {
-        let duplicate = [
-            (PathBuf::from("img.E01"), "E01")
-        ];
-
-        let mut ch = TrueChecker; // both E01 and e01 exist
-
-        for (p, exp_ext) in duplicate {
-            assert_eq!(
-                validate_segment_path(p.clone(), exp_ext, &mut ch).unwrap_err(),
-                SegmentPathError::DuplicateSegmentFile(p.into())
-            );
-        }
-    }
-
-    #[test]
     fn find_segment_paths_impl_ok() {
         let cases = [
-            ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, false, true, false])),
-            ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, false, true, false])),
+            ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false, false])),
+            ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false, false])),
             ("a/i.e01", vec!["a/i.e01", "a/i.E02"], SeqChecker::new([false, true, true, false])),
-            ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, false, true]))
+            ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, true, false]))
         ];
 
         for (proto, paths, mut ch) in cases {
@@ -396,7 +377,6 @@ mod test {
             ("a/i", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i".into())),
             ("a/i.", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i.".into())),
             ("a/i.E00", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i.E00".into())),
-            ("a/i.E01", TrueChecker, SegmentPathError::DuplicateSegmentFile("a/i.E01".into()))
         ];
 
         for (proto, mut ch, err) in cases {
