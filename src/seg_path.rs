@@ -49,16 +49,12 @@ fn segment_ext_iter(start: char) -> impl Iterator<Item = String> {
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum SegmentPathError {
-    #[error("File {0} has an unrecognized extension")]
-    UnrecognizedExtension(PathBuf),
-    #[error("File {0} not found")]
-    FileNotFound(PathBuf)
-}
+#[error("File {0} has an unrecognized extension")]
+pub struct UnrecognizedExtension(PathBuf);
 
 fn validate_proto_extension<T: AsRef<Path>>(
     path: T,
-    ) -> Result<String, SegmentPathError>
+    ) -> Result<String, UnrecognizedExtension>
 {
     path.as_ref()
         .extension()
@@ -66,7 +62,7 @@ fn validate_proto_extension<T: AsRef<Path>>(
         .as_deref()
         .map(str::to_ascii_uppercase)
         .filter(|ext| valid_proto_segment_ext(ext))
-        .ok_or(SegmentPathError::UnrecognizedExtension(path.as_ref().into()))
+        .ok_or(UnrecognizedExtension(path.as_ref().into()))
 }
 
 trait ExistsChecker {
@@ -110,32 +106,30 @@ fn validate_segment_path<T: AsRef<Path>, C: ExistsChecker>(
 fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
     proto_path: T,
     checker: &mut C
-) -> Result<impl Iterator<Item = PathBuf>, SegmentPathError>
+) -> Result<impl Iterator<Item = PathBuf>, UnrecognizedExtension>
 {
     let proto_path = proto_path.as_ref();
 
-    // Get the extension from the prototype path and check it's valid
+    // Get the extension from the prototype path
     let ext = validate_proto_extension(proto_path)?;
 
-    // Get the base path and initial character of extension
-    let base_path = proto_path.with_extension("");
+    // Get first char of extension; probably cannot fail
     let ext_start = ext.chars().next()
-        .ok_or(SegmentPathError::UnrecognizedExtension(proto_path.into()))?;
+        .ok_or(UnrecognizedExtension(proto_path.into()))?;
+
+    let base_path = proto_path.with_extension("");
 
     // Get the segment paths
     let segment_paths: Vec<PathBuf> = segment_ext_iter(ext_start)
         .map_while(|ext| validate_segment_path(&base_path, &ext, checker))
         .collect();
 
-    match segment_paths.is_empty() {
-        false => Ok(segment_paths.into_iter()),
-        true => Err(SegmentPathError::FileNotFound(proto_path.into()))
-    }
+    Ok(segment_paths.into_iter())
 }
 
 pub fn find_segment_paths<T: AsRef<Path>>(
     proto_path: T
-) -> Result<impl Iterator<Item = PathBuf>, SegmentPathError>
+) -> Result<impl Iterator<Item = PathBuf>, UnrecognizedExtension>
 {
     find_segment_paths_impl(proto_path, &mut FileChecker)
 }
@@ -264,7 +258,7 @@ mod test {
             let path = format!("img.{ext}");
             assert_eq!(
                 validate_proto_extension(&path).unwrap_err(),
-                SegmentPathError::UnrecognizedExtension(path.into())
+                UnrecognizedExtension(path.into())
             );
         }
     }
@@ -332,10 +326,10 @@ mod test {
     #[test]
     fn find_segment_paths_impl_ok() {
         let cases = [
-            ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false, false])),
-            ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false, false])),
-            ("a/i.e01", vec!["a/i.e01", "a/i.E02"], SeqChecker::new([false, true, true, false])),
-            ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, true, false]))
+            ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
+            ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
+            ("a/i.e01", vec!["a/i.e01", "a/i.E02"], SeqChecker::new([false, true, true])),
+            ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, true]))
         ];
 
         for (proto, paths, mut ch) in cases {
@@ -353,10 +347,10 @@ mod test {
     #[test]
     fn find_segment_paths_impl_err() {
         let cases = [
-            ("", TrueChecker, SegmentPathError::UnrecognizedExtension("".into())),
-            ("a/i", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i".into())),
-            ("a/i.", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i.".into())),
-            ("a/i.E00", TrueChecker, SegmentPathError::UnrecognizedExtension("a/i.E00".into())),
+            ("", TrueChecker, UnrecognizedExtension("".into())),
+            ("a/i", TrueChecker, UnrecognizedExtension("a/i".into())),
+            ("a/i.", TrueChecker, UnrecognizedExtension("a/i.".into())),
+            ("a/i.E00", TrueChecker, UnrecognizedExtension("a/i.E00".into())),
         ];
 
         for (proto, mut ch, err) in cases {

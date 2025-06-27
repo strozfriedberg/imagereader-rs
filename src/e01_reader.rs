@@ -7,13 +7,13 @@ use kaitai::{BytesReader, KError};
 
 use crate::error::{IoError, LibError};
 use crate::sec_read::{VolumeSection, Section, SectionIterator};
-use crate::seg_path::{find_segment_paths, SegmentPathError};
+use crate::seg_path::{find_segment_paths, UnrecognizedExtension};
 use crate::segment::{Segment, SegmentFileHeader};
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error("{0}")]
-    PathGlobError(#[from] SegmentPathError),
+    PathGlobError(#[from] UnrecognizedExtension),
     #[error("No segment files given")]
     NoSegmentFiles,
     #[error("Missing volume section in {0}")]
@@ -150,10 +150,24 @@ impl E01Reader {
         ignore_checksums: bool
     ) -> Result<Self, OpenError>
     {
-        Self::open(
-            find_segment_paths(&example_segment_path)?,
-            ignore_checksums
-        )
+        if example_segment_path.as_ref().exists() {
+            Self::open(
+                find_segment_paths(&example_segment_path)?,
+                ignore_checksums
+            )
+        }
+        else {
+            Err(
+                OpenError::IoError {
+                    path: example_segment_path.as_ref().into(),
+                    source: LibError::IoError(
+                        IoError::IoError(
+                            std::io::ErrorKind::NotFound.into()
+                        )
+                    )
+                }
+            )
+        }
     }
 
     pub fn open<T: IntoIterator<Item: AsRef<Path>>>(
