@@ -197,7 +197,7 @@ fn dump(
     use sha1::Sha1;
     use sha2::{Sha256, Sha512};
 
-    let e01_reader = E01Reader::open_glob(f, ignore_checksums).unwrap();
+    let e01_reader = E01Reader::open_glob(f, ignore_checksums)?;
     let mut hasher = HashMap::<&str, Box<dyn DynDigest>>::new();
 
     // record stored md5
