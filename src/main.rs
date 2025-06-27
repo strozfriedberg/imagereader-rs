@@ -100,72 +100,74 @@ fn main() -> ExitCode {
 
     let mut result = None;
 
-    if cli.additional_digest.is_none() {
-        if stored_md5.is_some() {
-            let ad_str: String = (&AddDigest::md5).into();
+    match cli.additional_digest {
+        Some(ad) => {
+            let ad_str: String = String::from(&ad);
             let calc_hash = hashes.get(&ad_str).unwrap();
-            if let Some(md5) = stored_md5 {
-                println!("MD5 hash stored in file:       {}", md5);
-                result = check_hash(&result, &md5, calc_hash);
+            match ad {
+                AddDigest::md5 => {
+                    if let Some(md5) = &stored_md5 {
+                        println!("MD5 hash stored in file:       {}", md5);
+                        result = Some(md5 == calc_hash);
+                        result = check_hash(&result, md5, calc_hash);
+                    }
+                    else {
+                        println!("MD5 hash stored in file:       N/A");
+                    }
+                }
+                AddDigest::sha1 => {
+                    if let Some(sha1) = &stored_sha1 {
+                        println!("SHA1 hash stored in file:       {}", sha1);
+                        result = check_hash(&result, sha1, calc_hash);
+                    }
+                    else {
+                        println!("SHA1 hash stored in file:       N/A");
+                    }
+                }
+                _ => {
+                    println!("{} hash stored in file:       N/A", ad_str);
+                    println!("{} hash calculated over data: {}", ad_str, calc_hash);
+                }
             }
-            else {
-                println!("MD5 hash stored in file:       N/A");
-            }
-            println!("MD5 hash calculated over data: {}", calc_hash);
-        }
-        if stored_sha1.is_some() {
-            let ad_str: String = (&AddDigest::sha1).into();
-            let calc_hash = hashes.get(&ad_str).unwrap();
-            if let Some(sha1) = stored_sha1 {
-                println!("SHA1 hash stored in file:       {}", sha1);
-                result = check_hash(&result, &sha1, calc_hash);
-            }
-            else {
-                println!("SHA1 hash stored in file:       N/A");
-            }
-            println!("SHA1 hash calculated over data: {}", calc_hash);
-        }
-    }
-    else if let Some(ad) = &cli.additional_digest {
-        let ad_str: String = ad.into();
-        let calc_hash = hashes.get(&ad_str).unwrap();
-        if *ad == AddDigest::md5 {
-            if let Some(md5) = &stored_md5 {
-                println!("MD5 hash stored in file:       {}", md5);
-                result = Some(md5 == calc_hash);
-                result = check_hash(&result, md5, calc_hash);
-            }
-            else {
-                println!("MD5 hash stored in file:       N/A");
-            }
-            println!("MD5 hash calculated over data: {}", calc_hash);
-        }
-        else if *ad == AddDigest::sha1 {
-            if let Some(sha1) = &stored_sha1 {
-                println!("SHA1 hash stored in file:       {}", sha1);
-                result = check_hash(&result, sha1, calc_hash);
-            }
-            else {
-                println!("SHA1 hash stored in file:       N/A");
-            }
-            println!("SHA1 hash calculated over data: {}", calc_hash);
-        }
-        else {
-            println!("{} hash stored in file:       N/A", ad_str);
-            println!("{} hash calculated over data: {}", ad_str, calc_hash);
-        }
 
-        if stored_md5.is_some() || stored_sha1.is_some() {
-            println!("\nAdditional hash values:");
-            if *ad != AddDigest::md5 {
-                if let Some(md5) = stored_md5 {
-                    println!("MD5:  {}", md5);
+            if stored_md5.is_some() || stored_sha1.is_some() {
+                println!("\nAdditional hash values:");
+                if ad != AddDigest::md5 {
+                    if let Some(md5) = stored_md5 {
+                        println!("MD5:  {}", md5);
+                    }
+                }
+                if ad != AddDigest::sha1 {
+                    if let Some(sha1) = stored_sha1 {
+                        println!("SHA1: {}", sha1);
+                    }
                 }
             }
-            if *ad != AddDigest::sha1 {
-                if let Some(sha1) = stored_sha1 {
-                    println!("SHA1: {}", sha1);
+        }
+        None => {
+            if stored_md5.is_some() {
+                let ad_str: String = (&AddDigest::md5).into();
+                let calc_hash = hashes.get(&ad_str).unwrap();
+                if let Some(md5) = stored_md5 {
+                    println!("MD5 hash stored in file:       {}", md5);
+                    result = check_hash(&result, &md5, calc_hash);
                 }
+                else {
+                    println!("MD5 hash stored in file:       N/A");
+                }
+                println!("MD5 hash calculated over data: {}", calc_hash);
+            }
+            if stored_sha1.is_some() {
+                let ad_str: String = (&AddDigest::sha1).into();
+                let calc_hash = hashes.get(&ad_str).unwrap();
+                if let Some(sha1) = stored_sha1 {
+                    println!("SHA1 hash stored in file:       {}", sha1);
+                    result = check_hash(&result, &sha1, calc_hash);
+                }
+                else {
+                    println!("SHA1 hash stored in file:       N/A");
+                }
+                println!("SHA1 hash calculated over data: {}", calc_hash);
             }
         }
     }
