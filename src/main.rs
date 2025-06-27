@@ -3,7 +3,10 @@
 use clap::Parser;
 use md5::digest::DynDigest;
 use sha2::Digest;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    process::ExitCode
+};
 use tracing_subscriber::{
     filter::LevelFilter,
     layer::SubscriberExt,
@@ -52,8 +55,6 @@ struct Cli {
     #[arg(short, long, default_value = "false")]
     ignore_checksums: bool,
 }
-
-use std::process::ExitCode;
 
 fn check_hash(
     result: &Option<bool>,
