@@ -107,25 +107,6 @@ fn validate_segment_path<T: AsRef<Path>, C: ExistsChecker>(
     }
 }
 
-fn validate_segment_paths<T: AsRef<Path>, C: ExistsChecker>(
-    base_path: T,
-    ext_start: char,
-    checker: &mut C
-) -> Vec<PathBuf>
-{
-    let mut segment_paths = vec![];
-
-    // step through the sequence of extensions
-    for ext in segment_ext_iter(ext_start) {
-        match validate_segment_path(&base_path, &ext, checker) {
-            Some(p) => segment_paths.push(p),
-            None => break,
-        }
-    }
-
-    segment_paths
-}
-
 fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
     proto_path: T,
     checker: &mut C
@@ -141,11 +122,10 @@ fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
     let ext_start = ext.chars().next()
         .ok_or(SegmentPathError::UnrecognizedExtension(proto_path.into()))?;
 
-    let segment_paths = validate_segment_paths(
-        base_path,
-        ext_start,
-        checker
-    );
+    // Get the segment paths
+    let segment_paths: Vec<PathBuf> = segment_ext_iter(ext_start)
+        .map_while(|ext| validate_segment_path(&base_path, &ext, checker))
+        .collect();
 
     match segment_paths.is_empty() {
         false => Ok(segment_paths.into_iter()),
