@@ -105,33 +105,34 @@ fn validate_segment_path<T: AsRef<Path>, C: ExistsChecker>(
 
 fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
     proto_path: T,
-    checker: &mut C
+    mut checker: C
 ) -> Result<impl Iterator<Item = PathBuf>, UnrecognizedExtension>
 {
     let proto_path = proto_path.as_ref();
 
     // Get the extension from the prototype path
-    let ext = validate_proto_extension(proto_path)?;
+    let proto_ext = validate_proto_extension(proto_path)?;
 
     // Get first char of extension; probably cannot fail
-    let ext_start = ext.chars().next()
+    let ext_start = proto_ext.chars().next()
         .ok_or(UnrecognizedExtension(proto_path.into()))?;
 
     let base_path = proto_path.with_extension("");
 
     // Get the segment paths
-    let segment_paths: Vec<PathBuf> = segment_ext_iter(ext_start)
-        .map_while(|ext| validate_segment_path(&base_path, &ext, checker))
-        .collect();
-
-    Ok(segment_paths.into_iter())
+    Ok(
+        segment_ext_iter(ext_start)
+            .map_while(move |ext|
+                validate_segment_path(&base_path, &ext, &mut checker)
+            )
+    )
 }
 
 pub fn find_segment_paths<T: AsRef<Path>>(
     proto_path: T
 ) -> Result<impl Iterator<Item = PathBuf>, UnrecognizedExtension>
 {
-    find_segment_paths_impl(proto_path, &mut FileChecker)
+    find_segment_paths_impl(proto_path, FileChecker)
 }
 
 #[cfg(test)]
@@ -332,12 +333,12 @@ mod test {
             ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, true]))
         ];
 
-        for (proto, paths, mut ch) in cases {
+        for (proto, paths, ch) in cases {
             let exp_paths = paths.iter().map(PathBuf::from).collect::<Vec<_>>();
 
             // Iterator doesn't impl Debug, so we need to map it
             // to something that does for the failure case
-            let act_paths = find_segment_paths_impl(proto, &mut ch)
+            let act_paths = find_segment_paths_impl(proto, ch)
                 .map(Iterator::collect::<Vec<_>>);
 
             assert_eq!(act_paths.unwrap(), exp_paths);
@@ -353,10 +354,10 @@ mod test {
             ("a/i.E00", TrueChecker, UnrecognizedExtension("a/i.E00".into())),
         ];
 
-        for (proto, mut ch, err) in cases {
+        for (proto, ch, err) in cases {
             // Iterator doesn't impl Debug, so we need to map it
             // to something that does for the failure case
-            let act_paths = find_segment_paths_impl(proto, &mut ch)
+            let act_paths = find_segment_paths_impl(proto, ch)
                 .map(Iterator::collect::<Vec<_>>);
 
             assert_eq!(act_paths.unwrap_err(), err);
