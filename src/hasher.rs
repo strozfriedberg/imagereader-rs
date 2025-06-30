@@ -10,7 +10,7 @@ impl MultiHasher {
         buf: &[u8]
     )
     {
-        self.hashers.iter_mut().for_each(|h| h.update(&buf));
+        self.hashers.iter_mut().for_each(|h| h.update(buf));
     }
 
     pub fn finalize(
