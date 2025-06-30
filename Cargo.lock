@@ -194,6 +194,7 @@ dependencies = [
  "adler32",
  "byteorder",
  "clap",
+ "digest",
  "flate2",
  "glob",
  "hex",

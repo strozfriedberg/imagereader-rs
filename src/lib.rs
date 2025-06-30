@@ -1,6 +1,7 @@
 pub mod e01_reader;
 mod error;
 mod generated;
+mod hasher;
 mod sec_read;
 mod seg_path;
 mod segment;
