@@ -8,16 +8,17 @@ mod segment;
 
 #[cfg(test)]
 mod test {
-    use crate::e01_reader::E01Reader;
-
-    use hex;
-    use md5::{
-        Md5,
-        digest::DynDigest
+    use crate::{
+        e01_reader::E01Reader,
+        hasher::MultiHasher
     };
+
+    use digest::Digest;
+    use hex;
+    use md5::Md5;
     use rand::Rng;
     use sha1::Sha1;
-    use sha2::{Digest, Sha256};
+    use sha2::Sha256;
 
     #[track_caller]
     fn do_hash(
@@ -25,11 +26,13 @@ mod test {
         random_buf_size: bool
     ) -> (String, String, String)
     {
-        let mut hashers: Vec<Box<dyn DynDigest>> = vec![
-            Box::new(Md5::new()),
-            Box::new(Sha1::new()),
-            Box::new(Sha256::new())
-        ];
+        let mut hasher = MultiHasher::new(
+            vec![
+                Box::new(Md5::new()),
+                Box::new(Sha1::new()),
+                Box::new(Sha256::new())
+            ]
+        );
 
         let mut buf: Vec<u8> = vec![0; 1048576];
         let mut offset = 0;
@@ -49,17 +52,17 @@ mod test {
                 break;
             }
 
-            hashers.iter_mut().for_each(|h| h.update(&buf[..read]));
+            hasher.update(&buf[..read]);
 
             offset += read;
         }
 
-        let mut itr = hashers
+        let mut itr = hasher.finalize()
             .into_iter()
-            .map(DynDigest::finalize)
             .map(hex::encode)
             .collect::<Vec<_>>()
             .into_iter();
+
         (
             itr.next().unwrap(),
             itr.next().unwrap(),

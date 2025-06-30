@@ -5,6 +5,10 @@ pub struct MultiHasher {
 }
 
 impl MultiHasher {
+    pub fn new(hashers: Vec<Box<dyn DynDigest>>) -> Self {
+        MultiHasher { hashers }
+    }
+
     pub fn update(
         &mut self,
         buf: &[u8]
@@ -65,13 +69,13 @@ mod test {
 
     #[test]
     fn test_hash_something() {
-        let mut hasher = MultiHasher {
-            hashers: vec![
+        let mut hasher = MultiHasher::new(
+            vec![
                 Box::new(Md5::new()),
                 Box::new(Sha1::new()),
                 Box::new(Sha256::new())
             ]
-        };
+        );
 
         hasher.update("something".as_bytes());
     
@@ -86,13 +90,13 @@ mod test {
 
     #[test]
     fn test_hash_some_thing() {
-        let mut hasher = MultiHasher {
-            hashers: vec![
+        let mut hasher = MultiHasher::new(
+            vec![
                 Box::new(Md5::new()),
                 Box::new(Sha1::new()),
                 Box::new(Sha256::new())
             ]
-        };
+        );
 
         hasher.update("some".as_bytes());
         hasher.update("thing".as_bytes());
