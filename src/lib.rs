@@ -1,7 +1,7 @@
 pub mod e01_reader;
 mod error;
 mod generated;
-mod hasher;
+pub mod hasher;
 mod sec_read;
 mod seg_path;
 mod segment;
@@ -10,29 +10,24 @@ mod segment;
 mod test {
     use crate::{
         e01_reader::E01Reader,
-        hasher::MultiHasher
+        hasher::{HashType, MultiHasher}
     };
 
-    use digest::Digest;
     use hex;
-    use md5::Md5;
     use rand::Rng;
-    use sha1::Sha1;
-    use sha2::Sha256;
+    use std::collections::HashMap;
 
     #[track_caller]
     fn do_hash(
         reader: &E01Reader,
         random_buf_size: bool
-    ) -> (String, String, String)
+    ) -> HashMap<HashType, String>
     {
-        let mut hasher = MultiHasher::new(
-            vec![
-                Box::new(Md5::new()),
-                Box::new(Sha1::new()),
-                Box::new(Sha256::new())
-            ]
-        );
+        let mut hasher = MultiHasher::from([
+            HashType::MD5,
+            HashType::SHA1,
+            HashType::SHA256
+        ]);
 
         let mut buf: Vec<u8> = vec![0; 1048576];
         let mut offset = 0;
@@ -57,17 +52,10 @@ mod test {
             offset += read;
         }
 
-        let mut itr = hasher.finalize()
+        hasher.finalize()
             .into_iter()
-            .map(hex::encode)
-            .collect::<Vec<_>>()
-            .into_iter();
-
-        (
-            itr.next().unwrap(),
-            itr.next().unwrap(),
-            itr.next().unwrap()
-        )
+            .map(|(k, v)| (k, hex::encode(v)))
+            .collect()
     }
 
     #[track_caller]
@@ -82,14 +70,14 @@ mod test {
         let stored_md5 = reader.get_stored_md5().map(hex::encode);
         let stored_sha1 = reader.get_stored_sha1().map(hex::encode);
 
-        let (md5, sha1, sha256) = do_hash(&reader, false);
+        let hashes = do_hash(&reader, false);
 
-        assert_eq!(Some(&md5), stored_md5.as_ref());
-        assert_eq!(Some(&sha1), stored_sha1.as_ref());
+        assert_eq!(hashes.get(&HashType::MD5), stored_md5.as_ref());
+        assert_eq!(hashes.get(&HashType::SHA1), stored_sha1.as_ref());
 
-        assert_eq!(md5, expected_md5);
-        assert_eq!(sha1, expected_sha1);
-        assert_eq!(sha256, expected_sha256);
+        assert_eq!(hashes.get(&HashType::MD5).unwrap(), expected_md5);
+        assert_eq!(hashes.get(&HashType::SHA1).unwrap(), expected_sha1);
+        assert_eq!(hashes.get(&HashType::SHA256).unwrap(), expected_sha256);
     }
 
     #[test]
