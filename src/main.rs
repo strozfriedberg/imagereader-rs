@@ -1,10 +1,8 @@
-#![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
-
 use clap::Parser;
-use md5::digest::DynDigest;
-use sha2::Digest;
 use std::{
-    collections::HashMap,
+    collections::HashSet,
+    iter::FromIterator,
+    ops::BitAndAssign,
     process::ExitCode
 };
 use tracing_subscriber::{
@@ -13,60 +11,130 @@ use tracing_subscriber::{
     util::SubscriberInitExt
 };
 
-use e01::e01_reader::{E01Error, E01Reader};
-
-#[derive(Clone, Debug, clap::ValueEnum, PartialEq)]
-pub enum AddDigest {
-    md5,
-    sha1,
-    sha256,
-    sha512,
-}
-
-impl From<&AddDigest> for &str {
-    fn from(v: &AddDigest) -> Self {
-        match *v {
-            AddDigest::md5 => "MD5",
-            AddDigest::sha1 => "SHA1",
-            AddDigest::sha256 => "SHA256",
-            AddDigest::sha512 => "SHA512",
-        }
-    }
-}
-
-impl From<&AddDigest> for String {
-    fn from(v: &AddDigest) -> Self {
-        let s: &str = v.into();
-        s.to_string()
-    }
-}
+use e01::{
+    e01_reader::{E01Error, E01Reader},
+    hasher::{HashType, MultiHasher}
+};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about)]
-struct Cli {
+struct Args {
     /// Path to input file.
     input: String,
 
-    /// Calculate additional digest (hash) types besides md5, options: sha256, sha512
+    /// Calculate additional digest (hash) types
     #[arg(short = 'd', long = "digest", value_enum, name = "hash")]
-    additional_digest: Option<AddDigest>,
+    extra_hashes: Vec<HashType>,
 
-    /// ignore all checksums during read, default value is false
+    /// Ignore all checksums during read, default value is false
     #[arg(short, long, default_value = "false")]
-    ignore_checksums: bool,
+    ignore_checksums: bool
 }
 
-fn check_hash(
-    result: &Option<bool>,
-    stored: &str,
-    calc: &str,
-) -> Option<bool> {
-    if let Some(r) = result {
-        if !*r {
-            return Some(false);
-        }
+struct OptBool(Option<bool>);
+
+impl BitAndAssign for OptBool {
+    fn bitand_assign(&mut self, rhs: Self) {
+        match (self.0.as_mut(), rhs.0) {
+            (Some(l), Some(r)) => *l &= r,
+            (None, Some(_)) => *self = rhs,
+            _ => {}
+        };
     }
-    Some(stored == calc)
+}
+
+fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
+    htype: HashType,
+    hash_act: Option<H1>,
+    hash_exp: Option<H2>
+) -> OptBool
+{
+    OptBool(
+        match hash_act {
+            Some(hash_act) => match hash_exp {
+                Some(hash_exp) if hash_act.as_ref() != hash_exp.as_ref() => {
+                    println!(
+                        "{} {} != {}",
+                        htype,
+                        hex::encode(hash_act),
+                        hex::encode(hash_exp)
+                    );
+                    Some(false)
+                },
+                _ => {
+                    println!("{} {} ok", htype, hex::encode(hash_act));
+                    Some(true)
+                }
+            }
+            None => None
+        }
+    )
+}
+
+fn run(args: Args)-> Result<ExitCode, E01Error> {
+    let e01_reader = E01Reader::open_glob(&args.input, args.ignore_checksums)?;
+
+    let mut htypes: HashSet<HashType> = HashSet::from_iter(args.extra_hashes);
+
+    let stored_md5 = e01_reader.get_stored_md5();
+    let stored_sha1 = e01_reader.get_stored_sha1();
+
+    // compute MD5 if we have one stored
+    if stored_md5.is_some() {
+        htypes.insert(HashType::MD5);
+    }
+
+    // compute SHA1 if we have one stored
+    if stored_sha1.is_some() {
+        htypes.insert(HashType::SHA1);
+    }
+
+    let mut hasher = MultiHasher::from(htypes);
+
+    // read through the image
+    let mut buf: Vec<u8> = vec![0; 1048576];
+    let mut offset = 0;
+    while offset < e01_reader.total_size() {
+        let read = e01_reader.read_at_offset(offset, &mut buf)?;
+        hasher.update(&buf[..read]);
+        offset += read;
+    }
+
+    let hashes = hasher.finalize();
+
+    // verify and output hashes
+    let mut checked = check_hash(
+        HashType::MD5,
+        hashes.get(&HashType::MD5),
+        stored_md5
+    );
+
+    checked &= check_hash(
+        HashType::SHA1,
+        hashes.get(&HashType::SHA1),
+        stored_sha1
+    );
+
+    if let Some(sha256) = hashes.get(&HashType::SHA256) {
+        println!("{} {}", HashType::SHA256, hex::encode(sha256));
+    }
+
+    Ok(
+        match checked.0 {
+            Some(false) => {
+                println!("Hash verification: FAILURE");
+                ExitCode::FAILURE
+            },
+            None => {
+                println!("No hash verification performed");
+                ExitCode::SUCCESS
+            },
+            Some(true) => {
+                println!("Hash verification: SUCCESS");
+                ExitCode::SUCCESS
+            }
+        }
+    )
 }
 
 fn main() -> ExitCode {
@@ -82,192 +150,17 @@ fn main() -> ExitCode {
 
     tracing_subscriber::registry()
         .with(stderr_layer)
-//        .with(LevelFilter::INFO)
-        .with(LevelFilter::DEBUG)
+        .with(LevelFilter::INFO)
+//        .with(LevelFilter::DEBUG)
         .init();
 
-    let cli = Cli::parse();
-    let mut stored_md5 = None;
-    let mut stored_sha1 = None;
+    let args = Args::parse();
 
-    let hashes = dump(
-        &cli.input,
-        &cli.additional_digest,
-        &mut stored_md5,
-        &mut stored_sha1,
-        cli.ignore_checksums,
-    )
-    .unwrap();
-
-    let mut result = None;
-
-    match cli.additional_digest {
-        Some(ad) => {
-            let ad_str: String = String::from(&ad);
-            let calc_hash = hashes.get(&ad_str).unwrap();
-            match ad {
-                AddDigest::md5 => {
-                    if let Some(md5) = &stored_md5 {
-                        println!("MD5 hash stored in file:       {}", md5);
-                        result = Some(md5 == calc_hash);
-                        result = check_hash(&result, md5, calc_hash);
-                    }
-                    else {
-                        println!("MD5 hash stored in file:       N/A");
-                    }
-                }
-                AddDigest::sha1 => {
-                    if let Some(sha1) = &stored_sha1 {
-                        println!("SHA1 hash stored in file:       {}", sha1);
-                        result = check_hash(&result, sha1, calc_hash);
-                    }
-                    else {
-                        println!("SHA1 hash stored in file:       N/A");
-                    }
-                }
-                _ => {
-                    println!("{} hash stored in file:       N/A", ad_str);
-                    println!("{} hash calculated over data: {}", ad_str, calc_hash);
-                }
-            }
-
-            if stored_md5.is_some() || stored_sha1.is_some() {
-                println!("\nAdditional hash values:");
-                if ad != AddDigest::md5 {
-                    if let Some(md5) = stored_md5 {
-                        println!("MD5:  {}", md5);
-                    }
-                }
-                if ad != AddDigest::sha1 {
-                    if let Some(sha1) = stored_sha1 {
-                        println!("SHA1: {}", sha1);
-                    }
-                }
-            }
-        }
-        None => {
-            if stored_md5.is_some() {
-                let ad_str: String = (&AddDigest::md5).into();
-                let calc_hash = hashes.get(&ad_str).unwrap();
-                if let Some(md5) = stored_md5 {
-                    println!("MD5 hash stored in file:       {}", md5);
-                    result = check_hash(&result, &md5, calc_hash);
-                }
-                else {
-                    println!("MD5 hash stored in file:       N/A");
-                }
-                println!("MD5 hash calculated over data: {}", calc_hash);
-            }
-            if stored_sha1.is_some() {
-                let ad_str: String = (&AddDigest::sha1).into();
-                let calc_hash = hashes.get(&ad_str).unwrap();
-                if let Some(sha1) = stored_sha1 {
-                    println!("SHA1 hash stored in file:       {}", sha1);
-                    result = check_hash(&result, &sha1, calc_hash);
-                }
-                else {
-                    println!("SHA1 hash stored in file:       N/A");
-                }
-                println!("SHA1 hash calculated over data: {}", calc_hash);
-            }
-        }
-    }
-
-    match result {
-        Some(true) => {
-            println!("Hash verification: SUCCESS");
-            ExitCode::SUCCESS
-        },
-        Some(false) => {
-            println!("Hash verification: FAILURE");
+    match run(args) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("{}", e);
             ExitCode::FAILURE
         }
-        None => {
-            println!("No hash verification performed");
-            ExitCode::SUCCESS
-        }
     }
-}
-
-fn dump(
-    f: &str,
-    add_digest: &Option<AddDigest>,
-    stored_md5: &mut Option<String>,
-    stored_sha1: &mut Option<String>,
-    ignore_checksums: bool,
-) -> Result<HashMap<String /*AddDigest*/, String /*hash*/>, E01Error> {
-    use md5::Md5;
-    use sha1::Sha1;
-    use sha2::{Sha256, Sha512};
-
-    let e01_reader = E01Reader::open_glob(f, ignore_checksums)?;
-    let mut hasher = HashMap::<&str, Box<dyn DynDigest>>::new();
-
-    // record stored md5
-    if let Some(md5) = e01_reader.get_stored_md5() {
-        hasher.insert((&AddDigest::md5).into(), Box::new(Md5::new()));
-        *stored_md5 = Some(
-            md5.iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<Vec<_>>()
-                .join(""),
-        );
-    }
-    // record stored sha1
-    if let Some(sha1) = e01_reader.get_stored_sha1() {
-        hasher.insert((&AddDigest::sha1).into(), Box::new(Sha1::new()));
-        *stored_sha1 = Some(
-            sha1.iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<Vec<_>>()
-                .join(""),
-        );
-    }
-
-    if let Some(d) = &add_digest {
-        match d {
-            AddDigest::md5 => hasher.insert((&AddDigest::md5).into(), Box::new(Md5::new())),
-            AddDigest::sha1 => hasher.insert((&AddDigest::sha1).into(), Box::new(Sha1::new())),
-            AddDigest::sha256 => {
-                hasher.insert((&AddDigest::sha256).into(), Box::new(Sha256::new()))
-            }
-            AddDigest::sha512 => {
-                hasher.insert((&AddDigest::sha512).into(), Box::new(Sha512::new()))
-            }
-        };
-    }
-    let mut buf: Vec<u8> = vec![0; 1048576];
-    let mut offset = 0;
-    while offset < e01_reader.total_size() {
-        let len = buf.len();
-        let read = match e01_reader.read_at_offset(offset, &mut buf[..len]) {
-            Ok(v) => v,
-            Err(e) => {
-                panic!("{:?}", e);
-            }
-        };
-
-        if read == 0 {
-            break;
-        }
-
-        hasher.iter_mut().for_each(|d| d.1.update(&buf[..read]));
-
-        offset += read;
-    }
-    Ok(hasher
-        .iter_mut()
-        .map(|d| {
-            let mut result = vec![0; d.1.output_size()];
-            d.1.finalize_into_reset(&mut result).unwrap();
-            (
-                d.0.to_string(),
-                result
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<Vec<_>>()
-                    .join(""),
-            )
-        })
-        .collect())
 }
