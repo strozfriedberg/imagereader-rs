@@ -315,27 +315,6 @@ impl E01Reader {
         })
     }
 
-    fn get_segment(
-        &self,
-        chunk_number: usize,
-    ) -> Result<(&PathBuf, &Segment, usize), ReadError> {
-        let mut chunks = 0;
-        let mut chunk_index = 0;
-// FIXME: Don't use an O(n) algorithm for locating chunks!
-        self.segments
-            .iter()
-            .find(|(_, s)| {
-                if chunk_number >= chunks && chunk_number < chunks + s.chunk_count() {
-                    chunk_index = chunk_number - chunks;
-                    return true;
-                }
-                chunks += s.chunk_count();
-                false
-            })
-            .map(|(p, s)| (p, s, chunk_index))
-            .ok_or(ReadError::BadChunkNumber(chunk_number))
-    }
-
     pub fn read_at_offset(
         &self,
         mut offset: usize,
@@ -354,7 +333,7 @@ impl E01Reader {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
 
-            let (sp, seg, chunk_index) = self.get_segment(chunk_number)?;
+            let (sp, seg, chunk_index) = get_segment(&self.segments, chunk_number)?;
 
             let mut data = seg.read_chunk(
                 chunk_number,
@@ -401,6 +380,27 @@ impl E01Reader {
     pub fn get_stored_sha1(&self) -> Option<&[u8]> {
         self.stored_sha1.as_deref()
     }
+}
+
+fn get_segment(
+    segments: &[(PathBuf, Segment)],
+    chunk_number: usize,
+) -> Result<(&PathBuf, &Segment, usize), ReadError> {
+    let mut chunks = 0;
+    let mut chunk_index = 0;
+// FIXME: Don't use an O(n) algorithm for locating chunks!
+    segments
+        .iter()
+        .find(|(_, s)| {
+            if chunk_number >= chunks && chunk_number < chunks + s.chunk_count() {
+                chunk_index = chunk_number - chunks;
+                return true;
+            }
+            chunks += s.chunk_count();
+            false
+        })
+        .map(|(p, s)| (p, s, chunk_index))
+        .ok_or(ReadError::BadChunkNumber(chunk_number))
 }
 
 #[cfg(test)]
