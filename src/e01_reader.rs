@@ -318,20 +318,21 @@ impl E01Reader {
     fn get_segment(
         &self,
         chunk_number: usize,
-        chunk_index: &mut usize,
-    ) -> Result<&(PathBuf, Segment), ReadError> {
+    ) -> Result<(&PathBuf, &Segment, usize), ReadError> {
         let mut chunks = 0;
+        let mut chunk_index = 0;
 // FIXME: Don't use an O(n) algorithm for locating chunks!
         self.segments
             .iter()
             .find(|(_, s)| {
                 if chunk_number >= chunks && chunk_number < chunks + s.chunk_count() {
-                    *chunk_index = chunk_number - chunks;
+                    chunk_index = chunk_number - chunks;
                     return true;
                 }
                 chunks += s.chunk_count();
                 false
             })
+            .map(|(p, s)| (p, s, chunk_index))
             .ok_or(ReadError::BadChunkNumber(chunk_number))
     }
 
@@ -353,8 +354,7 @@ impl E01Reader {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
 
-            let mut chunk_index = 0;
-            let (sp, seg) = self.get_segment(chunk_number, &mut chunk_index)?;
+            let (sp, seg, chunk_index) = self.get_segment(chunk_number)?;
 
             let mut data = seg.read_chunk(
                 chunk_number,
