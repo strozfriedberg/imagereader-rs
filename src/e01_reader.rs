@@ -1,14 +1,18 @@
-use std::path::{Path, PathBuf};
+use flate2::read::ZlibDecoder;
+use std::{
+    io::Read,
+    path::{Path, PathBuf}
+};
 use tracing::{debug, debug_span, warn};
 
 extern crate kaitai;
 
-use kaitai::{BytesReader, KError};
+use kaitai::{BytesReader, KError, KStream};
 
 use crate::error::{IoError, LibError};
 use crate::sec_read::{VolumeSection, Section, SectionIterator};
 use crate::seg_path::{find_segment_paths, UnrecognizedExtension};
-use crate::segment::{Segment, SegmentFileHeader};
+use crate::segment::SegmentFileHeader;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
@@ -136,9 +140,78 @@ pub enum E01Error {
 }
 
 #[derive(Debug)]
+struct Segment {
+    pub path: PathBuf,
+    pub io: BytesReader,
+    pub end_of_sectors: u64
+}
+
+#[derive(Debug)]
+struct Chunk {
+    pub segment: usize,
+    pub data_offset: u64,
+    pub compressed: bool,
+    pub end_offset: u64
+}
+
+fn read_chunk(
+    chunk: &Chunk,
+    chunk_index: usize,
+    io: &BytesReader,
+    ignore_checksums: bool,
+    buf: &mut [u8]
+) -> Result<Vec<u8>, LibError>
+{
+    io
+        .seek(chunk.data_offset as usize)
+        .map_err(|e| IoError::SeekError(chunk.data_offset as usize, e))?;
+
+    let mut raw_data = io
+        .read_bytes(chunk.end_offset as usize - chunk.data_offset as usize)
+        .map_err(IoError::ReadError)?;
+
+    if !chunk.compressed {
+        if !ignore_checksums {
+            // read stored checksum
+            let crc_stored = u32::from_le_bytes(
+                raw_data[raw_data.len() - 4..]
+                    .try_into()
+                    .expect("slice of last 4 bytes not 4 bytes long, wtf")
+            );
+
+            // remove stored checksum from data
+            raw_data.truncate(raw_data.len() - 4);
+
+            // checksum the data
+            let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
+                .map_err(IoError::IoError)?;
+
+            if crc != crc_stored {
+                return Err(LibError::BadChecksum(
+                    format!("Chunk {}", chunk_index),
+                    crc,
+                    crc_stored
+                ));
+            }
+        }
+
+        Ok(raw_data)
+    }
+    else {
+        let mut decoder = ZlibDecoder::new(&raw_data[..]);
+        let mut data = vec![];
+        decoder
+            .read_to_end(&mut data)
+            .map_err(LibError::DecompressionFailed)?;
+        Ok(data)
+    }
+}
+
+#[derive(Debug)]
 pub struct E01Reader {
     volume: VolumeSection,
-    segments: Vec<(PathBuf, Segment)>,
+    segments: Vec<Segment>,
+    chunks: Vec<Chunk>,
     stored_md5: Option<Vec<u8>>,
     stored_sha1: Option<Vec<u8>>,
     ignore_checksums: bool
@@ -180,13 +253,15 @@ impl E01Reader {
         // check that there are some segment files
         segment_paths.peek().ok_or(OpenError::NoSegmentFiles)?;
 
-        let mut segments: Vec<(PathBuf, Segment)> = vec![];
         let mut chunk_count = 0;
+        let mut done = false;
 
         let mut volume = None;
         let mut stored_md5 = None;
         let mut stored_sha1 = None;
-        let mut done = false;
+
+        let mut segments = vec![];
+        let mut chunks = vec![];
 
         // read segments
         for sp in segment_paths.by_ref() {
@@ -203,7 +278,7 @@ impl E01Reader {
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(&sp))?;
 
-            let mut chunks = vec![];
+            let mut seg_chunks = vec![];
             let mut end_of_sectors = 0;
 
             let mut seg_volume = None;
@@ -219,9 +294,9 @@ impl E01Reader {
                 {
                     Section::Volume(v) => seg_volume = Some(v),
                     Section::Table(t) => {
-                        chunks.extend(t);
-                        let chunks_len = chunks.len();
-                        chunks[chunks_len - 1].end_offset = Some(end_of_sectors);
+                        seg_chunks.extend(t);
+                        let chunks_len = seg_chunks.len();
+                        seg_chunks[chunks_len - 1].end_offset = Some(end_of_sectors);
                     },
                     Section::Sectors(eos) => end_of_sectors = eos,
                     Section::Hash(h) => seg_stored_md5 = Some(h.md5().clone()),
@@ -271,15 +346,30 @@ impl E01Reader {
                 _ => {}
             }
 
-            let seg = Segment {
-                io,
-                _header: header,
-                chunks,
-                end_of_sectors
-            };
+            for (i, sc) in seg_chunks.iter().enumerate() {
+                let end_offset = if i == seg_chunks.len() - 1 {
+                    end_of_sectors
+                }
+                else if let Some(end_of_section) = sc.end_offset {
+                    end_of_section
+                }
+                else {
+                    seg_chunks[i + 1].data_offset
+                };
 
-            chunk_count += seg.chunk_count();
-            segments.push((sp.into(), seg));
+                chunks.push(Chunk {
+                    segment: segments.len(),
+                    data_offset: sc.data_offset,
+                    compressed: sc.compressed,
+                    end_offset
+                });
+            }
+
+            segments.push(Segment {
+                path: sp.into(),
+                io,
+                end_of_sectors
+            });
 
             if done {
                 break;
@@ -298,6 +388,7 @@ impl E01Reader {
         let volume = volume.expect("volume section must have been found");
 
         let exp_chunk_count = volume.chunk_count as usize;
+        let chunk_count = chunks.len();
 
         if chunk_count > exp_chunk_count {
             return Err(OpenError::TooManyChunks(chunk_count, exp_chunk_count));
@@ -309,6 +400,7 @@ impl E01Reader {
         Ok(E01Reader {
             volume,
             segments,
+            chunks,
             stored_md5,
             stored_sha1,
             ignore_checksums
@@ -333,14 +425,19 @@ impl E01Reader {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
 
-            let (sp, seg, chunk_index) = get_segment(&self.segments, chunk_number)?;
+            let chunk_index = chunk_number;
+            let chunk = &self.chunks[chunk_index];
+            let seg = &self.segments[chunk.segment];
 
-            let mut data = seg.read_chunk(
-                chunk_number,
+            eprintln!("reading {chunk_index} / {}", self.volume.chunk_count);
+
+            let mut data = read_chunk(
+                &self.chunks[chunk_index],
                 chunk_index,
+                &seg.io,
                 self.ignore_checksums,
                 remaining_buf
-            ).map_err(ReadError::from).map_err(|e| e.with_path(sp))?;
+            ).map_err(ReadError::from).map_err(|e| e.with_path(&seg.path))?;
 
             if chunk_number * self.chunk_size() + data.len() > total_size {
                 data.truncate(total_size - chunk_number * self.chunk_size());
@@ -380,27 +477,6 @@ impl E01Reader {
     pub fn get_stored_sha1(&self) -> Option<&[u8]> {
         self.stored_sha1.as_deref()
     }
-}
-
-fn get_segment(
-    segments: &[(PathBuf, Segment)],
-    chunk_number: usize,
-) -> Result<(&PathBuf, &Segment, usize), ReadError> {
-    let mut chunks = 0;
-    let mut chunk_index = 0;
-// FIXME: Don't use an O(n) algorithm for locating chunks!
-    segments
-        .iter()
-        .find(|(_, s)| {
-            if chunk_number >= chunks && chunk_number < chunks + s.chunk_count() {
-                chunk_index = chunk_number - chunks;
-                return true;
-            }
-            chunks += s.chunk_count();
-            false
-        })
-        .map(|(p, s)| (p, s, chunk_index))
-        .ok_or(ReadError::BadChunkNumber(chunk_number))
 }
 
 #[cfg(test)]
