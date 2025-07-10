@@ -145,6 +145,77 @@ struct Segment {
     pub io: BytesReader
 }
 
+struct SegmentComponents {
+    volume: Option<VolumeSection>,
+    md5: Option<Vec<u8>>,
+    sha1: Option<Vec<u8>>,
+    chunks: Vec<Chunk>,
+    done: bool
+}
+
+fn read_segment<T: AsRef<Path>>(
+    segment_path: T,
+    segment_index: usize,
+    io: &BytesReader,
+    ignore_checksums: bool
+) -> Result<SegmentComponents, OpenError>
+{
+    let header = SegmentFileHeader::new(io)
+        .map_err(OpenError::from)
+        .map_err(|e| e.with_path(&segment_path))?;
+
+    let mut done = false;
+    let mut chunks = vec![];
+    let mut end_of_sectors = 0;
+
+    let mut volume = None;
+    let mut md5 = None;
+    let mut sha1 = None;
+
+    let mut sections = SectionIterator::new(io, ignore_checksums);
+
+    for section in sections.by_ref() {
+        match section
+            .map_err(OpenError::from)
+            .map_err(|e| e.with_path(&segment_path))?
+        {
+            Section::Volume(v) => volume = Some(v),
+            Section::Table(t) => chunks.extend(t),
+            Section::Sectors(eos) => end_of_sectors = eos,
+            Section::Hash(h) => md5 = Some(h.md5().clone()),
+            Section::Digest(d) => {
+                md5 = Some(d.md5().clone());
+                sha1 = Some(d.sha1().clone());
+            },
+            Section::Done => { done = true; break; },
+            _ => {}
+        }
+    }
+
+    if done && sections.next().is_some() {
+        warn!("more sections after done");
+    }
+
+    // set the end of the last chunk in the table
+    let chunks_len = chunks.len();
+    chunks[chunks_len - 1].end_offset = end_of_sectors;
+
+    // set the segment index for these chunks
+    for c in &mut chunks {
+        c.segment = segment_index;
+    }
+
+    Ok(
+        SegmentComponents {
+            volume,
+            md5,
+            sha1,
+            chunks,
+            done
+        }
+    )
+}
+
 fn read_chunk(
     chunk: &Chunk,
     chunk_index: usize,
@@ -244,8 +315,6 @@ impl E01Reader {
         // check that there are some segment files
         segment_paths.peek().ok_or(OpenError::NoSegmentFiles)?;
 
-        let mut done = false;
-
         let mut volume = None;
         let mut stored_md5 = None;
         let mut stored_sha1 = None;
@@ -253,53 +322,28 @@ impl E01Reader {
         let mut segments = vec![];
         let mut chunks = vec![];
 
+        let mut done = false;
+
         // read segments
         for sp in segment_paths.by_ref() {
-            let _span = debug_span!("", segment_path = ?sp.as_ref()).entered();
-            debug!("opening {}", sp.as_ref().display());
-
-            let io = BytesReader::open(&sp)
-                .map_err(OpenError::from)
-                .map_err(|e| e.with_path(&sp))?;
-
-            debug!("reading sections {}", sp.as_ref().display());
-
-            let header = SegmentFileHeader::new(&io)
-                .map_err(OpenError::from)
-                .map_err(|e| e.with_path(&sp))?;
-
-            let mut seg_chunks = vec![];
-            let mut end_of_sectors = 0;
-
-            let mut seg_volume = None;
-            let mut seg_stored_md5 = None;
-            let mut seg_stored_sha1 = None;
-
-            let mut sections = SectionIterator::new(&io, ignore_checksums);
-
-            for section in sections.by_ref() {
-                match section
-                    .map_err(OpenError::from)
-                    .map_err(|e| e.with_path(&sp))?
-                {
-                    Section::Volume(v) => seg_volume = Some(v),
-                    Section::Table(t) => seg_chunks.extend(t),
-                    Section::Sectors(eos) => end_of_sectors = eos,
-                    Section::Hash(h) => seg_stored_md5 = Some(h.md5().clone()),
-                    Section::Digest(d) => {
-                        seg_stored_md5 = Some(d.md5().clone());
-                        seg_stored_sha1 = Some(d.sha1().clone());
-                    },
-                    Section::Done => { done = true; break; },
-                    _ => {}
-                }
-            }
-
-            if done && sections.next().is_some() {
-                warn!("more sections after done");
-            }
-
             let sp = sp.as_ref();
+
+            let _span = debug_span!("", segment_path = ?sp).entered();
+            debug!("opening {}", sp.display());
+
+            let io = BytesReader::open(sp)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(sp))?;
+
+            debug!("reading sections {}", sp.display());
+
+            let SegmentComponents {
+                volume: seg_volume,
+                md5: seg_stored_md5,
+                sha1: seg_stored_sha1,
+                chunks: seg_chunks,
+                done: seg_done
+            } = read_segment(sp, segments.len(), &io, ignore_checksums)?;
 
             // take the volume section if it's the first one
             match (seg_volume, &volume) {
@@ -332,16 +376,6 @@ impl E01Reader {
                 _ => {}
             }
 
-            // set the end of the last chunk in the table
-            let seg_chunks_len = seg_chunks.len();
-            seg_chunks[seg_chunks_len - 1].end_offset = end_of_sectors;
-
-            // set the segment index for these chunks
-            let segment_index = segments.len();
-            for sc in &mut seg_chunks {
-                sc.segment = segment_index;
-            }
-
             // record the chunks
             chunks.extend(seg_chunks);
 
@@ -351,7 +385,8 @@ impl E01Reader {
                 io
             });
 
-            if done {
+            if seg_done {
+                done = true;
                 break;
             }
         }
