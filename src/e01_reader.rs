@@ -293,11 +293,7 @@ impl E01Reader {
                     .map_err(|e| e.with_path(&sp))?
                 {
                     Section::Volume(v) => seg_volume = Some(v),
-                    Section::Table(t) => {
-                        seg_chunks.extend(t);
-                        let chunks_len = seg_chunks.len();
-                        seg_chunks[chunks_len - 1].end_offset = Some(end_of_sectors);
-                    },
+                    Section::Table(t) => seg_chunks.extend(t),
                     Section::Sectors(eos) => end_of_sectors = eos,
                     Section::Hash(h) => seg_stored_md5 = Some(h.md5().clone()),
                     Section::Digest(d) => {
@@ -346,24 +342,20 @@ impl E01Reader {
                 _ => {}
             }
 
-            for (i, sc) in seg_chunks.iter().enumerate() {
-                let end_offset = if i == seg_chunks.len() - 1 {
-                    end_of_sectors
-                }
-                else if let Some(end_of_section) = sc.end_offset {
-                    end_of_section
-                }
-                else {
-                    seg_chunks[i + 1].data_offset
-                };
+            // set the end of the last chunk
+            let seg_chunks_len = seg_chunks.len();
+            seg_chunks[seg_chunks_len - 1].end_offset = end_of_sectors;
 
-                chunks.push(Chunk {
-                    segment: segments.len(),
-                    data_offset: sc.data_offset,
-                    compressed: sc.compressed,
-                    end_offset
-                });
-            }
+            chunks.extend(
+                seg_chunks.into_iter().map(
+                    |sc| Chunk {
+                        segment: segments.len(),
+                        data_offset: sc.data_offset,
+                        compressed: sc.compressed,
+                        end_offset: sc.end_offset
+                    }
+                )
+            );
 
             segments.push(Segment {
                 path: sp.into(),
