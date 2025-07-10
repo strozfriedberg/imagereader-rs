@@ -1,7 +1,6 @@
 use flate2::read::ZlibDecoder;
 use std::{
     io::Read,
-    iter::FromIterator,
     path::{Path, PathBuf}
 };
 use tracing::{debug, debug_span, warn};
@@ -339,7 +338,7 @@ impl E01Reader {
 
             // set the segment index for these chunks
             let segment_index = segments.len();
-            for mut sc in &mut seg_chunks {
+            for sc in &mut seg_chunks {
                 sc.segment = segment_index;
             }
 

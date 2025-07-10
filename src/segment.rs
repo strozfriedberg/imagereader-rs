@@ -2,12 +2,8 @@ use crate::generated::ewf_file_header_v1::EwfFileHeaderV1;
 use crate::generated::ewf_file_header_v2::EwfFileHeaderV2;
 use crate::error::{IoError, LibError};
 
-use flate2::read::ZlibDecoder;
 use kaitai::{BytesReader, KStream, KStruct};
-use std::{
-    convert::TryFrom,
-    io::Read,
-};
+use std::convert::TryFrom;
 
 #[derive(Debug)]
 enum CompressionMethod {
@@ -86,10 +82,4 @@ impl SegmentFileHeader {
             _ => Err(LibError::InvalidSegmentFileHeader)
         }
     }
-}
-
-#[derive(Debug)]
-pub struct Segment {
-    pub io: BytesReader,
-    pub _header: SegmentFileHeader
 }

@@ -172,14 +172,14 @@ pub fn read_table(
     }
 
     let io_offsets = Clone::clone(io);
-    let table_offset = *table_section.table_base_offset() as u64;
+    let table_offset = *table_section.table_base_offset();
     let mut chunks: Vec<Chunk> = Vec::with_capacity(entry_count);
 
     chunks.push(read_table_entry(io, table_offset)?);
 
     for i in 1..entry_count {
         let ch = read_table_entry(io, table_offset)?;
-        chunks[(i as usize) - 1].end_offset = ch.data_offset;
+        chunks[i - 1].end_offset = ch.data_offset;
         chunks.push(ch);
     }
 
