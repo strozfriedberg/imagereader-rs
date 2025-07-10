@@ -92,6 +92,5 @@ impl SegmentFileHeader {
 #[derive(Debug)]
 pub struct Segment {
     pub io: BytesReader,
-    pub _header: SegmentFileHeader,
-    pub end_of_sectors: u64
+    pub _header: SegmentFileHeader
 }

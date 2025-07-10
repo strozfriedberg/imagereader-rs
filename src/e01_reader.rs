@@ -142,8 +142,7 @@ pub enum E01Error {
 #[derive(Debug)]
 struct Segment {
     pub path: PathBuf,
-    pub io: BytesReader,
-    pub end_of_sectors: u64
+    pub io: BytesReader
 }
 
 #[derive(Debug)]
@@ -342,7 +341,7 @@ impl E01Reader {
                 _ => {}
             }
 
-            // set the end of the last chunk
+            // set the end of the last chunk in the table
             let seg_chunks_len = seg_chunks.len();
             seg_chunks[seg_chunks_len - 1].end_offset = end_of_sectors;
 
@@ -361,8 +360,7 @@ impl E01Reader {
             // record the segment
             segments.push(Segment {
                 path: sp.into(),
-                io,
-                end_of_sectors
+                io
             });
 
             if done {
