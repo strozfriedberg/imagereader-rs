@@ -65,7 +65,7 @@ fn read_section(
         .map_err(|e| LibError::DeserializationFailed("EwfFileHeaderV1", e))?;
 
     let section_size = if *sd.size() > 0x4c {
-        /* header size */
+        // header size
         *sd.size() - 0x4c
     }
     else {
