@@ -180,7 +180,12 @@ fn read_segment<T: AsRef<Path>>(
             .map_err(|e| e.with_path(&segment_path))?
         {
             Section::Volume(v) => volume = Some(v),
-            Section::Table(t) => chunks.extend(t),
+            Section::Table(t) => {
+                chunks.extend(t);
+                // set the end of the last chunk in the table
+                let chunks_len = chunks.len();
+                chunks[chunks_len - 1].end_offset = end_of_sectors;
+            },
             Section::Sectors(eos) => end_of_sectors = eos,
             Section::Hash(h) => md5 = Some(h.md5().clone()),
             Section::Digest(d) => {
@@ -195,10 +200,6 @@ fn read_segment<T: AsRef<Path>>(
     if done && sections.next().is_some() {
         warn!("more sections after done");
     }
-
-    // set the end of the last chunk in the table
-    let chunks_len = chunks.len();
-    chunks[chunks_len - 1].end_offset = end_of_sectors;
 
     // set the segment index for these chunks
     for c in &mut chunks {
