@@ -14,8 +14,8 @@ use kaitai::{BytesReader, KStream, KStruct, OptRc};
 #[derive(Debug)]
 pub struct Chunk {
     pub data_offset: u64,
+    pub end_offset: Option<u64>,
     pub compressed: bool,
-    pub end_offset: Option<u64>
 }
 
 #[derive(Debug)]
@@ -156,8 +156,8 @@ pub fn read_table(
         data_offset += *table_section.table_base_offset();
         chunks.push(Chunk {
             data_offset,
-            compressed: (entry & 0x80000000) > 0,
             end_offset: None,
+            compressed: (entry & 0x80000000) > 0
         });
     }
 
