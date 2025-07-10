@@ -1,7 +1,6 @@
 use crate::generated::ewf_file_header_v1::EwfFileHeaderV1;
 use crate::generated::ewf_file_header_v2::EwfFileHeaderV2;
 use crate::error::{IoError, LibError};
-use crate::sec_read::Chunk;
 
 use flate2::read::ZlibDecoder;
 use kaitai::{BytesReader, KStream, KStruct};

@@ -13,9 +13,10 @@ use kaitai::{BytesReader, KStream, KStruct, OptRc};
 
 #[derive(Debug)]
 pub struct Chunk {
+    pub segment: usize,
     pub data_offset: u64,
     pub end_offset: u64,
-    pub compressed: bool,
+    pub compressed: bool
 }
 
 #[derive(Debug)]
@@ -139,6 +140,7 @@ fn read_table_entry(
 
     Ok(
         Chunk {
+            segment: 0,
             data_offset: table_offset + ((entry & 0x7fffffff) as u64),
             end_offset: 0,
             compressed: (entry & 0x80000000) > 0

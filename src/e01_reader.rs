@@ -1,6 +1,7 @@
 use flate2::read::ZlibDecoder;
 use std::{
     io::Read,
+    iter::FromIterator,
     path::{Path, PathBuf}
 };
 use tracing::{debug, debug_span, warn};
@@ -10,7 +11,7 @@ extern crate kaitai;
 use kaitai::{BytesReader, KError, KStream};
 
 use crate::error::{IoError, LibError};
-use crate::sec_read::{VolumeSection, Section, SectionIterator};
+use crate::sec_read::{Chunk, VolumeSection, Section, SectionIterator};
 use crate::seg_path::{find_segment_paths, UnrecognizedExtension};
 use crate::segment::SegmentFileHeader;
 
@@ -145,14 +146,6 @@ struct Segment {
     pub io: BytesReader
 }
 
-#[derive(Debug)]
-struct Chunk {
-    pub segment: usize,
-    pub data_offset: u64,
-    pub compressed: bool,
-    pub end_offset: u64
-}
-
 fn read_chunk(
     chunk: &Chunk,
     chunk_index: usize,
@@ -252,7 +245,6 @@ impl E01Reader {
         // check that there are some segment files
         segment_paths.peek().ok_or(OpenError::NoSegmentFiles)?;
 
-        let mut chunk_count = 0;
         let mut done = false;
 
         let mut volume = None;
@@ -345,17 +337,14 @@ impl E01Reader {
             let seg_chunks_len = seg_chunks.len();
             seg_chunks[seg_chunks_len - 1].end_offset = end_of_sectors;
 
+            // set the segment index for these chunks
+            let segment_index = segments.len();
+            for mut sc in &mut seg_chunks {
+                sc.segment = segment_index;
+            }
+
             // record the chunks
-            chunks.extend(
-                seg_chunks.into_iter().map(
-                    |sc| Chunk {
-                        segment: segments.len(),
-                        data_offset: sc.data_offset,
-                        compressed: sc.compressed,
-                        end_offset: sc.end_offset
-                    }
-                )
-            );
+            chunks.extend(seg_chunks);
 
             // record the segment
             segments.push(Segment {
