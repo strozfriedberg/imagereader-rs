@@ -348,7 +348,11 @@ impl E01Reader {
             // take the volume section if it's the first one
             match (seg_volume, &volume) {
                 // we have no volume section, and saw one
-                (Some(sv), None) => volume = Some(sv),
+                (Some(sv), None) => {
+                    // we can size the chunks vec now
+                    chunks.reserve_exact(sv.chunk_count as usize);
+                    volume = Some(sv);
+                },
                 // we have a volume section, and didn't see a new one
                 (None, Some(_)) => {},
                 // we have no volume section, and saw none;
