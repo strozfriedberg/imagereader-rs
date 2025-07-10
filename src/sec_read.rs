@@ -164,17 +164,23 @@ pub fn read_table(
     let io_offsets = Clone::clone(io);
     let mut chunks: Vec<Chunk> = Vec::with_capacity(*table_section.entry_count() as usize);
 
-    for i in 0..*table_section.entry_count() {
+
+    let (data_offset, compressed) = read_table_entry(io, &table_section)?;
+    chunks.push(Chunk {
+        data_offset,
+        end_offset: None,
+        compressed
+    });
+
+    for i in 1..*table_section.entry_count() {
         let (data_offset, compressed) = read_table_entry(io, &table_section)?;
 
-        if i > 0 {
-            chunks[(i as usize) - 1].end_offset = Some(data_offset);
-        }
+        chunks[(i as usize) - 1].end_offset = Some(data_offset);
 
         chunks.push(Chunk {
             data_offset,
             end_offset: None,
-            compressed,
+            compressed
         });
     }
 
