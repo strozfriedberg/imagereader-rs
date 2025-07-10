@@ -346,6 +346,7 @@ impl E01Reader {
             let seg_chunks_len = seg_chunks.len();
             seg_chunks[seg_chunks_len - 1].end_offset = end_of_sectors;
 
+            // record the chunks
             chunks.extend(
                 seg_chunks.into_iter().map(
                     |sc| Chunk {
@@ -357,6 +358,7 @@ impl E01Reader {
                 )
             );
 
+            // record the segment
             segments.push(Segment {
                 path: sp.into(),
                 io,
