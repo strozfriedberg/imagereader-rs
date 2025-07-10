@@ -132,16 +132,18 @@ fn get_digest_section(
 
 fn read_table_entry(
     io: &BytesReader,
-    table_section: &EwfTableHeader
-) -> Result<(u64, bool), LibError>
+    table_offset: u64
+) -> Result<Chunk, LibError>
 {
     let entry = io.read_u4le().map_err(IoError::ReadError)?;
-    Ok((
-        // offset
-        *table_section.table_base_offset() + ((entry & 0x7fffffff) as u64),
-        // compressed?
-        (entry & 0x80000000) > 0
-    ))
+
+    Ok(
+        Chunk {
+            data_offset: table_offset + ((entry & 0x7fffffff) as u64),
+            end_offset: None,
+            compressed: (entry & 0x80000000) > 0
+        }
+    )
 }
 
 pub fn read_table(
@@ -161,27 +163,22 @@ pub fn read_table(
         )?;
     }
 
+    let entry_count = *table_section.entry_count() as usize;
+    if entry_count == 0 {
+        // weird, but possible?
+        return Ok(vec![]);
+    }
+
     let io_offsets = Clone::clone(io);
-    let mut chunks: Vec<Chunk> = Vec::with_capacity(*table_section.entry_count() as usize);
+    let table_offset = *table_section.table_base_offset() as u64;
+    let mut chunks: Vec<Chunk> = Vec::with_capacity(entry_count);
 
+    chunks.push(read_table_entry(io, table_offset)?);
 
-    let (data_offset, compressed) = read_table_entry(io, &table_section)?;
-    chunks.push(Chunk {
-        data_offset,
-        end_offset: None,
-        compressed
-    });
-
-    for i in 1..*table_section.entry_count() {
-        let (data_offset, compressed) = read_table_entry(io, &table_section)?;
-
-        chunks[(i as usize) - 1].end_offset = Some(data_offset);
-
-        chunks.push(Chunk {
-            data_offset,
-            end_offset: None,
-            compressed
-        });
+    for i in 1..entry_count {
+        let ch = read_table_entry(io, table_offset)?;
+        chunks[(i as usize) - 1].end_offset = Some(ch.data_offset);
+        chunks.push(ch);
     }
 
     if !ignore_checksums {
