@@ -3,7 +3,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf}
 };
-use tracing::{debug, debug_span, warn};
+use tracing::{debug, debug_span, error, warn};
 
 extern crate kaitai;
 
@@ -223,7 +223,7 @@ fn read_chunk(
     chunk: &Chunk,
     chunk_index: usize,
     io: &BytesReader,
-    ignore_checksums: bool,
+    corrupt_chunk_policy: CorruptChunkPolicy,
     buf: &mut [u8]
 ) -> Result<Vec<u8>, LibError>
 {
@@ -231,37 +231,46 @@ fn read_chunk(
         .seek(chunk.data_offset as usize)
         .map_err(|e| IoError::SeekError(chunk.data_offset as usize, e))?;
 
+    let chunk_size = (chunk.end_offset - chunk.data_offset) as usize;
+
     let mut raw_data = io
-        .read_bytes(chunk.end_offset as usize - chunk.data_offset as usize)
+        .read_bytes(chunk_size)
         .map_err(IoError::ReadError)?;
 
     if !chunk.compressed {
-        if !ignore_checksums {
-            // read stored checksum
-            let crc_stored = u32::from_le_bytes(
-                raw_data[raw_data.len() - 4..]
-                    .try_into()
-                    .expect("slice of last 4 bytes not 4 bytes long, wtf")
-            );
+        // read stored checksum
+        let crc_stored = u32::from_le_bytes(
+            raw_data[raw_data.len() - 4..]
+                .try_into()
+                .expect("slice of last 4 bytes not 4 bytes long, wtf")
+        );
 
-            // remove stored checksum from data
-            raw_data.truncate(raw_data.len() - 4);
+        // trim stored checksum from data
+        raw_data.truncate(raw_data.len() - 4);
 
-            // checksum the data
-            let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
-                .map_err(IoError::IoError)?;
+        // checksum the data
+        let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
+            .map_err(IoError::IoError)?;
 
-            if crc != crc_stored {
-                return Err(LibError::BadChecksum(
-                    format!("Chunk {}", chunk_index),
-                    crc,
-                    crc_stored
-                ));
+        // deal with checksum mismatch
+        if crc != crc_stored {
+            error!("checksum mismatch reading chunk {}", chunk_index);
+            match corrupt_chunk_policy {
+                CorruptChunkPolicy::Error => return Err(
+                    LibError::BadChecksum(
+                        format!("Chunk {}", chunk_index),
+                        crc,
+                        crc_stored
+                    )
+                ),
+                CorruptChunkPolicy::Zero => {
+                    // zero out corrupt chunk
+                    raw_data.fill(0);
+                },
+                CorruptChunkPolicy::RawIfPossible => {
+                    // let's gooooooooo!
+                }
             }
-        }
-        else {
-            // remove stored checksum from data
-            raw_data.truncate(raw_data.len() - 4);
         }
 
         Ok(raw_data)
@@ -269,11 +278,38 @@ fn read_chunk(
     else {
         let mut decoder = ZlibDecoder::new(&raw_data[..]);
         let mut data = vec![];
-        decoder
-            .read_to_end(&mut data)
-            .map_err(LibError::DecompressionFailed)?;
+
+        // compressed chunks are either ok or unrecoverable
+        if let Err(e) = decoder.read_to_end(&mut data) {
+            error!("decompression failed for chunk {}: {}", chunk_index, e);
+            match corrupt_chunk_policy {
+                CorruptChunkPolicy::Error => return Err(
+                    LibError::DecompressionFailed(e)
+                ),
+                CorruptChunkPolicy::Zero |
+                CorruptChunkPolicy::RawIfPossible => {
+                    // zero out corrupt chunk
+                    data.resize(chunk_size - 4, 0);
+                    data.fill(0);
+                }
+            }
+        }
+
         Ok(data)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CorruptSectionPolicy {
+    Error,
+    DamnTheTorpedoes
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CorruptChunkPolicy {
+    Error,
+    Zero,
+    RawIfPossible
 }
 
 #[derive(Debug)]
@@ -283,19 +319,23 @@ pub struct E01Reader {
     chunks: Vec<Chunk>,
     stored_md5: Option<Vec<u8>>,
     stored_sha1: Option<Vec<u8>>,
-    ignore_checksums: bool
+
+    corrupt_section_policy: CorruptSectionPolicy,
+    corrupt_chunk_policy: CorruptChunkPolicy
 }
 
 impl E01Reader {
     pub fn open_glob<T: AsRef<Path>>(
         example_segment_path: T,
-        ignore_checksums: bool
+        corrupt_section_policy: CorruptSectionPolicy,
+        corrupt_chunk_policy: CorruptChunkPolicy
     ) -> Result<Self, OpenError>
     {
         if example_segment_path.as_ref().exists() {
             Self::open(
                 find_segment_paths(&example_segment_path)?,
-                ignore_checksums
+                corrupt_section_policy,
+                corrupt_chunk_policy
             )
         }
         else {
@@ -314,7 +354,8 @@ impl E01Reader {
 
     pub fn open<T: IntoIterator<Item: AsRef<Path>>>(
         segment_paths: T,
-        ignore_checksums: bool
+        corrupt_section_policy: CorruptSectionPolicy,
+        corrupt_chunk_policy: CorruptChunkPolicy
     ) -> Result<Self, OpenError>
     {
         let mut segment_paths = segment_paths.into_iter().peekable();
@@ -330,6 +371,8 @@ impl E01Reader {
         let mut chunks = vec![];
 
         let mut done = false;
+
+        let ignore_checksums = corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
         // read segments
         for sp in segment_paths.by_ref() {
@@ -357,7 +400,7 @@ impl E01Reader {
                 // we have no volume section, and saw one
                 (Some(sv), None) => {
                     // we can size the chunks vec now
-                    chunks.reserve_exact(sv.chunk_count as usize);
+                    chunks.reserve_exact(sv.chunk_count as usize - chunks.len());
                     volume = Some(sv);
                 },
                 // we have a volume section, and didn't see a new one
@@ -429,7 +472,8 @@ impl E01Reader {
             chunks,
             stored_md5,
             stored_sha1,
-            ignore_checksums
+            corrupt_section_policy,
+            corrupt_chunk_policy
         })
     }
 
@@ -447,6 +491,7 @@ impl E01Reader {
         let mut bytes_read = 0;
         let mut remaining_buf = &mut buf[..];
 
+
         while !remaining_buf.is_empty() && offset < total_size {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
@@ -461,7 +506,7 @@ impl E01Reader {
                 &self.chunks[chunk_index],
                 chunk_index,
                 &seg.io,
-                self.ignore_checksums,
+                self.corrupt_chunk_policy,
                 remaining_buf
             ).map_err(ReadError::from).map_err(|e| e.with_path(&seg.path))?;
 

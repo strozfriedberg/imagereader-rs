@@ -12,7 +12,7 @@ use tracing_subscriber::{
 };
 
 use e01::{
-    e01_reader::{E01Error, E01Reader},
+    e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Error, E01Reader},
     hasher::{HashType, MultiHasher}
 };
 
@@ -72,7 +72,16 @@ fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
 }
 
 fn run(args: Args)-> Result<ExitCode, E01Error> {
-    let e01_reader = E01Reader::open_glob(&args.input, args.ignore_checksums)?;
+    let e01_reader = E01Reader::open_glob(
+        &args.input,
+        CorruptSectionPolicy::Error,
+        if args.ignore_checksums {
+            CorruptChunkPolicy::Zero
+        }
+        else {
+            CorruptChunkPolicy::Error
+        }
+    )?;
 
     let mut htypes: HashSet<HashType> = HashSet::from_iter(args.extra_hashes);
 
