@@ -107,24 +107,20 @@ mod test {
         assert_hash_all(&IMAGE_E01, false);
     }
 
-/*
     #[test]
     fn test_image_e01_no_checksums() {
         assert_hash_all(&IMAGE_E01, true);
     }
-*/
 
     #[test]
     fn test_mimage_e01_checksums() {
         assert_hash_all(&MIMAGE_E01, false);
     }
 
-/*
     #[test]
     fn test_mimage_e01_no_checksums() {
         assert_hash_all(&MIMAGE_E01, true);
     }
-*/
 
 /*
     const DADEMURPHY_E01: TestData = TestData {
