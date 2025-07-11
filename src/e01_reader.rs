@@ -257,6 +257,10 @@ fn read_chunk(
                 ));
             }
         }
+        else {
+            // remove stored checksum from data
+            raw_data.truncate(raw_data.len() - 4);
+        }
 
         Ok(raw_data)
     }
