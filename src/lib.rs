@@ -87,6 +87,16 @@ mod test {
         pub sha256: &'static str
     }
 
+    const ERROR_ERROR: E01ReaderOptions = E01ReaderOptions {
+        corrupt_section_policy: CorruptSectionPolicy::Error,
+        corrupt_chunk_policy: CorruptChunkPolicy::Error
+    };
+
+    const ERROR_ZERO: E01ReaderOptions = E01ReaderOptions {
+        corrupt_section_policy: CorruptSectionPolicy::Error,
+        corrupt_chunk_policy: CorruptChunkPolicy::Zero
+    };
+
     const IMAGE_E01: TestData = TestData {
         path: "data/image.E01",
         stored_md5: "28035e42858e28326c23732e6234bcf8",
@@ -107,46 +117,22 @@ mod test {
 
     #[test]
     fn test_image_e01() {
-        assert_hash_all(
-            &IMAGE_E01,
-            &E01ReaderOptions {
-                corrupt_section_policy: CorruptSectionPolicy::Error,
-                corrupt_chunk_policy: CorruptChunkPolicy::Error
-            }
-        );
+        assert_hash_all(&IMAGE_E01, &ERROR_ERROR);
     }
 
     #[test]
     fn test_image_e01_zero_bad_chunks() {
-        assert_hash_all(
-            &IMAGE_E01,
-            &E01ReaderOptions {
-                corrupt_section_policy: CorruptSectionPolicy::Error,
-                corrupt_chunk_policy: CorruptChunkPolicy::Zero
-            }
-        );
+        assert_hash_all(&IMAGE_E01, &ERROR_ZERO);
     }
 
     #[test]
     fn test_mimage_e01() {
-        assert_hash_all(
-            &MIMAGE_E01,
-            &E01ReaderOptions {
-                corrupt_section_policy: CorruptSectionPolicy::Error,
-                corrupt_chunk_policy: CorruptChunkPolicy::Error
-            }
-        );
+        assert_hash_all(&MIMAGE_E01, &ERROR_ERROR);
     }
 
     #[test]
     fn test_mimage_e01_zero_bad_chunks() {
-        assert_hash_all(
-            &MIMAGE_E01,
-            &E01ReaderOptions {
-                corrupt_section_policy: CorruptSectionPolicy::Error,
-                corrupt_chunk_policy: CorruptChunkPolicy::Zero
-            }
-        );
+        assert_hash_all(&MIMAGE_E01, &ERROR_ZERO);
     }
 
     const BAD_CHUNK_E01: TestData = TestData {
@@ -170,24 +156,12 @@ mod test {
     #[test]
     #[should_panic]
     fn test_bad_chunk_e01() {
-        assert_hash_all(
-            &BAD_CHUNK_E01,
-            &E01ReaderOptions {
-                corrupt_section_policy: CorruptSectionPolicy::Error,
-                corrupt_chunk_policy: CorruptChunkPolicy::Error
-            }
-        );
+        assert_hash_all(&BAD_CHUNK_E01, &ERROR_ERROR);
     }
 
     #[test]
     fn test_bad_chunk_e01_zero_bad_chunks() {
-        assert_hash_all(
-            &BAD_CHUNK_E01_ZEROED,
-            &E01ReaderOptions {
-                corrupt_section_policy: CorruptSectionPolicy::Error,
-                corrupt_chunk_policy: CorruptChunkPolicy::Zero
-            }
-        );
+        assert_hash_all(&BAD_CHUNK_E01_ZEROED, &ERROR_ZERO);
     }
 
 /*
@@ -200,7 +174,7 @@ mod test {
 
     #[test]
     fn test_dademurphy_e01() {
-        assert_hash_all(DADEMURPHY_E01, false);
+        assert_hash_all(DADEMURPHY_E01, &ERROR_ERROR);
     }
 
     const NFURY_E01: TestData = TestData {
@@ -212,7 +186,7 @@ mod test {
 
     #[test]
     fn test_nfury_e01() {
-        assert_hash_all(NFURY_E01, false);
+        assert_hash_all(NFURY_E01, &ERROR_ERROR);
     }
 */
 }
