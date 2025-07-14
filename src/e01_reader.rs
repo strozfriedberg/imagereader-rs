@@ -303,20 +303,22 @@ fn read_chunk(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CorruptSectionPolicy {
+    #[default]
     Error,
     DamnTheTorpedoes
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CorruptChunkPolicy {
     Error,
+    #[default]
     Zero,
     RawIfPossible
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct E01ReaderOptions {
     pub corrupt_section_policy: CorruptSectionPolicy,
     pub corrupt_chunk_policy: CorruptChunkPolicy
