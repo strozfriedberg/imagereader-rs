@@ -12,7 +12,7 @@ use tracing_subscriber::{
 };
 
 use e01::{
-    e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Error, E01Reader},
+    e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Error, E01Reader, E01ReaderOptions},
     hasher::{HashType, MultiHasher}
 };
 
@@ -74,12 +74,14 @@ fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
 fn run(args: Args)-> Result<ExitCode, E01Error> {
     let e01_reader = E01Reader::open_glob(
         &args.input,
-        CorruptSectionPolicy::Error,
-        if args.ignore_checksums {
-            CorruptChunkPolicy::Zero
-        }
-        else {
-            CorruptChunkPolicy::Error
+        &E01ReaderOptions {
+            corrupt_section_policy: CorruptSectionPolicy::Error,
+            corrupt_chunk_policy: if args.ignore_checksums {
+                CorruptChunkPolicy::Zero
+            }
+            else {
+                CorruptChunkPolicy::Error
+            }
         }
     )?;
 

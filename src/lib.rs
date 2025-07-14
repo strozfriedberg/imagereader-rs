@@ -9,7 +9,7 @@ mod segment;
 #[cfg(test)]
 mod test {
     use crate::{
-        e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Reader},
+        e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Reader, E01ReaderOptions},
         hasher::{HashType, MultiHasher}
     };
 
@@ -61,14 +61,9 @@ mod test {
     #[track_caller]
     fn assert_hash_all(
         td: &TestData,
-        corrupt_section_policy: CorruptSectionPolicy,
-        corrupt_chunk_policy: CorruptChunkPolicy
+        options: &E01ReaderOptions
     ) {
-        let reader = E01Reader::open_glob(
-            td.path,
-            corrupt_section_policy,
-            corrupt_chunk_policy
-        ).unwrap();
+        let reader = E01Reader::open_glob(td.path, options).unwrap();
 
         let stored_md5 = reader.get_stored_md5().map(hex::encode);
         let stored_sha1 = reader.get_stored_sha1().map(hex::encode);
@@ -114,8 +109,10 @@ mod test {
     fn test_image_e01() {
         assert_hash_all(
             &IMAGE_E01,
-            CorruptSectionPolicy::Error,
-            CorruptChunkPolicy::Error
+            &E01ReaderOptions {
+                corrupt_section_policy: CorruptSectionPolicy::Error,
+                corrupt_chunk_policy: CorruptChunkPolicy::Error
+            }
         );
     }
 
@@ -123,8 +120,10 @@ mod test {
     fn test_image_e01_zero_bad_chunks() {
         assert_hash_all(
             &IMAGE_E01,
-            CorruptSectionPolicy::Error,
-            CorruptChunkPolicy::Zero
+            &E01ReaderOptions {
+                corrupt_section_policy: CorruptSectionPolicy::Error,
+                corrupt_chunk_policy: CorruptChunkPolicy::Zero
+            }
         );
     }
 
@@ -132,8 +131,10 @@ mod test {
     fn test_mimage_e01() {
         assert_hash_all(
             &MIMAGE_E01,
-            CorruptSectionPolicy::Error,
-            CorruptChunkPolicy::Error
+            &E01ReaderOptions {
+                corrupt_section_policy: CorruptSectionPolicy::Error,
+                corrupt_chunk_policy: CorruptChunkPolicy::Error
+            }
         );
     }
 
@@ -141,8 +142,10 @@ mod test {
     fn test_mimage_e01_zero_bad_chunks() {
         assert_hash_all(
             &MIMAGE_E01,
-            CorruptSectionPolicy::Error,
-            CorruptChunkPolicy::Zero
+            &E01ReaderOptions {
+                corrupt_section_policy: CorruptSectionPolicy::Error,
+                corrupt_chunk_policy: CorruptChunkPolicy::Zero
+            }
         );
     }
 
@@ -169,8 +172,10 @@ mod test {
     fn test_bad_chunk_e01() {
         assert_hash_all(
             &BAD_CHUNK_E01,
-            CorruptSectionPolicy::Error,
-            CorruptChunkPolicy::Error
+            &E01ReaderOptions {
+                corrupt_section_policy: CorruptSectionPolicy::Error,
+                corrupt_chunk_policy: CorruptChunkPolicy::Error
+            }
         );
     }
 
@@ -178,8 +183,10 @@ mod test {
     fn test_bad_chunk_e01_zero_bad_chunks() {
         assert_hash_all(
             &BAD_CHUNK_E01_ZEROED,
-            CorruptSectionPolicy::Error,
-            CorruptChunkPolicy::Zero
+            &E01ReaderOptions {
+                corrupt_section_policy: CorruptSectionPolicy::Error,
+                corrupt_chunk_policy: CorruptChunkPolicy::Zero
+            }
         );
     }
 

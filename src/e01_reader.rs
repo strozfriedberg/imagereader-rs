@@ -316,6 +316,12 @@ pub enum CorruptChunkPolicy {
     RawIfPossible
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct E01ReaderOptions {
+    pub corrupt_section_policy: CorruptSectionPolicy,
+    pub corrupt_chunk_policy: CorruptChunkPolicy
+}
+
 #[derive(Debug)]
 pub struct E01Reader {
     volume: VolumeSection,
@@ -323,7 +329,6 @@ pub struct E01Reader {
     chunks: Vec<Chunk>,
     stored_md5: Option<Vec<u8>>,
     stored_sha1: Option<Vec<u8>>,
-
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy
 }
@@ -331,15 +336,13 @@ pub struct E01Reader {
 impl E01Reader {
     pub fn open_glob<T: AsRef<Path>>(
         example_segment_path: T,
-        corrupt_section_policy: CorruptSectionPolicy,
-        corrupt_chunk_policy: CorruptChunkPolicy
+        options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
         if example_segment_path.as_ref().exists() {
             Self::open(
                 find_segment_paths(&example_segment_path)?,
-                corrupt_section_policy,
-                corrupt_chunk_policy
+                options
             )
         }
         else {
@@ -358,8 +361,7 @@ impl E01Reader {
 
     pub fn open<T: IntoIterator<Item: AsRef<Path>>>(
         segment_paths: T,
-        corrupt_section_policy: CorruptSectionPolicy,
-        corrupt_chunk_policy: CorruptChunkPolicy
+        options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
         let mut segment_paths = segment_paths.into_iter().peekable();
@@ -376,7 +378,7 @@ impl E01Reader {
 
         let mut done = false;
 
-        let ignore_checksums = corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
+        let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
         // read segments
         for sp in segment_paths.by_ref() {
@@ -476,8 +478,8 @@ impl E01Reader {
             chunks,
             stored_md5,
             stored_sha1,
-            corrupt_section_policy,
-            corrupt_chunk_policy
+            corrupt_section_policy: options.corrupt_section_policy,
+            corrupt_chunk_policy: options.corrupt_chunk_policy
         })
     }
 
