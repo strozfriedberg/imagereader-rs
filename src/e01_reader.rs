@@ -165,7 +165,11 @@ fn read_segment<T: AsRef<Path>>(
         .map_err(|e| e.with_path(&segment_path))?;
 
     let mut done = false;
+
+    // we can't reserve capacity for chunks because we don't know how many
+    // chunks are in a segment until we read all its table sections
     let mut chunks = vec![];
+
     let mut end_of_sectors = 0;
 
     let mut volume = None;
