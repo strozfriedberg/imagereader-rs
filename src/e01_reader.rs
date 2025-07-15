@@ -135,7 +135,7 @@ pub enum E01Error {
 #[derive(Debug)]
 struct Segment {
     pub path: PathBuf,
-    pub handle: File
+    pub handle: Option<File>
 }
 
 struct SegmentComponents {
@@ -447,11 +447,7 @@ impl E01Reader {
             // record the segment
             segments.push(Segment {
                 path: sp.into(),
-                handle: File::open(sp)
-                    .map_err(|e| OpenError::IoError {
-                        path: sp.into(),
-                        source: LibError::IoError(IoError::IoError(e))
-                    })?
+                handle: None
             });
 
             segment_paths.push(sp.into());
@@ -522,15 +518,28 @@ impl E01Reader {
             debug_assert!(chunk_number < self.chunk_count);
 
             let chunk_index = chunk_number;
+            debug!("reading {chunk_index} / {}", self.chunk_count);
+
             let chunk = &self.chunks[chunk_index];
             let seg = &mut self.segments[chunk.segment];
 
-            debug!("reading {chunk_index} / {}", self.chunk_count);
+            // open the segment file if it's not already open
+            let mut handle = match &seg.handle {
+                None => {
+                    let h = File::open(&seg.path)
+                        .map_err(ReadErrorKind::IoError)
+                        .map_err(ReadError::from)
+                        .map_err(|e| e.with_path(&seg.path))?;
+                    seg.handle = Some(h);
+                    seg.handle.as_ref().unwrap()
+                },
+                Some(h) => &h
+            };
 
             let mut data = read_chunk(
                 &self.chunks[chunk_index],
                 chunk_index,
-                &mut seg.handle,
+                &mut handle,
                 self.corrupt_chunk_policy,
                 remaining_buf
             ).map_err(|e| e.with_path(&seg.path))?;
