@@ -1,5 +1,6 @@
 use flate2::read::ZlibDecoder;
 use std::{
+    fs::File,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf}
 };
@@ -7,7 +8,7 @@ use tracing::{debug, debug_span, error, warn};
 
 extern crate kaitai;
 
-use kaitai::{BytesReader, KError, KStream};
+use kaitai::{BytesReader, KError};
 
 use crate::error::{IoError, LibError};
 use crate::sec_read::{Chunk, VolumeSection, Section, SectionIterator};
@@ -142,7 +143,7 @@ pub enum E01Error {
 #[derive(Debug)]
 struct Segment {
     pub path: PathBuf,
-    pub io: BytesReader
+    pub handle: File
 }
 
 struct SegmentComponents {
@@ -221,68 +222,6 @@ fn read_segment<T: AsRef<Path>>(
             done
         }
     )
-}
-
-// NOTES: read_chunk does nothing Kaitai-specific with BytesReader;
-// irritatingly, BytesReader doesn't implement Read + Seek itself
-
-struct BytesReaderWrapper<'a>(&'a BytesReader);
-
-impl Read for BytesReaderWrapper<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // It is aggravating that KStream::read_bytes returns a new vec
-        let mut buf_stupid = self.0.read_bytes(buf.len())
-            .map_err(|e| std::io::Error::new(
-                std::io::ErrorKind::Other,
-                IoError::ReadError(e)
-            ))?;
-        buf.swap_with_slice(&mut buf_stupid);
-        Ok(buf_stupid.len())
-    }
-}
-
-impl Seek for BytesReaderWrapper<'_> {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        // convert pos to an offset from the start
-        let pos = match pos {
-            SeekFrom::Start(off) => usize::try_from(off)
-                .map_err(|e|
-                    std::io::Error::new(
-                        std::io::ErrorKind::FileTooLarge,
-                        e
-                    )
-                )?,
-            SeekFrom::End(off) => self.0.size() + usize::try_from(off)
-                .map_err(|e|
-                    std::io::Error::new(
-                        std::io::ErrorKind::FileTooLarge,
-                        e
-                    )
-                )?,
-            SeekFrom::Current(off) => self.0.pos() + usize::try_from(off)
-                .map_err(|e|
-                    std::io::Error::new(
-                        std::io::ErrorKind::FileTooLarge,
-                        e
-                    )
-                )?
-        };
-
-        self.0.seek(pos)
-            .map_err(|e| std::io::Error::new(
-                std::io::ErrorKind::Other,
-                IoError::SeekError(pos, e)
-            )
-        )?;
-
-        pos.try_into()
-            .map_err(|e|
-                std::io::Error::new(
-                    std::io::ErrorKind::FileTooLarge,
-                    e
-                )
-            )
-    }
 }
 
 fn read_chunk<R: Read + Seek>(
@@ -520,7 +459,11 @@ impl E01Reader {
             // record the segment
             segments.push(Segment {
                 path: sp.into(),
-                io
+                handle: File::open(sp)
+                    .map_err(|e| OpenError::IoError {
+                        path: sp.into(),
+                        source: LibError::IoError(IoError::IoError(e))
+                    })?
             });
 
             segment_paths.push(sp.into());
@@ -574,7 +517,7 @@ impl E01Reader {
     }
 
     pub fn read_at_offset(
-        &self,
+        &mut self,
         mut offset: usize,
         buf: &mut [u8]
     ) -> Result<usize, ReadError>
@@ -592,16 +535,14 @@ impl E01Reader {
 
             let chunk_index = chunk_number;
             let chunk = &self.chunks[chunk_index];
-            let seg = &self.segments[chunk.segment];
+            let seg = &mut self.segments[chunk.segment];
 
             debug!("reading {chunk_index} / {}", self.chunk_count);
-
-            let mut io = BytesReaderWrapper(&seg.io);
 
             let mut data = read_chunk(
                 &self.chunks[chunk_index],
                 chunk_index,
-                &mut io,
+                &mut seg.handle,
                 self.corrupt_chunk_policy,
                 remaining_buf
             ).map_err(ReadError::from).map_err(|e| e.with_path(&seg.path))?;
