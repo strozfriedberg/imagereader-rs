@@ -82,52 +82,44 @@ impl OpenError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ReadError {
-    #[error("Requested chunk number {0} does not exist")]
-    BadChunkNumber(usize),
+pub enum ReadErrorKind {
     #[error("Requested offset {0} is beyond end of image {1}")]
+//    OffsetBeyondEnd(u64, u64),
     OffsetBeyondEnd(usize, usize),
-    #[error("Error reading {path}: {source}")]
-    IoError {
-        path: PathBuf,
-        #[source]
-        source: LibError
-    },
-    #[error("Bad data in {path}: {source}")]
-    BadData {
-        path: PathBuf,
-        #[source]
-        source: LibError
-    }
+    #[error("{0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Chunk {0} checksum failed: calculated {1}, expected {2}")]
+    BadChecksum(usize, u32, u32),
+    #[error("Decompression of chunk {0} failed: {1}")]
+    DecompressionFailed(usize, #[source] std::io::Error)
 }
 
-impl From<LibError> for ReadError {
-    fn from(e: LibError) -> Self {
-        match e {
-            LibError::IoError(_) => Self::IoError {
-                path: "".into(), // set using with_path()
-                source: e
-            },
-            _ => Self::BadData {
-                path: "".into(), // set using with_path()
-                source: e
-            }
-        }
-    }
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "{}{}{source}",
+    path.as_deref().unwrap_or(Path::new("")).display(),
+    path.as_ref().map(|_| ": ").unwrap_or("")
+)]
+pub struct ReadError {
+    path: Option<PathBuf>,
+    #[source]
+    source: ReadErrorKind
 }
 
 impl ReadError {
     fn with_path<T: AsRef<Path>>(self, path: T) -> Self {
-        match self {
-            Self::IoError { source, .. } => Self::IoError {
-                path: path.as_ref().into(),
-                source
-            },
-            Self::BadData { source, .. } => Self::BadData {
-                path: path.as_ref().into(),
-                source
-            },
-            _ => self
+        Self {
+            path: Some(path.as_ref().into()),
+            source: self.source
+        }
+    }
+}
+
+impl From<ReadErrorKind> for ReadError {
+    fn from(e: ReadErrorKind) -> Self {
+        Self {
+            path: None,
+            source: e
         }
     }
 }
@@ -230,11 +222,11 @@ fn read_chunk<R: Read + Seek>(
     io: &mut R,
     corrupt_chunk_policy: CorruptChunkPolicy,
     buf: &mut [u8]
-) -> Result<Vec<u8>, LibError>
+) -> Result<Vec<u8>, ReadError>
 {
     io
         .seek(SeekFrom::Start(chunk.data_offset))
-        .map_err(|e| IoError::SeekError(chunk.data_offset as usize, e.into()))?;
+        .map_err(ReadErrorKind::IoError)?;
 
     let chunk_size = (chunk.end_offset - chunk.data_offset) as usize;
 
@@ -242,7 +234,7 @@ fn read_chunk<R: Read + Seek>(
     let mut raw_data = vec![0; chunk_size];
 
     io.read_exact(&mut raw_data)
-        .map_err(|e| IoError::ReadError(e.into()))?;
+        .map_err(ReadErrorKind::IoError)?;
 
     if !chunk.compressed {
         // read stored checksum
@@ -257,19 +249,15 @@ fn read_chunk<R: Read + Seek>(
 
         // checksum the data
         let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
-            .map_err(IoError::IoError)?;
+            .map_err(ReadErrorKind::IoError)?;
 
         // deal with checksum mismatch
         if crc != crc_stored {
             error!("checksum mismatch reading chunk {}", chunk_index);
             match corrupt_chunk_policy {
                 CorruptChunkPolicy::Error => return Err(
-                    LibError::BadChecksum(
-                        format!("Chunk {chunk_index}"),
-                        crc,
-                        crc_stored
-                    )
-                ),
+                    ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc)
+                )?,
                 CorruptChunkPolicy::Zero => {
                     // zero out corrupt chunk
                     raw_data.fill(0);
@@ -291,8 +279,8 @@ fn read_chunk<R: Read + Seek>(
             error!("decompression failed for chunk {}: {}", chunk_index, e);
             match corrupt_chunk_policy {
                 CorruptChunkPolicy::Error => return Err(
-                    LibError::DecompressionFailed(e)
-                ),
+                    ReadErrorKind::DecompressionFailed(chunk_index, e)
+                )?,
                 CorruptChunkPolicy::Zero |
                 CorruptChunkPolicy::RawIfPossible => {
                     // zero out corrupt chunk
@@ -523,7 +511,7 @@ impl E01Reader {
     ) -> Result<usize, ReadError>
     {
         if offset > self.image_size {
-            return Err(ReadError::OffsetBeyondEnd(offset, self.image_size));
+            return Err(ReadErrorKind::OffsetBeyondEnd(offset, self.image_size))?;
         }
 
         let mut bytes_read = 0;
@@ -545,7 +533,7 @@ impl E01Reader {
                 &mut seg.handle,
                 self.corrupt_chunk_policy,
                 remaining_buf
-            ).map_err(ReadError::from).map_err(|e| e.with_path(&seg.path))?;
+            ).map_err(|e| e.with_path(&seg.path))?;
 
             if chunk_number * self.chunk_size + data.len() > self.image_size {
                 data.truncate(self.image_size - chunk_number * self.chunk_size);

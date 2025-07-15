@@ -4,12 +4,12 @@ use std::collections::HashMap;
 use crate::hasher::{HashType, MultiHasher};
 
 pub fn do_hash<RF>(
-    reader: RF,
+    mut reader: RF,
     image_size: usize,
     random_buf_size: bool
 ) -> HashMap<HashType, String>
 where
-    RF: Fn(usize, &mut [u8]) -> usize
+    RF: FnMut(usize, &mut [u8]) -> usize
 {
     let mut hasher = MultiHasher::from([
         HashType::MD5,
