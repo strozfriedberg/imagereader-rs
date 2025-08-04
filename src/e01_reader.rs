@@ -216,7 +216,7 @@ fn read_segment<T: AsRef<Path>>(
     )
 }
 
-fn read_chunk<R: Read + Seek>(
+fn read_chunk_uncompressed<R: Read + Seek>(
     chunk: &Chunk,
     chunk_index: usize,
     io: &mut R,
@@ -236,61 +236,105 @@ fn read_chunk<R: Read + Seek>(
     io.read_exact(&mut raw_data)
         .map_err(ReadErrorKind::IoError)?;
 
-    if !chunk.compressed {
-        // read stored checksum
-        let crc_stored = u32::from_le_bytes(
-            raw_data[raw_data.len() - 4..]
-                .try_into()
-                .expect("slice of last 4 bytes not 4 bytes long, wtf")
-        );
+    // read stored checksum
+    let crc_stored = u32::from_le_bytes(
+        raw_data[raw_data.len() - 4..]
+            .try_into()
+            .expect("slice of last 4 bytes not 4 bytes long, wtf")
+    );
 
-        // trim stored checksum from data
-        raw_data.truncate(raw_data.len() - 4);
+    // trim stored checksum from data
+    raw_data.truncate(raw_data.len() - 4);
 
-        // checksum the data
-        let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
-            .map_err(ReadErrorKind::IoError)?;
+    // checksum the data
+    let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
+        .map_err(ReadErrorKind::IoError)?;
 
-        // deal with checksum mismatch
-        if crc != crc_stored {
-            error!("checksum mismatch reading chunk {}", chunk_index);
-            match corrupt_chunk_policy {
-                CorruptChunkPolicy::Error => return Err(
-                    ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc)
-                )?,
-                CorruptChunkPolicy::Zero => {
-                    // zero out corrupt chunk
-                    raw_data.fill(0);
-                },
-                CorruptChunkPolicy::RawIfPossible => {
-                    // let's gooooooooo!
-                }
+    // deal with checksum mismatch
+    if crc != crc_stored {
+        error!("checksum mismatch reading chunk {}", chunk_index);
+        match corrupt_chunk_policy {
+            CorruptChunkPolicy::Error => return Err(
+                ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc)
+            )?,
+            CorruptChunkPolicy::Zero => {
+                // zero out corrupt chunk
+                raw_data.fill(0);
+            },
+            CorruptChunkPolicy::RawIfPossible => {
+                // let's gooooooooo!
             }
         }
-
-        Ok(raw_data)
     }
-    else {
-        let mut decoder = ZlibDecoder::new(&raw_data[..]);
-        let mut data = vec![];
 
-        // compressed chunks are either ok or unrecoverable
-        if let Err(e) = decoder.read_to_end(&mut data) {
-            error!("decompression failed for chunk {}: {}", chunk_index, e);
-            match corrupt_chunk_policy {
-                CorruptChunkPolicy::Error => return Err(
-                    ReadErrorKind::DecompressionFailed(chunk_index, e)
-                )?,
-                CorruptChunkPolicy::Zero |
-                CorruptChunkPolicy::RawIfPossible => {
-                    // zero out corrupt chunk
-                    data.resize(chunk_size - 4, 0);
-                    data.fill(0);
-                }
+    Ok(raw_data)
+}
+
+fn read_chunk_compressed<R: Read + Seek>(
+    chunk: &Chunk,
+    chunk_index: usize,
+    io: &mut R,
+    corrupt_chunk_policy: CorruptChunkPolicy,
+    buf: &mut [u8]
+) -> Result<Vec<u8>, ReadError>
+{
+    io
+        .seek(SeekFrom::Start(chunk.data_offset))
+        .map_err(ReadErrorKind::IoError)?;
+
+    let chunk_size = (chunk.end_offset - chunk.data_offset) as usize;
+
+// FIXME: allocating a new buffer for every read is not likely to be fast
+    let mut raw_data = vec![0; chunk_size];
+
+    io.read_exact(&mut raw_data)
+        .map_err(ReadErrorKind::IoError)?;
+
+    let mut decoder = ZlibDecoder::new(&raw_data[..]);
+    let mut data = vec![];
+
+    // compressed chunks are either ok or unrecoverable
+    if let Err(e) = decoder.read_to_end(&mut data) {
+        error!("decompression failed for chunk {}: {}", chunk_index, e);
+        match corrupt_chunk_policy {
+            CorruptChunkPolicy::Error => return Err(
+                ReadErrorKind::DecompressionFailed(chunk_index, e)
+            )?,
+            CorruptChunkPolicy::Zero |
+            CorruptChunkPolicy::RawIfPossible => {
+                // zero out corrupt chunk
+                data.resize(chunk_size - 4, 0);
+                data.fill(0);
             }
         }
+    }
 
-        Ok(data)
+    Ok(data)
+}
+
+fn read_chunk<R: Read + Seek>(
+    chunk: &Chunk,
+    chunk_index: usize,
+    io: &mut R,
+    corrupt_chunk_policy: CorruptChunkPolicy,
+    buf: &mut [u8]
+) -> Result<Vec<u8>, ReadError>
+{
+    match chunk.compressed {
+        true => read_chunk_compressed(
+            chunk,
+            chunk_index,
+            io,
+            corrupt_chunk_policy,
+            buf
+        ),
+        false => read_chunk_uncompressed(
+            chunk,
+            chunk_index,
+            io,
+            corrupt_chunk_policy,
+            buf
+        )
     }
 }
 
