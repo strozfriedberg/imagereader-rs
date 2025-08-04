@@ -312,32 +312,6 @@ fn read_chunk_compressed<R: Read + Seek>(
     Ok(data)
 }
 
-fn read_chunk<R: Read + Seek>(
-    chunk: &Chunk,
-    chunk_index: usize,
-    io: &mut R,
-    corrupt_chunk_policy: CorruptChunkPolicy,
-    buf: &mut [u8]
-) -> Result<Vec<u8>, ReadError>
-{
-    match chunk.compressed {
-        true => read_chunk_compressed(
-            chunk,
-            chunk_index,
-            io,
-            corrupt_chunk_policy,
-            buf
-        ),
-        false => read_chunk_uncompressed(
-            chunk,
-            chunk_index,
-            io,
-            corrupt_chunk_policy,
-            buf
-        )
-    }
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CorruptSectionPolicy {
     #[default]
@@ -596,13 +570,23 @@ impl E01Reader {
             let beg_in_buf = offset - buf_beg;
             let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
 
-            let ch = read_chunk(
-                &self.chunks[chunk_index],
-                chunk_index,
-                &mut handle,
-                self.corrupt_chunk_policy,
-                buf
-            ).map_err(|e| e.with_path(&seg.path))?;
+            let ch = match chunk.compressed {
+                true => read_chunk_compressed(
+                    &self.chunks[chunk_index],
+                    chunk_index,
+                    &mut handle,
+                    self.corrupt_chunk_policy,
+                    buf
+                ),
+                false => read_chunk_uncompressed(
+                    &self.chunks[chunk_index],
+                    chunk_index,
+                    &mut handle,
+                    self.corrupt_chunk_policy,
+                    buf
+                )
+            }
+            .map_err(|e| e.with_path(&seg.path))?;
 
             buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
 
