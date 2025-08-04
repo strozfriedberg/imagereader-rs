@@ -494,7 +494,7 @@ impl E01Reader {
                     .map_err(|e| e.with_path(&seg.path))?;
 
                 let mut decoder = ZlibDecoder::new(&raw_data[..]);
-                let mut data = vec![];
+                let mut data = Vec::with_capacity(chunk_len - 4);
 
                 // compressed chunks are either ok or unrecoverable
                 if let Err(e) = decoder.read_to_end(&mut data) {
