@@ -224,10 +224,6 @@ fn read_chunk_uncompressed<R: Read + Seek>(
     buf: &mut [u8]
 ) -> Result<Vec<u8>, ReadError>
 {
-    io
-        .seek(SeekFrom::Start(chunk.data_offset))
-        .map_err(ReadErrorKind::IoError)?;
-
     let chunk_size = (chunk.end_offset - chunk.data_offset) as usize;
 
 // FIXME: allocating a new buffer for every read is not likely to be fast
@@ -278,10 +274,6 @@ fn read_chunk_compressed<R: Read + Seek>(
     buf: &mut [u8]
 ) -> Result<Vec<u8>, ReadError>
 {
-    io
-        .seek(SeekFrom::Start(chunk.data_offset))
-        .map_err(ReadErrorKind::IoError)?;
-
     let chunk_size = (chunk.end_offset - chunk.data_offset) as usize;
 
 // FIXME: allocating a new buffer for every read is not likely to be fast
@@ -560,6 +552,11 @@ impl E01Reader {
                 },
                 Some(h) => h
             };
+
+            // seek to the start of the chunk
+            handle
+                .seek(SeekFrom::Start(chunk.data_offset))
+                .map_err(ReadErrorKind::IoError)?;
 
             let chunk_beg = chunk_index * chunk_size;
             let chunk_end = std::cmp::min(chunk_beg + chunk_size, image_end);
