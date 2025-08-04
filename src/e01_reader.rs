@@ -216,36 +216,6 @@ fn read_segment<T: AsRef<Path>>(
     )
 }
 
-fn read_chunk_compressed(
-    raw_data: &[u8],
-    chunk_size: usize,
-    chunk_index: usize,
-    corrupt_chunk_policy: CorruptChunkPolicy,
-    buf: &mut [u8]
-) -> Result<Vec<u8>, ReadError>
-{
-    let mut decoder = ZlibDecoder::new(&raw_data[..]);
-    let mut data = vec![];
-
-    // compressed chunks are either ok or unrecoverable
-    if let Err(e) = decoder.read_to_end(&mut data) {
-        error!("decompression failed for chunk {}: {}", chunk_index, e);
-        match corrupt_chunk_policy {
-            CorruptChunkPolicy::Error => return Err(
-                ReadErrorKind::DecompressionFailed(chunk_index, e)
-            )?,
-            CorruptChunkPolicy::Zero |
-            CorruptChunkPolicy::RawIfPossible => {
-                // zero out corrupt chunk
-                data.resize(chunk_size - 4, 0);
-                data.fill(0);
-            }
-        }
-    }
-
-    Ok(data)
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CorruptSectionPolicy {
     #[default]
@@ -523,14 +493,28 @@ impl E01Reader {
                     .map_err(ReadError::from)
                     .map_err(|e| e.with_path(&seg.path))?;
 
-                let ch = read_chunk_compressed(
-                    &raw_data,
-                    chunk_len,
-                    chunk_index,
-                    self.corrupt_chunk_policy,
-                    buf
-                )
-                .map_err(|e| e.with_path(&seg.path))?;
+                let mut decoder = ZlibDecoder::new(&raw_data[..]);
+                let mut data = vec![];
+
+                // compressed chunks are either ok or unrecoverable
+                if let Err(e) = decoder.read_to_end(&mut data) {
+                    error!("decompression failed for chunk {}: {}", chunk_index, e);
+                    match self.corrupt_chunk_policy {
+                        CorruptChunkPolicy::Error => return Err(
+                            ReadErrorKind::DecompressionFailed(chunk_index, e)
+                        )
+                        .map_err(ReadError::from)
+                        .map_err(|e| e.with_path(&seg.path))?,
+                        CorruptChunkPolicy::Zero |
+                        CorruptChunkPolicy::RawIfPossible => {
+                            // zero out corrupt chunk
+                            data.resize(chunk_size - 4, 0);
+                            data.fill(0);
+                        }
+                    }
+                }
+
+                let ch = data;
 
                 buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
             }
