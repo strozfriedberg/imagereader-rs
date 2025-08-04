@@ -550,7 +550,7 @@ impl E01Reader {
             ).map_err(|e| e.with_path(&seg.path))?;
 
             let chunk_beg = chunk_index * self.chunk_size;
-            let chunk_end = chunk_beg + ch.len();
+            let chunk_end = std::cmp::min(chunk_beg + self.chunk_size, image_end);
 
             let beg_in_chunk = offset - chunk_beg;
             let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
