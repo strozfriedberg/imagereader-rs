@@ -216,22 +216,13 @@ fn read_segment<T: AsRef<Path>>(
     )
 }
 
-fn read_chunk_uncompressed<R: Read + Seek>(
-    chunk: &Chunk,
+fn read_chunk_uncompressed(
+    mut raw_data: Vec<u8>,
     chunk_index: usize,
-    io: &mut R,
     corrupt_chunk_policy: CorruptChunkPolicy,
     buf: &mut [u8]
 ) -> Result<Vec<u8>, ReadError>
 {
-    let chunk_size = (chunk.end_offset - chunk.data_offset) as usize;
-
-// FIXME: allocating a new buffer for every read is not likely to be fast
-    let mut raw_data = vec![0; chunk_size];
-
-    io.read_exact(&mut raw_data)
-        .map_err(ReadErrorKind::IoError)?;
-
     // read stored checksum
     let crc_stored = u32::from_le_bytes(
         raw_data[raw_data.len() - 4..]
@@ -266,22 +257,14 @@ fn read_chunk_uncompressed<R: Read + Seek>(
     Ok(raw_data)
 }
 
-fn read_chunk_compressed<R: Read + Seek>(
-    chunk: &Chunk,
+fn read_chunk_compressed(
+    raw_data: &[u8],
+    chunk_size: usize,
     chunk_index: usize,
-    io: &mut R,
     corrupt_chunk_policy: CorruptChunkPolicy,
     buf: &mut [u8]
 ) -> Result<Vec<u8>, ReadError>
 {
-    let chunk_size = (chunk.end_offset - chunk.data_offset) as usize;
-
-// FIXME: allocating a new buffer for every read is not likely to be fast
-    let mut raw_data = vec![0; chunk_size];
-
-    io.read_exact(&mut raw_data)
-        .map_err(ReadErrorKind::IoError)?;
-
     let mut decoder = ZlibDecoder::new(&raw_data[..]);
     let mut data = vec![];
 
@@ -558,6 +541,14 @@ impl E01Reader {
                 .seek(SeekFrom::Start(chunk.data_offset))
                 .map_err(ReadErrorKind::IoError)?;
 
+            let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
+
+// FIXME: allocating a new buffer for every read is not likely to be fast
+            let mut raw_data = vec![0; chunk_len];
+
+            handle.read_exact(&mut raw_data)
+                .map_err(ReadErrorKind::IoError)?;
+
             let chunk_beg = chunk_index * chunk_size;
             let chunk_end = std::cmp::min(chunk_beg + chunk_size, image_end);
 
@@ -569,16 +560,15 @@ impl E01Reader {
 
             let ch = match chunk.compressed {
                 true => read_chunk_compressed(
-                    &self.chunks[chunk_index],
+                    &raw_data,
+                    chunk_len,
                     chunk_index,
-                    &mut handle,
                     self.corrupt_chunk_policy,
                     buf
                 ),
                 false => read_chunk_uncompressed(
-                    &self.chunks[chunk_index],
+                    raw_data,
                     chunk_index,
-                    &mut handle,
                     self.corrupt_chunk_policy,
                     buf
                 )
