@@ -216,47 +216,6 @@ fn read_segment<T: AsRef<Path>>(
     )
 }
 
-fn read_chunk_uncompressed(
-    mut raw_data: Vec<u8>,
-    chunk_index: usize,
-    corrupt_chunk_policy: CorruptChunkPolicy,
-    buf: &mut [u8]
-) -> Result<Vec<u8>, ReadError>
-{
-    // read stored checksum
-    let crc_stored = u32::from_le_bytes(
-        raw_data[raw_data.len() - 4..]
-            .try_into()
-            .expect("slice of last 4 bytes not 4 bytes long, wtf")
-    );
-
-    // trim stored checksum from data
-    raw_data.truncate(raw_data.len() - 4);
-
-    // checksum the data
-    let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
-        .map_err(ReadErrorKind::IoError)?;
-
-    // deal with checksum mismatch
-    if crc != crc_stored {
-        error!("checksum mismatch reading chunk {}", chunk_index);
-        match corrupt_chunk_policy {
-            CorruptChunkPolicy::Error => return Err(
-                ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc)
-            )?,
-            CorruptChunkPolicy::Zero => {
-                // zero out corrupt chunk
-                raw_data.fill(0);
-            },
-            CorruptChunkPolicy::RawIfPossible => {
-                // let's gooooooooo!
-            }
-        }
-    }
-
-    Ok(raw_data)
-}
-
 fn read_chunk_compressed(
     raw_data: &[u8],
     chunk_size: usize,
@@ -586,13 +545,42 @@ impl E01Reader {
                     .map_err(ReadError::from)
                     .map_err(|e| e.with_path(&seg.path))?;
 
-                let ch = read_chunk_uncompressed(
-                    raw_data,
-                    chunk_index,
-                    self.corrupt_chunk_policy,
-                    buf
-                )
-                .map_err(|e| e.with_path(&seg.path))?;
+                // read stored checksum
+                let crc_stored = u32::from_le_bytes(
+                    raw_data[raw_data.len() - 4..]
+                        .try_into()
+                        .expect("slice of last 4 bytes not 4 bytes long, wtf")
+                );
+
+                // trim stored checksum from data
+                raw_data.truncate(raw_data.len() - 4);
+
+                // checksum the data
+                let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
+                    .map_err(ReadErrorKind::IoError)
+                    .map_err(ReadError::from)
+                    .map_err(|e| e.with_path(&seg.path))?;
+
+                // deal with checksum mismatch
+                if crc != crc_stored {
+                    error!("checksum mismatch reading chunk {}", chunk_index);
+                    match self.corrupt_chunk_policy {
+                        CorruptChunkPolicy::Error => return Err(
+                            ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc)
+                        )
+                        .map_err(ReadError::from)
+                        .map_err(|e| e.with_path(&seg.path))?,
+                        CorruptChunkPolicy::Zero => {
+                            // zero out corrupt chunk
+                            raw_data.fill(0);
+                        },
+                        CorruptChunkPolicy::RawIfPossible => {
+                            // let's gooooooooo!
+                        }
+                    }
+                }
+
+                let ch = &raw_data;
 
                 buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
             }
