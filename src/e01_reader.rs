@@ -503,21 +503,26 @@ impl E01Reader {
     pub fn read_at_offset(
         &mut self,
         mut offset: usize,
-        buf: &mut [u8]
+        mut buf: &mut [u8]
     ) -> Result<usize, ReadError>
     {
-        if offset > self.image_size {
-            return Err(ReadErrorKind::OffsetBeyondEnd(offset, self.image_size))?;
+        // don't start reading past the end
+        let image_end = self.image_size;
+        if offset > image_end {
+            return Err(ReadErrorKind::OffsetBeyondEnd(offset, image_end))?;
         }
 
-        let mut bytes_read = 0;
-        let mut remaining_buf = &mut buf[..];
+        // clamp the buffer to the end
+        if offset + buf.len() > image_end {
+            buf = &mut buf[..(image_end - offset)];
+        }
 
-        while !remaining_buf.is_empty() && offset < self.image_size {
-            let chunk_number = offset / self.chunk_size;
-            debug_assert!(chunk_number < self.chunk_count);
+        let buf_beg = offset;
+        let buf_end = offset + buf.len();
 
-            let chunk_index = chunk_number;
+        while offset < buf_end {
+            // get the next chunk
+            let chunk_index = offset / self.chunk_size;
             debug!("reading {chunk_index} / {}", self.chunk_count);
 
             let chunk = &self.chunks[chunk_index];
@@ -533,38 +538,32 @@ impl E01Reader {
                     seg.handle = Some(h);
                     seg.handle.as_ref().unwrap()
                 },
-                Some(h) => &h
+                Some(h) => h
             };
 
-            let mut data = read_chunk(
+            let ch = read_chunk(
                 &self.chunks[chunk_index],
                 chunk_index,
                 &mut handle,
                 self.corrupt_chunk_policy,
-                remaining_buf
+                buf
             ).map_err(|e| e.with_path(&seg.path))?;
 
-            if chunk_number * self.chunk_size + data.len() > self.image_size {
-                data.truncate(self.image_size - chunk_number * self.chunk_size);
-            }
+            let chunk_beg = chunk_index * self.chunk_size;
+            let chunk_end = chunk_beg + ch.len();
 
-            let data_offset = offset % self.chunk_size;
+            let beg_in_chunk = offset - chunk_beg;
+            let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
 
-            if buf.len() < bytes_read || data.len() < data_offset {
-                println!("todo");
-            }
+            let beg_in_buf = offset - buf_beg;
+            let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
 
-            let remaining_size = std::cmp::min(buf.len() - bytes_read, data.len() - data_offset);
-            remaining_buf = &mut buf[bytes_read..bytes_read + remaining_size];
-            remaining_buf.copy_from_slice(&data[data_offset..data_offset + remaining_size]);
+            buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
 
-            debug_assert!(offset + remaining_size <= self.image_size);
-
-            bytes_read += remaining_size;
-            offset += remaining_size;
+            offset += end_in_buf - beg_in_buf;
         }
 
-        Ok(bytes_read)
+        Ok(offset - buf_beg)
     }
 }
 
