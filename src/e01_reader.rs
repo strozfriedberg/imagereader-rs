@@ -541,13 +541,6 @@ impl E01Reader {
                 .seek(SeekFrom::Start(chunk.data_offset))
                 .map_err(ReadErrorKind::IoError)?;
 
-            let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
-
-// FIXME: allocating a new buffer for every read is not likely to be fast
-            let mut raw_data = vec![0; chunk_len];
-
-            handle.read_exact(&mut raw_data)
-                .map_err(ReadErrorKind::IoError)?;
 
             let chunk_beg = chunk_index * chunk_size;
             let chunk_end = std::cmp::min(chunk_beg + chunk_size, image_end);
@@ -558,24 +551,45 @@ impl E01Reader {
             let beg_in_buf = offset - buf_beg;
             let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
 
-            let ch = match chunk.compressed {
-                true => read_chunk_compressed(
+            if chunk.compressed {
+                let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
+
+// FIXME: allocating a new buffer for every read is not likely to be fast
+                let mut raw_data = vec![0; chunk_len];
+
+                handle.read_exact(&mut raw_data)
+                    .map_err(ReadErrorKind::IoError)?;
+
+                let ch = read_chunk_compressed(
                     &raw_data,
                     chunk_len,
                     chunk_index,
                     self.corrupt_chunk_policy,
                     buf
-                ),
-                false => read_chunk_uncompressed(
+                )
+                .map_err(|e| e.with_path(&seg.path))?;
+
+                buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
+            }
+            else {
+                let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
+
+// FIXME: allocating a new buffer for every read is not likely to be fast
+                let mut raw_data = vec![0; chunk_len];
+
+                handle.read_exact(&mut raw_data)
+                    .map_err(ReadErrorKind::IoError)?;
+
+                let ch = read_chunk_uncompressed(
                     raw_data,
                     chunk_index,
                     self.corrupt_chunk_policy,
                     buf
                 )
-            }
-            .map_err(|e| e.with_path(&seg.path))?;
+                .map_err(|e| e.with_path(&seg.path))?;
 
-            buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
+                buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
+            }
 
             offset += end_in_buf - beg_in_buf;
         }
