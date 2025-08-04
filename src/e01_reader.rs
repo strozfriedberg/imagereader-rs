@@ -520,9 +520,11 @@ impl E01Reader {
         let buf_beg = offset;
         let buf_end = offset + buf.len();
 
+        let chunk_size = self.chunk_size;
+
         while offset < buf_end {
             // get the next chunk
-            let chunk_index = offset / self.chunk_size;
+            let chunk_index = offset / chunk_size;
             debug!("reading {chunk_index} / {}", self.chunk_count);
 
             let chunk = &self.chunks[chunk_index];
@@ -541,6 +543,15 @@ impl E01Reader {
                 Some(h) => h
             };
 
+            let chunk_beg = chunk_index * chunk_size;
+            let chunk_end = std::cmp::min(chunk_beg + chunk_size, image_end);
+
+            let beg_in_chunk = offset - chunk_beg;
+            let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
+
+            let beg_in_buf = offset - buf_beg;
+            let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
+
             let ch = read_chunk(
                 &self.chunks[chunk_index],
                 chunk_index,
@@ -548,15 +559,6 @@ impl E01Reader {
                 self.corrupt_chunk_policy,
                 buf
             ).map_err(|e| e.with_path(&seg.path))?;
-
-            let chunk_beg = chunk_index * self.chunk_size;
-            let chunk_end = std::cmp::min(chunk_beg + self.chunk_size, image_end);
-
-            let beg_in_chunk = offset - chunk_beg;
-            let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
-
-            let beg_in_buf = offset - buf_beg;
-            let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
 
             buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
 
