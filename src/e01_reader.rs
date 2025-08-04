@@ -539,7 +539,9 @@ impl E01Reader {
             // seek to the start of the chunk
             handle
                 .seek(SeekFrom::Start(chunk.data_offset))
-                .map_err(ReadErrorKind::IoError)?;
+                .map_err(ReadErrorKind::IoError)
+                .map_err(ReadError::from)
+                .map_err(|e| e.with_path(&seg.path))?;
 
 
             let chunk_beg = chunk_index * chunk_size;
@@ -558,7 +560,9 @@ impl E01Reader {
                 let mut raw_data = vec![0; chunk_len];
 
                 handle.read_exact(&mut raw_data)
-                    .map_err(ReadErrorKind::IoError)?;
+                    .map_err(ReadErrorKind::IoError)
+                    .map_err(ReadError::from)
+                    .map_err(|e| e.with_path(&seg.path))?;
 
                 let ch = read_chunk_compressed(
                     &raw_data,
@@ -578,7 +582,9 @@ impl E01Reader {
                 let mut raw_data = vec![0; chunk_len];
 
                 handle.read_exact(&mut raw_data)
-                    .map_err(ReadErrorKind::IoError)?;
+                    .map_err(ReadErrorKind::IoError)
+                    .map_err(ReadError::from)
+                    .map_err(|e| e.with_path(&seg.path))?;
 
                 let ch = read_chunk_uncompressed(
                     raw_data,
