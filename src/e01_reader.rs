@@ -445,7 +445,19 @@ impl E01Reader {
 
         let chunk_size = self.chunk_size;
 
+// FIXME: allocating new buffers for every read is not likely to be fast
+        let mut scratch = vec![0; chunk_size + 4];
         let mut data = Vec::with_capacity(chunk_size);
+//        let mut decoder = ZlibDecoder::new(&[0; 0][..]);
+
+
+        let mut worker = ReadWorker {
+            chunk_size,
+            image_end,
+            corrupt_chunk_policy: self.corrupt_chunk_policy,
+            scratch: vec![0; chunk_size + 4],
+            data: Vec::with_capacity(chunk_size),
+        };
 
         while offset < buf_end {
             // get the next chunk
@@ -485,19 +497,18 @@ impl E01Reader {
             let beg_in_buf = offset - buf_beg;
             let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
 
+            let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
+
             if chunk.compressed {
-                let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
+                let raw_data = &mut scratch[..chunk_len];
 
-// FIXME: allocating a new buffer for every read is not likely to be fast
-                let mut raw_data = vec![0; chunk_len];
-
-                handle.read_exact(&mut raw_data)
+                handle.read_exact(raw_data)
                     .map_err(ReadErrorKind::IoError)
                     .map_err(ReadError::from)
                     .map_err(|e| e.with_path(&seg.path))?;
 
                 let mut decoder = ZlibDecoder::new(&raw_data[..]);
-
+//                decoder.reset(&raw_data[..]);
                 data.clear();
 
                 // compressed chunks are either ok or unrecoverable
@@ -518,17 +529,31 @@ impl E01Reader {
                     }
                 }
 
+                decoder.reset(&[0; 0][..]);
+
                 let ch = &data;
 
                 buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
             }
             else {
-                let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
 
-// FIXME: allocating a new buffer for every read is not likely to be fast
-                let mut raw_data = vec![0; chunk_len];
+                worker.read_uncompressed(
+                    &mut handle,
+                    chunk_index,
+                    chunk_len,
+                    buf,
+                    beg_in_buf,
+                    end_in_buf,
+                    beg_in_chunk,
+                    end_in_chunk
+                )
+                .map_err(ReadError::from)
+                .map_err(|e| e.with_path(&seg.path))?;
 
-                handle.read_exact(&mut raw_data)
+/*
+                let raw_data = &mut scratch[..chunk_len];
+
+                handle.read_exact(raw_data)
                     .map_err(ReadErrorKind::IoError)
                     .map_err(ReadError::from)
                     .map_err(|e| e.with_path(&seg.path))?;
@@ -541,7 +566,8 @@ impl E01Reader {
                 );
 
                 // trim stored checksum from data
-                raw_data.truncate(raw_data.len() - 4);
+                let raw_data_len = raw_data.len();
+                let raw_data = &mut raw_data[..raw_data_len - 4];
 
                 // checksum the data
                 let mut reader = Cursor::new(&raw_data);
@@ -572,12 +598,80 @@ impl E01Reader {
                 let ch = &raw_data;
 
                 buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
+*/
             }
 
             offset += end_in_buf - beg_in_buf;
         }
 
         Ok(offset - buf_beg)
+    }
+}
+
+struct ReadWorker {
+    chunk_size: usize,
+    image_end: usize,
+    corrupt_chunk_policy: CorruptChunkPolicy,
+    scratch: Vec<u8>,
+    data: Vec<u8>
+}
+
+impl ReadWorker {
+    fn read_uncompressed<R: Read>(
+        &mut self,
+        handle: &mut R,
+        chunk_index: usize,
+        chunk_len: usize,
+        buf: &mut [u8],
+        beg_in_buf: usize,
+        end_in_buf: usize,
+        beg_in_chunk: usize,
+        end_in_chunk: usize
+    ) -> Result<usize, ReadErrorKind>
+    {
+        let raw_data = &mut self.scratch[..chunk_len];
+
+        handle.read_exact(raw_data)
+            .map_err(ReadErrorKind::IoError)?;
+
+        // read stored checksum
+        let crc_stored = u32::from_le_bytes(
+            raw_data[raw_data.len() - 4..]
+                .try_into()
+                .expect("slice of last 4 bytes not 4 bytes long, wtf")
+        );
+
+        // trim stored checksum from data
+        let raw_data_len = raw_data.len();
+        let raw_data = &mut raw_data[..raw_data_len - 4];
+
+        // checksum the data
+        let mut reader = Cursor::new(&raw_data);
+        let crc = adler32(&mut reader)
+            .map_err(ReadErrorKind::IoError)?;
+
+        // deal with checksum mismatch
+        if crc != crc_stored {
+            error!("checksum mismatch reading chunk {}", chunk_index);
+            match self.corrupt_chunk_policy {
+                CorruptChunkPolicy::Error => return Err(
+                    ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc)
+                ),
+                CorruptChunkPolicy::Zero => {
+                    // zero out corrupt chunk
+                    raw_data.fill(0);
+                },
+                CorruptChunkPolicy::RawIfPossible => {
+                    // let's gooooooooo!
+                }
+            }
+        }
+
+        let ch = &raw_data;
+
+        buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
+
+        Ok(end_in_buf - beg_in_buf)
     }
 }
 
