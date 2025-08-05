@@ -512,7 +512,7 @@ impl E01Reader {
                         CorruptChunkPolicy::Zero |
                         CorruptChunkPolicy::RawIfPossible => {
                             // zero out corrupt chunk
-                            data.resize(chunk_size - 4, 0);
+                            data.resize(chunk_len - 4, 0);
                             data.fill(0);
                         }
                     }
