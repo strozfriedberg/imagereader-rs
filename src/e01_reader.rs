@@ -445,6 +445,8 @@ impl E01Reader {
 
         let chunk_size = self.chunk_size;
 
+        let mut data = Vec::with_capacity(chunk_size);
+
         while offset < buf_end {
             // get the next chunk
             let chunk_index = offset / chunk_size;
@@ -495,7 +497,8 @@ impl E01Reader {
                     .map_err(|e| e.with_path(&seg.path))?;
 
                 let mut decoder = ZlibDecoder::new(&raw_data[..]);
-                let mut data = Vec::with_capacity(chunk_len - 4);
+
+                data.clear();
 
                 // compressed chunks are either ok or unrecoverable
                 if let Err(e) = decoder.read_to_end(&mut data) {
@@ -515,7 +518,7 @@ impl E01Reader {
                     }
                 }
 
-                let ch = data;
+                let ch = &data;
 
                 buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
             }
