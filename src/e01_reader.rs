@@ -1,9 +1,10 @@
 use flate2::read::ZlibDecoder;
 use std::{
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
     path::{Path, PathBuf}
 };
+use simd_adler32::bufread::adler32;
 use tracing::{debug, debug_span, error, warn};
 
 extern crate kaitai;
@@ -540,7 +541,9 @@ impl E01Reader {
                 raw_data.truncate(raw_data.len() - 4);
 
                 // checksum the data
-                let crc = adler32::adler32(std::io::Cursor::new(&raw_data))
+                let mut reader = Cursor::new(&raw_data);
+                let mut reader = BufReader::new(reader);
+                let crc = adler32(&mut reader)
                     .map_err(ReadErrorKind::IoError)
                     .map_err(ReadError::from)
                     .map_err(|e| e.with_path(&seg.path))?;
