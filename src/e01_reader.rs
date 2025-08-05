@@ -1,7 +1,7 @@
 use flate2::read::ZlibDecoder;
 use std::{
     fs::File,
-    io::{BufReader, Cursor, Read, Seek, SeekFrom},
+    io::{Cursor, Read, Seek, SeekFrom},
     path::{Path, PathBuf}
 };
 use simd_adler32::read::adler32;
