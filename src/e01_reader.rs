@@ -4,7 +4,7 @@ use std::{
     io::{BufReader, Cursor, Read, Seek, SeekFrom},
     path::{Path, PathBuf}
 };
-use simd_adler32::bufread::adler32;
+use simd_adler32::read::adler32;
 use tracing::{debug, debug_span, error, warn};
 
 extern crate kaitai;
@@ -542,7 +542,6 @@ impl E01Reader {
 
                 // checksum the data
                 let mut reader = Cursor::new(&raw_data);
-                let mut reader = BufReader::new(reader);
                 let crc = adler32(&mut reader)
                     .map_err(ReadErrorKind::IoError)
                     .map_err(ReadError::from)
