@@ -461,67 +461,17 @@ impl E01Reader {
             let chunk = &self.chunks[chunk_index];
             let seg = &mut self.segments[chunk.segment];
 
-            // open the segment file if it's not already open
-            let mut handle = match &seg.handle {
-                None => {
-                    let h = File::open(&seg.path)
-                        .map_err(ReadErrorKind::IoError)
-                        .map_err(ReadError::from)
-                        .map_err(|e| e.with_path(&seg.path))?;
-                    seg.handle = Some(h);
-                    seg.handle.as_ref().unwrap()
-                },
-                Some(h) => h
-            };
-
-            // seek to the start of the chunk
-            handle
-                .seek(SeekFrom::Start(chunk.data_offset))
-                .map_err(ReadErrorKind::IoError)
-                .map_err(ReadError::from)
-                .map_err(|e| e.with_path(&seg.path))?;
-
-            // determine various offsets and indices
-            let chunk_beg = chunk_index * chunk_size;
-            let chunk_end = std::cmp::min(chunk_beg + chunk_size, image_end);
-
-            let beg_in_chunk = offset - chunk_beg;
-            let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
-
-            let beg_in_buf = offset - buf_beg;
-            let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
-
-            let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
-
-            // read the data into the buffer
-            if chunk.compressed {
-                self.worker.read_compressed(
-                    &mut handle,
-                    chunk_index,
-                    chunk_len,
-                    buf,
-                    beg_in_buf,
-                    end_in_buf,
-                    beg_in_chunk,
-                    end_in_chunk
-                )
-            }
-            else {
-                self.worker.read_uncompressed(
-                    &mut handle,
-                    chunk_index,
-                    chunk_len,
-                    buf,
-                    beg_in_buf,
-                    end_in_buf,
-                    beg_in_chunk,
-                    end_in_chunk
-                )
-            }
+            offset += self.worker.read(
+                offset,
+                buf_beg,
+                buf_end,
+                chunk,
+                seg,
+                chunk_index,
+                buf
+            )
             .map_err(ReadError::from)
             .map_err(|e| e.with_path(&seg.path))?;
-
-            offset += end_in_buf - beg_in_buf;
         }
 
         Ok(offset - buf_beg)
@@ -723,6 +673,75 @@ impl ReadWorker {
         buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
 
         Ok(end_in_buf - beg_in_buf)
+    }
+
+    fn read(
+        &mut self,
+        offset: usize,
+        buf_beg: usize,
+        buf_end: usize,
+        chunk: &Chunk,
+        seg: &mut Segment,
+        chunk_index: usize,
+        buf: &mut [u8]
+    ) -> Result<usize, ReadErrorKind>
+    {
+        // open the segment file if it's not already open
+        let mut handle = match &seg.handle {
+            None => {
+                let h = File::open(&seg.path)
+                    .map_err(ReadErrorKind::IoError)?;
+                seg.handle = Some(h);
+                seg.handle.as_ref().unwrap()
+            },
+            Some(h) => h
+        };
+
+        // seek to the start of the chunk
+        handle
+            .seek(SeekFrom::Start(chunk.data_offset))
+            .map_err(ReadErrorKind::IoError)?;
+
+        // determine various offsets and indices
+        let chunk_beg = chunk_index * self.chunk_size;
+        let chunk_end = std::cmp::min(
+            chunk_beg + self.chunk_size,
+            self.image_end
+        );
+
+        let beg_in_chunk = offset - chunk_beg;
+        let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
+
+        let beg_in_buf = offset - buf_beg;
+        let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
+
+        let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
+
+        // read the data into the buffer
+        if chunk.compressed {
+            self.read_compressed(
+                &mut handle,
+                chunk_index,
+                chunk_len,
+                buf,
+                beg_in_buf,
+                end_in_buf,
+                beg_in_chunk,
+                end_in_chunk
+            )
+        }
+        else {
+            self.read_uncompressed(
+                &mut handle,
+                chunk_index,
+                chunk_len,
+                buf,
+                beg_in_buf,
+                end_in_buf,
+                beg_in_chunk,
+                end_in_chunk
+            )
+        }
     }
 }
 
