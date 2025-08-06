@@ -321,16 +321,10 @@ impl E01Reader {
 
             debug!("reading sections {}", sp.display());
 
-            let SegmentComponents {
-                volume: seg_volume,
-                md5: seg_stored_md5,
-                sha1: seg_stored_sha1,
-                chunks: seg_chunks,
-                done: seg_done
-            } = read_segment(sp, segments.len(), &io, ignore_checksums)?;
+            let seg = read_segment(sp, segments.len(), &io, ignore_checksums)?;
 
             // take the volume section if it's the first one
-            match (seg_volume, &volume) {
+            match (seg.volume, &volume) {
                 // we have no volume section, and saw one
                 (Some(sv), None) => {
                     // we can size the chunks vec now
@@ -351,7 +345,7 @@ impl E01Reader {
             }
 
             // take the stored MD5 if it's the first one
-            match (seg_stored_md5, &stored_md5) {
+            match (seg.md5, &stored_md5) {
                 (Some(h), None) => stored_md5 = Some(h),
                 (Some(new), Some(old)) if new != *old =>
                     warn!("duplicate stored MD5s disagree"),
@@ -359,7 +353,7 @@ impl E01Reader {
             }
 
             // take the stored SHA1 if it's the first one
-            match (seg_stored_sha1, &stored_sha1) {
+            match (seg.sha1, &stored_sha1) {
                 (Some(h), None) => stored_sha1 = Some(h),
                 (Some(new), Some(old)) if new != *old =>
                     warn!("duplicate stored SHA1s disagree"),
@@ -367,7 +361,7 @@ impl E01Reader {
             }
 
             // record the chunks
-            chunks.extend(seg_chunks);
+            chunks.extend(seg.chunks);
 
             // record the segment
             segments.push(Segment {
@@ -377,7 +371,7 @@ impl E01Reader {
 
             segment_paths.push(sp.into());
 
-            if seg_done {
+            if seg.done {
                 done = true;
                 break;
             }
