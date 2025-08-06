@@ -408,7 +408,9 @@ impl E01Reader {
                 // we have no volume section, and saw one
                 (Some(sv), None) => {
                     // we can size the chunks vec now
-                    chunks.reserve_exact(sv.chunk_count as usize - chunks.len());
+                    let unread_chunks = (sv.chunk_count as usize)
+                        .saturating_sub(chunks.len());
+                    chunks.reserve_exact(unread_chunks);
                     volume = Some(sv);
                 },
                 // we have a volume section, and didn't see a new one
