@@ -181,10 +181,12 @@ fn read_segment<T: AsRef<Path>>(
         {
             Section::Volume(v) => volume = Some(v),
             Section::Table(t) => {
-                chunks.extend(t);
-                // set the end of the last chunk in the table
-                let chunks_len = chunks.len();
-                chunks[chunks_len - 1].end_offset = end_of_sectors;
+                if !t.is_empty() {
+                    chunks.extend(t);
+                    // set the end of the last chunk in the table
+                    let chunks_len = chunks.len();
+                    chunks[chunks_len - 1].end_offset = end_of_sectors;
+                }
             },
             Section::Sectors(eos) => end_of_sectors = eos,
             Section::Hash(h) => md5 = Some(h.md5().clone()),
