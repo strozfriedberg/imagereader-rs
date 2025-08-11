@@ -655,10 +655,10 @@ impl ReadWorker {
         );
 
         // trim stored checksum from data
-        let raw_data = &mut raw_data[..raw_data_len - 4];
+        let out = &mut raw_data[..raw_data_len - 4];
 
         // checksum the data
-        let mut reader = Cursor::new(&raw_data);
+        let mut reader = Cursor::new(&out);
         let crc = adler32(&mut reader)
             .map_err(ReadErrorKind::IoError)?;
 
@@ -671,7 +671,7 @@ impl ReadWorker {
                 ),
                 CorruptChunkPolicy::Zero => {
                     // zero out corrupt chunk
-                    raw_data.fill(0);
+                    out.fill(0);
                 },
                 CorruptChunkPolicy::RawIfPossible => {
                     // let's gooooooooo!
@@ -679,9 +679,7 @@ impl ReadWorker {
             }
         }
 
-        let ch = &raw_data;
-
-        buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
+        buf[beg_in_buf..end_in_buf].copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
 
         Ok(end_in_buf - beg_in_buf)
     }
