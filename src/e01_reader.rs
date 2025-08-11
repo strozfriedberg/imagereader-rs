@@ -523,24 +523,20 @@ impl ReadWorker {
         chunk_index: usize,
         chunk_len: usize,
         buf: &mut [u8],
-        beg_in_buf: usize,
-        end_in_buf: usize,
         beg_in_chunk: usize,
         end_in_chunk: usize
     ) -> Result<usize, ReadErrorKind>
     {
-        let out_len = end_in_buf - beg_in_buf;
-
         // Every chunk contains the same amount of data except for the last
         // one; decompress directly into the buffer if there is sufficient
         // space.
 
-        let (mut out, use_scratch) = if out_len == self.chunk_size ||
-            (out_len < self.chunk_size &&
+        let (mut out, use_scratch) = if buf.len() == self.chunk_size ||
+            (buf.len() < self.chunk_size &&
             chunk_index * self.chunk_size > self.image_end)
         {
             // decompress directly into output buffer
-            (&mut buf[beg_in_buf..end_in_buf], false)
+            (&mut buf[..], false)
         }
         else {
             // decompress into scratch buffer
@@ -565,10 +561,10 @@ impl ReadWorker {
         // copy requested portion of scratch into user buffer
         if use_scratch {
             let out = &self.scratch[..];
-            buf[beg_in_buf..end_in_buf].copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
+            buf.copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
         }
 
-        Ok(out_len)
+        Ok(buf.len())
     }
 
     fn read_compressed<R: Read>(
@@ -577,8 +573,6 @@ impl ReadWorker {
         chunk_index: usize,
         chunk_len: usize,
         buf: &mut [u8],
-        beg_in_buf: usize,
-        end_in_buf: usize,
         beg_in_chunk: usize,
         end_in_chunk: usize
     ) -> Result<usize, ReadErrorKind>
@@ -588,8 +582,6 @@ impl ReadWorker {
             chunk_index,
             chunk_len,
             buf,
-            beg_in_buf,
-            end_in_buf,
             beg_in_chunk,
             end_in_chunk
         )
@@ -601,8 +593,6 @@ impl ReadWorker {
         chunk_index: usize,
         chunk_len: usize,
         buf: &mut [u8],
-        beg_in_buf: usize,
-        end_in_buf: usize,
         beg_in_chunk: usize,
         end_in_chunk: usize
     ) -> Result<usize, ReadErrorKind>
@@ -617,8 +607,6 @@ impl ReadWorker {
             handle,
             chunk_index,
             buf,
-            beg_in_buf,
-            end_in_buf,
             beg_in_chunk,
             end_in_chunk,
             raw_data
@@ -635,8 +623,6 @@ impl ReadWorker {
         handle: &mut R,
         chunk_index: usize,
         buf: &mut [u8],
-        beg_in_buf: usize,
-        end_in_buf: usize,
         beg_in_chunk: usize,
         end_in_chunk: usize,
         raw_data: &mut [u8]
@@ -679,9 +665,9 @@ impl ReadWorker {
             }
         }
 
-        buf[beg_in_buf..end_in_buf].copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
+        buf.copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
 
-        Ok(end_in_buf - beg_in_buf)
+        Ok(buf.len())
     }
 
     fn read(
@@ -732,9 +718,7 @@ impl ReadWorker {
                 &mut handle,
                 chunk_index,
                 chunk_len,
-                buf,
-                beg_in_buf,
-                end_in_buf,
+                &mut buf[beg_in_buf..end_in_buf],
                 beg_in_chunk,
                 end_in_chunk
             )
@@ -744,9 +728,7 @@ impl ReadWorker {
                 &mut handle,
                 chunk_index,
                 chunk_len,
-                buf,
-                beg_in_buf,
-                end_in_buf,
+                &mut buf[beg_in_buf..end_in_buf],
                 beg_in_chunk,
                 end_in_chunk
             )
