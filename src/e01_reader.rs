@@ -564,7 +564,7 @@ impl ReadWorker {
 
         // copy requested portion of scratch into user buffer
         if use_scratch {
-            let out = &self.scratch;
+            let out = &self.scratch[..];
             buf[beg_in_buf..end_in_buf].copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
         }
 
