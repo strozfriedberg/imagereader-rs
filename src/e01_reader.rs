@@ -477,7 +477,7 @@ struct ReadWorker {
     chunk_size: usize,
     image_end: usize,
     corrupt_chunk_policy: CorruptChunkPolicy,
-    data: Vec<u8>,
+    scratch: Vec<u8>,
     decoder: ZlibDecoder<Cursor<Vec<u8>>>
 }
 
@@ -492,7 +492,7 @@ impl ReadWorker {
             chunk_size,
             image_end,
             corrupt_chunk_policy,
-            data: Vec::with_capacity(chunk_size),
+            scratch: vec![0; chunk_size],
             decoder: ZlibDecoder::new(Cursor::new(vec![0; chunk_size + 4]))
         }
     }
@@ -529,10 +529,26 @@ impl ReadWorker {
         end_in_chunk: usize
     ) -> Result<usize, ReadErrorKind>
     {
-        self.data.clear();
+        let out_len = end_in_buf - beg_in_buf;
+
+        // Every chunk contains the same amount of data except for the last
+        // one; decompress directly into the buffer if there is sufficient
+        // space.
+
+        let (mut out, use_scratch) = if out_len == self.chunk_size ||
+            (out_len < self.chunk_size &&
+            chunk_index * self.chunk_size > self.image_end)
+        {
+            // decompress directly into output buffer
+            (&mut buf[beg_in_buf..end_in_buf], false)
+        }
+        else {
+            // decompress into scratch buffer
+            (&mut self.scratch[..], true)
+        };
 
         // compressed chunks are either ok or unrecoverable
-        if let Err(e) = self.decoder.read_to_end(&mut self.data) {
+        if let Err(e) = self.decoder.read_exact(&mut out) {
             error!("decompression failed for chunk {}: {}", chunk_index, e);
             match self.corrupt_chunk_policy {
                 CorruptChunkPolicy::Error => return Err(
@@ -541,17 +557,18 @@ impl ReadWorker {
                 CorruptChunkPolicy::Zero |
                 CorruptChunkPolicy::RawIfPossible => {
                     // zero out corrupt chunk
-                    self.data.resize(chunk_len - 4, 0);
-                    self.data.fill(0);
+                    out.fill(0);
                 }
             }
         }
 
-        let ch = &self.data;
+        // copy requested portion of scratch into user buffer
+        if use_scratch {
+            let out = &self.scratch;
+            buf[beg_in_buf..end_in_buf].copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
+        }
 
-        buf[beg_in_buf..end_in_buf].copy_from_slice(&ch[beg_in_chunk..end_in_chunk]);
-
-        Ok(end_in_buf - beg_in_buf)
+        Ok(out_len)
     }
 
     fn read_compressed<R: Read>(
