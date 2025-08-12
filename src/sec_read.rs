@@ -13,9 +13,10 @@ use kaitai::{BytesReader, KStream, KStruct, OptRc};
 
 #[derive(Debug)]
 pub struct Chunk {
+    pub segment: usize,
     pub data_offset: u64,
-    pub compressed: bool,
-    pub end_offset: Option<u64>
+    pub end_offset: u64,
+    pub compressed: bool
 }
 
 #[derive(Debug)]
@@ -64,7 +65,7 @@ fn read_section(
         .map_err(|e| LibError::DeserializationFailed("EwfFileHeaderV1", e))?;
 
     let section_size = if *sd.size() > 0x4c {
-        /* header size */
+        // header size
         *sd.size() - 0x4c
     }
     else {
@@ -130,6 +131,23 @@ fn get_digest_section(
     Ok(digest_section.clone())
 }
 
+fn read_table_entry(
+    io: &BytesReader,
+    table_offset: u64
+) -> Result<Chunk, LibError>
+{
+    let entry = io.read_u4le().map_err(IoError::ReadError)?;
+
+    Ok(
+        Chunk {
+            segment: 0,
+            data_offset: table_offset + ((entry & 0x7fffffff) as u64),
+            end_offset: 0,
+            compressed: (entry & 0x80000000) > 0
+        }
+    )
+}
+
 pub fn read_table(
     io: &BytesReader,
     _size: u64,
@@ -147,18 +165,22 @@ pub fn read_table(
         )?;
     }
 
+    let entry_count = *table_section.entry_count() as usize;
+    if entry_count == 0 {
+        // weird, but possible?
+        return Ok(vec![]);
+    }
+
     let io_offsets = Clone::clone(io);
-    let mut data_offset: u64;
-    let mut chunks = vec![];
-    for _ in 0..*table_section.entry_count() {
-        let entry = io.read_u4le().map_err(IoError::ReadError)?;
-        data_offset = (entry & 0x7fffffff) as u64;
-        data_offset += *table_section.table_base_offset();
-        chunks.push(Chunk {
-            data_offset,
-            compressed: (entry & 0x80000000) > 0,
-            end_offset: None,
-        });
+    let table_offset = *table_section.table_base_offset();
+    let mut chunks: Vec<Chunk> = Vec::with_capacity(entry_count);
+
+    chunks.push(read_table_entry(io, table_offset)?);
+
+    for i in 1..entry_count {
+        let ch = read_table_entry(io, table_offset)?;
+        chunks[i - 1].end_offset = ch.data_offset;
+        chunks.push(ch);
     }
 
     if !ignore_checksums {
