@@ -17,9 +17,9 @@ name = "e01verify"
 path = "src/main.rs"
 
 [dependencies]
-kaitai = { git = "https://github.com/Agile86/kaitai_rust.git", branch = "rust_basic_support_v2" }
 flate2 = "^1"
 byteorder = "^1.5"
+kaitai = { git = "https://github.com/kaitai-io/kaitai_struct_rust_runtime.git", branch = "master" }
 sha1 = "^0.10"
 sha2 = "^0.10"
 md-5 = "^0.10"
