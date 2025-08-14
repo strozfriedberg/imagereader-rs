@@ -47,7 +47,7 @@ impl KStruct for EwfSectionDescriptorV1 {
         let _rrc = self_rc._root.get_value().borrow().upgrade();
         let _prc = self_rc._parent.get_value().borrow().upgrade();
         let _r = _rrc.as_ref().unwrap();
-        *self_rc.type_string.borrow_mut() = decode_string(&_io.read_bytes(16 as usize)?.into(), &"ASCII")?;
+        *self_rc.type_string.borrow_mut() = bytes_to_str(&_io.read_bytes(16 as usize)?.into(), &"ASCII")?;
         *self_rc.next_offset.borrow_mut() = _io.read_u8le()?.into();
         *self_rc.size.borrow_mut() = _io.read_u8le()?.into();
         *self_rc.padding.borrow_mut() = _io.read_bytes(40 as usize)?.into();

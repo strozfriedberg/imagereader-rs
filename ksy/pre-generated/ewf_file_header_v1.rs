@@ -49,12 +49,12 @@ impl KStruct for EwfFileHeaderV1 {
         *self_rc.signature.borrow_mut() = _io.read_bytes(8 as usize)?.into();
         *self_rc.fields_start.borrow_mut() = _io.read_bytes(1 as usize)?.into();
         if !(*self_rc.fields_start() == vec![0x1u8]) {
-            return Err(KError::ValidationNotEqual(r#"vec![0x1u8], *self_rc.fields_start(), _io, "/seq/1""#.to_string()));
+            return Err(KError::ValidationFailed(ValidationFailedError { kind: ValidationKind::NotEqual, src_path: r#"vec![0x1u8], *self_rc.fields_start(), _io, "/seq/1""#.to_string()}));
         }
         *self_rc.segment_number.borrow_mut() = _io.read_u2le()?.into();
         *self_rc.fields_end.borrow_mut() = _io.read_bytes(2 as usize)?.into();
         if !(*self_rc.fields_end() == vec![0x0u8, 0x0u8]) {
-            return Err(KError::ValidationNotEqual(r#"vec![0x0u8, 0x0u8], *self_rc.fields_end(), _io, "/seq/3""#.to_string()));
+            return Err(KError::ValidationFailed(ValidationFailedError { kind: ValidationKind::NotEqual, src_path: r#"vec![0x0u8, 0x0u8], *self_rc.fields_end(), _io, "/seq/3""#.to_string()}));
         }
         Ok(())
     }

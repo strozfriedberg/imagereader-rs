@@ -86,12 +86,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
-name = "bytes"
-version = "1.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
-
-[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -339,14 +333,11 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 [[package]]
 name = "kaitai"
 version = "0.2.0"
-source = "git+https://github.com/Agile86/kaitai_rust.git?branch=rust_basic_support_v2#a47ab476efd7bbbd0abea95626901b5657b8c11d"
+source = "git+https://github.com/kaitai-io/kaitai_struct_rust_runtime.git?branch=master#459b0f8e6b06f66c582dcbe953d9b683ba9cd9fd"
 dependencies = [
- "byteorder",
- "bytes",
  "cp437",
  "encoding-next",
  "flate2",
- "once_cell",
  "unicode-segmentation",
 ]
 
