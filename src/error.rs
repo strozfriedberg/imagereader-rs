@@ -23,5 +23,5 @@ pub enum LibError {
     #[error("Unknown compression method value: {0}")]
     UnknownCompressionMethod(u16),
     #[error("Invalid segment file header")]
-    InvalidSegmentFileHeader,
+    InvalidSegmentFileHeader
 }
