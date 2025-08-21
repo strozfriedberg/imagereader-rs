@@ -105,6 +105,10 @@ fn fill_handle(
     }
 }
 
+fn c_str_to_osstr(p: *const c_char) -> &'static OsStr {
+    OsStr::from_bytes(unsafe { CStr::from_ptr(p) }.to_bytes())
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn e01_open(
     segment_paths: *const *const c_char,
@@ -115,7 +119,7 @@ pub extern "C" fn e01_open(
 {
     let sl = unsafe { slice::from_raw_parts(segment_paths, segment_paths_len) };
     let segment_paths = sl.iter()
-        .map(|p| OsStr::from_bytes(unsafe { CStr::from_ptr(*p) }.to_bytes()))
+        .map(|p| c_str_to_osstr(*p))
         .collect::<Vec<_>>();
 
     let options = unsafe { (*options).into() };
@@ -129,17 +133,7 @@ pub extern "C" fn e01_open_glob(
     err: *mut *mut E01Error
 ) -> *mut E01Reader
 {
-    let example_segment_path = match unsafe {
-        CStr::from_ptr(example_segment_path)
-    }.to_str()
-    {
-        Ok(p) => p,
-        Err(e) => {
-            fill_error(e, err);
-            return std::ptr::null_mut();
-        }
-    };
-
+    let example_segment_path = c_str_to_osstr(example_segment_path);
     let options = unsafe { (*options).into() };
     fill_handle(
         e01_reader::E01Reader::open_glob(example_segment_path, &options),
