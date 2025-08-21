@@ -501,7 +501,6 @@ impl E01Reader {
         let mut bytes_read = 0;
         let mut remaining_buf = &mut buf[..];
 
-
         while !remaining_buf.is_empty() && offset < total_size {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
