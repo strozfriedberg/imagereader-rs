@@ -7,7 +7,6 @@
 #include <memory>
 
 int main(int argc, char** argv) {
-
   const E01ReaderOptions opts{
     CorruptSectionPolicy_ERROR,
     CorruptChunkPolicy_ERROR
