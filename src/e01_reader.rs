@@ -557,6 +557,18 @@ impl E01Reader {
     pub fn get_stored_sha1(&self) -> Option<&[u8]> {
         self.stored_sha1.as_deref()
     }
+
+    pub fn segment_paths(&self) -> impl Iterator<Item = &PathBuf> {
+        self.segments.iter().map(|s| &s.path)
+    }
+
+    pub fn segment_count(&self) -> usize {
+        self.segments.len()
+    }
+
+    pub fn segment_path(&self, index: usize) -> Option<&Path> {
+        self.segments.get(index).map(|s| &s.path).map(|p| &**p)
+    }
 }
 
 #[cfg(test)]

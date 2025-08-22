@@ -192,3 +192,23 @@ pub extern "C" fn e01_stored_sha1(reader: *const E01Reader) -> *const u8 {
         None => std::ptr::null()
     }
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn e01_segment_count(
+    reader: *const E01Reader
+) -> usize
+{
+    unsafe { &*reader }.reader.segment_count()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn e01_segment_path(
+    reader: *const E01Reader,
+    usize: index
+) -> *const c_char
+{
+    match unsafe { &*reader }.reader.segment_path(index) {
+        Some(p) => p.as_os_str().as_bytes().as_ptr() as *const c_char,
+        None => std::ptr::null()
+    }
+}
