@@ -262,7 +262,7 @@ fn read_chunk(
             match corrupt_chunk_policy {
                 CorruptChunkPolicy::Error => return Err(
                     LibError::BadChecksum(
-                        format!("Chunk {}", chunk_index),
+                        format!("Chunk {chunk_index}"),
                         crc,
                         crc_stored
                     )
