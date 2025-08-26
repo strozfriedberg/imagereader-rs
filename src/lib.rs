@@ -1,4 +1,5 @@
 pub mod e01_reader;
+mod c_api;
 mod error;
 mod generated;
 pub mod hasher;

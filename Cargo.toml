@@ -11,6 +11,7 @@ lto = true
 [lib]
 name = "e01"
 path = "src/lib.rs"
+crate-type = ["cdylib", "lib"]
 
 [[bin]]
 name = "e01verify"
