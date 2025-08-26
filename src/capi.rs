@@ -205,7 +205,7 @@ pub extern "C" fn e01_segment_count(
 #[unsafe(no_mangle)]
 pub extern "C" fn e01_segment_path(
     reader: *const E01Reader,
-    usize: index
+    index: usize
 ) -> *const c_char
 {
     match unsafe { &*reader }.reader.segment_path(index) {
