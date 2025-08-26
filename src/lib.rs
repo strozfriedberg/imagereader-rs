@@ -17,7 +17,6 @@ mod test {
         hasher::{HashType, MultiHasher}
     };
 
-    use hex;
     use rand::Rng;
     use std::collections::HashMap;
 
