@@ -6,3 +6,4 @@ if [[ "$Linkage" == 'static' || ( "$Target" != 'linux' && "$Target" != 'windows_
   exit
 fi
 
+cargo cinstall --prefix="$INSTALL" --libdir=lib
