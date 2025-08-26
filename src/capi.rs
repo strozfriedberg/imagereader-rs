@@ -81,7 +81,6 @@ impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
     }
 }
 
-#[repr(C)]
 pub struct E01Reader {
     reader: e01_reader::E01Reader
 }
