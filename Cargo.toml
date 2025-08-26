@@ -11,11 +11,13 @@ lto = true
 [lib]
 name = "e01"
 path = "src/lib.rs"
-crate-type = ["cdylib", "lib"]
 
 [[bin]]
 name = "e01verify"
 path = "src/main.rs"
+
+[features]
+capi = []
 
 [dependencies]
 flate2 = "^1"

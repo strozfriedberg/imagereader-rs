@@ -1,3 +1,5 @@
+#[cfg(feature="capi")]
+
 use std::{
     ffi::{
         CStr,

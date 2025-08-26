@@ -1,5 +1,8 @@
 pub mod e01_reader;
-mod c_api;
+
+#[cfg(feature = "capi")]
+pub mod capi;
+
 mod error;
 mod generated;
 pub mod hasher;
