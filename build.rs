@@ -76,7 +76,7 @@ fn main() {
         .args(&ksy_files)
         .output()
         .expect("failed to execute process");
-    eprintln!("{:?}", cmd);
+    eprintln!("{cmd:?}");
     let errors = output.stderr;
     if !errors.is_empty() {
         let messages = str::from_utf8(&errors).unwrap();
