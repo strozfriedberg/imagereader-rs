@@ -17,7 +17,7 @@ pub struct E01Error {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_free_error(err: *mut E01Error) {
+pub unsafe extern "C" fn e01_free_error(err: *mut E01Error) {
     if !err.is_null() {
         unsafe {
             if !(*err).message.is_null() {
@@ -109,7 +109,7 @@ fn c_str_to_osstr(p: *const c_char) -> &'static OsStr {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_open(
+pub unsafe extern "C" fn e01_open(
     segment_paths: *const *const c_char,
     segment_paths_len: usize,
     options: *const E01ReaderOptions,
@@ -126,7 +126,7 @@ pub extern "C" fn e01_open(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_open_glob(
+pub unsafe extern "C" fn e01_open_glob(
     example_segment_path: *const c_char,
     options: *const E01ReaderOptions,
     err: *mut *mut E01Error
@@ -141,14 +141,14 @@ pub extern "C" fn e01_open_glob(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_close(reader: *mut E01Reader) {
+pub unsafe extern "C" fn e01_close(reader: *mut E01Reader) {
     if !reader.is_null() {
         drop(unsafe { Box::from_raw(reader) });
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_read(
+pub unsafe extern "C" fn e01_read(
     reader: *mut E01Reader,
     offset: usize,
     buf: *mut c_char,
@@ -167,17 +167,17 @@ pub extern "C" fn e01_read(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_chunk_size(reader: *const E01Reader) -> usize {
+pub unsafe extern "C" fn e01_chunk_size(reader: *const E01Reader) -> usize {
     unsafe { &*reader }.reader.chunk_size()
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_total_size(reader: *const E01Reader) -> usize {
+pub unsafe extern "C" fn e01_total_size(reader: *const E01Reader) -> usize {
     unsafe { &*reader }.reader.total_size()
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_stored_md5(reader: *const E01Reader) -> *const u8 {
+pub unsafe extern "C" fn e01_stored_md5(reader: *const E01Reader) -> *const u8 {
     match unsafe { &*reader }.reader.get_stored_md5() {
         Some(h) => h.as_ptr(),
         None => std::ptr::null()
@@ -185,7 +185,10 @@ pub extern "C" fn e01_stored_md5(reader: *const E01Reader) -> *const u8 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_stored_sha1(reader: *const E01Reader) -> *const u8 {
+pub unsafe extern "C" fn e01_stored_sha1(
+    reader: *const E01Reader
+) -> *const u8
+{
     match unsafe { &*reader }.reader.get_stored_sha1() {
         Some(h) => h.as_ptr(),
         None => std::ptr::null()
@@ -193,7 +196,7 @@ pub extern "C" fn e01_stored_sha1(reader: *const E01Reader) -> *const u8 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_segment_count(
+pub unsafe extern "C" fn e01_segment_count(
     reader: *const E01Reader
 ) -> usize
 {
@@ -201,7 +204,7 @@ pub extern "C" fn e01_segment_count(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn e01_segment_path(
+pub unsafe extern "C" fn e01_segment_path(
     reader: *const E01Reader,
     index: usize
 ) -> *const c_char
