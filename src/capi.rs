@@ -9,7 +9,10 @@ use std::{
     slice
 };
 
-use crate::e01_reader;
+use crate::e01_reader::{
+    self,
+    E01Reader
+};
 
 #[repr(C)]
 pub struct E01Error {
@@ -79,29 +82,11 @@ impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
     }
 }
 
-pub struct E01Reader {
-    reader: e01_reader::E01Reader
-}
-
 fn fill_error<E: ToString>(e: E, err: *mut *mut E01Error) {
     let message = CString::new(e.to_string())
         .expect("impossible")
         .into_raw();
     unsafe { *err = Box::into_raw(Box::new(E01Error { message })); }
-}
-
-fn fill_handle(
-    r: Result<e01_reader::E01Reader, e01_reader::OpenError>,
-    err: *mut *mut E01Error
-) -> *mut E01Reader
-{
-    match r {
-        Ok(reader) => Box::into_raw(Box::new(E01Reader { reader })),
-        Err(e) => {
-            fill_error(e, err);
-            std::ptr::null_mut()
-        }
-    }
 }
 
 fn c_str_to_osstr(p: *const c_char) -> &'static OsStr {
@@ -122,7 +107,14 @@ pub unsafe extern "C" fn e01_open(
         .collect::<Vec<_>>();
 
     let options = unsafe { (*options).into() };
-    fill_handle(e01_reader::E01Reader::open(segment_paths, &options), err)
+
+    match E01Reader::open(segment_paths, &options) {
+        Ok(reader) => Box::into_raw(Box::new(reader)),
+        Err(e) => {
+            fill_error(e, err);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -134,10 +126,14 @@ pub unsafe extern "C" fn e01_open_glob(
 {
     let example_segment_path = c_str_to_osstr(example_segment_path);
     let options = unsafe { (*options).into() };
-    fill_handle(
-        e01_reader::E01Reader::open_glob(example_segment_path, &options),
-        err
-    )
+
+    match E01Reader::open_glob(example_segment_path, &options) {
+        Ok(reader) => Box::into_raw(Box::new(reader)),
+        Err(e) => {
+            fill_error(e, err);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -157,7 +153,7 @@ pub unsafe extern "C" fn e01_read(
 ) -> usize
 {
     let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-    match unsafe { &*reader }.reader.read_at_offset(offset, buf) {
+    match unsafe { &*reader }.read_at_offset(offset, buf) {
         Ok(count) => count,
         Err(e) => {
             fill_error(e, err);
@@ -168,17 +164,17 @@ pub unsafe extern "C" fn e01_read(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_chunk_size(reader: *const E01Reader) -> usize {
-    unsafe { &*reader }.reader.chunk_size()
+    unsafe { &*reader }.chunk_size()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_total_size(reader: *const E01Reader) -> usize {
-    unsafe { &*reader }.reader.total_size()
+    unsafe { &*reader }.total_size()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_stored_md5(reader: *const E01Reader) -> *const u8 {
-    match unsafe { &*reader }.reader.get_stored_md5() {
+    match unsafe { &*reader }.get_stored_md5() {
         Some(h) => h.as_ptr(),
         None => std::ptr::null()
     }
@@ -189,7 +185,7 @@ pub unsafe extern "C" fn e01_stored_sha1(
     reader: *const E01Reader
 ) -> *const u8
 {
-    match unsafe { &*reader }.reader.get_stored_sha1() {
+    match unsafe { &*reader }.get_stored_sha1() {
         Some(h) => h.as_ptr(),
         None => std::ptr::null()
     }
@@ -200,7 +196,7 @@ pub unsafe extern "C" fn e01_segment_count(
     reader: *const E01Reader
 ) -> usize
 {
-    unsafe { &*reader }.reader.segment_count()
+    unsafe { &*reader }.segment_count()
 }
 
 #[unsafe(no_mangle)]
@@ -209,7 +205,7 @@ pub unsafe extern "C" fn e01_segment_path(
     index: usize
 ) -> *const c_char
 {
-    match unsafe { &*reader }.reader.segment_path(index) {
+    match unsafe { &*reader }.segment_path(index) {
         Some(p) => p.as_os_str().as_bytes().as_ptr() as *const c_char,
         None => std::ptr::null()
     }
