@@ -1,4 +1,8 @@
 pub mod e01_reader;
+
+#[cfg(feature = "capi")]
+pub mod capi;
+
 mod error;
 mod generated;
 pub mod hasher;
@@ -13,7 +17,6 @@ mod test {
         hasher::{HashType, MultiHasher}
     };
 
-    use hex;
     use rand::Rng;
     use std::collections::HashMap;
 

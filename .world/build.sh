@@ -10,3 +10,4 @@ BASEDIR=$(pwd)
 
 cargo test
 cargo clippy --all-features --all-targets
+cargo cbuild --prefix="$INSTALL" --libdir=lib

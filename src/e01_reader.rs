@@ -262,7 +262,7 @@ fn read_chunk(
             match corrupt_chunk_policy {
                 CorruptChunkPolicy::Error => return Err(
                     LibError::BadChecksum(
-                        format!("Chunk {}", chunk_index),
+                        format!("Chunk {chunk_index}"),
                         crc,
                         crc_stored
                     )
@@ -501,7 +501,6 @@ impl E01Reader {
         let mut bytes_read = 0;
         let mut remaining_buf = &mut buf[..];
 
-
         while !remaining_buf.is_empty() && offset < total_size {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
@@ -557,6 +556,18 @@ impl E01Reader {
 
     pub fn get_stored_sha1(&self) -> Option<&[u8]> {
         self.stored_sha1.as_deref()
+    }
+
+    pub fn segment_paths(&self) -> impl Iterator<Item = &PathBuf> {
+        self.segments.iter().map(|s| &s.path)
+    }
+
+    pub fn segment_count(&self) -> usize {
+        self.segments.len()
+    }
+
+    pub fn segment_path(&self, index: usize) -> Option<&Path> {
+        self.segments.get(index).map(|s| &s.path).map(|p| &**p)
     }
 }
 

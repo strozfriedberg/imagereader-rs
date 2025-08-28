@@ -16,6 +16,9 @@ path = "src/lib.rs"
 name = "e01verify"
 path = "src/main.rs"
 
+[features]
+capi = []
+
 [dependencies]
 flate2 = "^1"
 byteorder = "^1.5"

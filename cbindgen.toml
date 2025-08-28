@@ -1,0 +1,14 @@
+header = ""
+pragma_once = true
+include_guard = "E01_E01_H"
+sys_includes = ["stddef.h", "stdint.h"]
+no_includes = true
+cpp_compat = true
+tab_width = 2
+line_length = 80
+style = "both"
+usize_is_size_t = true
+language = "C"
+
+[fn]
+args = "vertical"
