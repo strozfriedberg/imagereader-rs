@@ -546,6 +546,10 @@ impl E01Reader {
         self.volume.chunk_size()
     }
 
+    pub fn sector_size(&self) -> usize {
+        self.volume.bytes_per_sector as usize
+    }
+
     pub fn total_size(&self) -> usize {
         self.volume.max_offset()
     }
