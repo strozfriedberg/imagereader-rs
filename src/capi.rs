@@ -36,15 +36,15 @@ pub unsafe extern "C" fn e01_free_error(err: *mut E01Error) {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub enum CorruptSectionPolicy {
-  CorruptSectionPolicy_ERROR,
-  CorruptSectionPolicy_DAMN_THE_TORPEDOES
+  CSP_ERROR,
+  CSP_DAMN_THE_TORPEDOES
 }
 
 impl From<CorruptSectionPolicy> for e01_reader::CorruptSectionPolicy {
     fn from(policy: CorruptSectionPolicy) -> e01_reader::CorruptSectionPolicy {
         match policy {
-            CorruptSectionPolicy::CorruptSectionPolicy_ERROR => e01_reader::CorruptSectionPolicy::Error,
-            CorruptSectionPolicy::CorruptSectionPolicy_DAMN_THE_TORPEDOES => e01_reader::CorruptSectionPolicy::DamnTheTorpedoes
+            CorruptSectionPolicy::CSP_ERROR => e01_reader::CorruptSectionPolicy::Error,
+            CorruptSectionPolicy::CSP_DAMN_THE_TORPEDOES => e01_reader::CorruptSectionPolicy::DamnTheTorpedoes
         }
     }
 }
@@ -52,17 +52,17 @@ impl From<CorruptSectionPolicy> for e01_reader::CorruptSectionPolicy {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub enum CorruptChunkPolicy {
-  CorruptChunkPolicy_ERROR,
-  CorruptChunkPolicy_ZERO,
-  CorruptChunkPolicy_RAW_IF_POSSIBLE
+  CCP_ERROR,
+  CCP_ZERO,
+  CCP_RAW_IF_POSSIBLE
 }
 
 impl From<CorruptChunkPolicy> for e01_reader::CorruptChunkPolicy {
     fn from(policy: CorruptChunkPolicy) -> e01_reader::CorruptChunkPolicy {
         match policy {
-            CorruptChunkPolicy::CorruptChunkPolicy_ERROR => e01_reader::CorruptChunkPolicy::Error,
-            CorruptChunkPolicy::CorruptChunkPolicy_ZERO => e01_reader::CorruptChunkPolicy::Zero,
-            CorruptChunkPolicy::CorruptChunkPolicy_RAW_IF_POSSIBLE => e01_reader::CorruptChunkPolicy::RawIfPossible
+            CorruptChunkPolicy::CCP_ERROR => e01_reader::CorruptChunkPolicy::Error,
+            CorruptChunkPolicy::CCP_ZERO => e01_reader::CorruptChunkPolicy::Zero,
+            CorruptChunkPolicy::CCP_RAW_IF_POSSIBLE => e01_reader::CorruptChunkPolicy::RawIfPossible
         }
     }
 }
