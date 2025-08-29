@@ -493,15 +493,15 @@ impl E01Reader {
         buf: &mut [u8]
     ) -> Result<usize, ReadError>
     {
-        let total_size = self.total_size();
-        if offset > total_size {
-            return Err(ReadError::OffsetBeyondEnd(offset, total_size));
+        let image_size = self.image_size();
+        if offset > image_size {
+            return Err(ReadError::OffsetBeyondEnd(offset, image_size));
         }
 
         let mut bytes_read = 0;
         let mut remaining_buf = &mut buf[..];
 
-        while !remaining_buf.is_empty() && offset < total_size {
+        while !remaining_buf.is_empty() && offset < image_size {
             let chunk_number = offset / self.chunk_size();
             debug_assert!(chunk_number < self.volume.chunk_count as usize);
 
@@ -519,8 +519,8 @@ impl E01Reader {
                 remaining_buf
             ).map_err(ReadError::from).map_err(|e| e.with_path(&seg.path))?;
 
-            if chunk_number * self.chunk_size() + data.len() > total_size {
-                data.truncate(total_size - chunk_number * self.chunk_size());
+            if chunk_number * self.chunk_size() + data.len() > image_size {
+                data.truncate(image_size - chunk_number * self.chunk_size());
             }
 
             let data_offset = offset % self.chunk_size();
@@ -533,7 +533,7 @@ impl E01Reader {
             remaining_buf = &mut buf[bytes_read..bytes_read + remaining_size];
             remaining_buf.copy_from_slice(&data[data_offset..data_offset + remaining_size]);
 
-            debug_assert!(offset + remaining_size <= total_size);
+            debug_assert!(offset + remaining_size <= image_size);
 
             bytes_read += remaining_size;
             offset += remaining_size;
@@ -550,7 +550,7 @@ impl E01Reader {
         self.volume.bytes_per_sector as usize
     }
 
-    pub fn total_size(&self) -> usize {
+    pub fn image_size(&self) -> usize {
         self.volume.max_offset()
     }
 
