@@ -62,11 +62,15 @@ mod test {
     }
 
     #[track_caller]
-    fn assert_hash_all(
+    fn assert_eq_test_data(
         td: &TestData,
         options: &E01ReaderOptions
     ) {
         let reader = E01Reader::open_glob(td.path, options).unwrap();
+
+        assert_eq!(reader.chunk_size(), td.chunk_size);
+        assert_eq!(reader.sector_size(), td.sector_size);
+        assert_eq!(reader.total_size(), td.image_size);
 
         let stored_md5 = reader.get_stored_md5().map(hex::encode);
         let stored_sha1 = reader.get_stored_sha1().map(hex::encode);
@@ -83,6 +87,9 @@ mod test {
 
     struct TestData {
         pub path: &'static str,
+        pub chunk_size: usize,
+        pub sector_size: usize,
+        pub image_size: usize,
         pub stored_md5: &'static str,
         pub stored_sha1: &'static str,
         pub md5: &'static str,
@@ -102,6 +109,9 @@ mod test {
 
     const IMAGE_E01: TestData = TestData {
         path: "data/image.E01",
+        chunk_size: 32768,
+        sector_size: 512,
+        image_size: 1321472,
         stored_md5: "28035e42858e28326c23732e6234bcf8",
         stored_sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
         md5: "28035e42858e28326c23732e6234bcf8",
@@ -111,6 +121,9 @@ mod test {
 
     const MIMAGE_E01: TestData = TestData {
         path: "data/mimage.E01",
+        chunk_size: 32768,
+        sector_size: 512,
+        image_size: 884736,
         stored_md5: "5be32cdd1b96eac4d4a41d13234ee599",
         stored_sha1: "f8677bd8a38a12476ae655a9f9f5336c287603f7",
         md5: "5be32cdd1b96eac4d4a41d13234ee599",
@@ -120,26 +133,29 @@ mod test {
 
     #[test]
     fn test_image_e01() {
-        assert_hash_all(&IMAGE_E01, &ERROR_ERROR);
+        assert_eq_test_data(&IMAGE_E01, &ERROR_ERROR);
     }
 
     #[test]
     fn test_image_e01_zero_bad_chunks() {
-        assert_hash_all(&IMAGE_E01, &ERROR_ZERO);
+        assert_eq_test_data(&IMAGE_E01, &ERROR_ZERO);
     }
 
     #[test]
     fn test_mimage_e01() {
-        assert_hash_all(&MIMAGE_E01, &ERROR_ERROR);
+        assert_eq_test_data(&MIMAGE_E01, &ERROR_ERROR);
     }
 
     #[test]
     fn test_mimage_e01_zero_bad_chunks() {
-        assert_hash_all(&MIMAGE_E01, &ERROR_ZERO);
+        assert_eq_test_data(&MIMAGE_E01, &ERROR_ZERO);
     }
 
     const BAD_CHUNK_E01: TestData = TestData {
         path: "data/bad_chunk.E01",
+        chunk_size: 32768,
+        sector_size: 512,
+        image_size: 1321472,
         stored_md5: "28035e42858e28326c23732e6234bcf8",
         stored_sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
         md5: "",
@@ -149,6 +165,9 @@ mod test {
 
     const BAD_CHUNK_E01_ZEROED: TestData = TestData {
         path: "data/bad_chunk.E01",
+        chunk_size: 32768,
+        sector_size: 512,
+        image_size: 1321472,
         stored_md5: "28035e42858e28326c23732e6234bcf8",
         stored_sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
         md5: "67c44c58dd4bb4f7d162b3d3ad521e33",
@@ -159,12 +178,12 @@ mod test {
     #[test]
     #[should_panic]
     fn test_bad_chunk_e01() {
-        assert_hash_all(&BAD_CHUNK_E01, &ERROR_ERROR);
+        assert_eq_test_data(&BAD_CHUNK_E01, &ERROR_ERROR);
     }
 
     #[test]
     fn test_bad_chunk_e01_zero_bad_chunks() {
-        assert_hash_all(&BAD_CHUNK_E01_ZEROED, &ERROR_ZERO);
+        assert_eq_test_data(&BAD_CHUNK_E01_ZEROED, &ERROR_ZERO);
     }
 
 /*
@@ -177,7 +196,7 @@ mod test {
 
     #[test]
     fn test_dademurphy_e01() {
-        assert_hash_all(DADEMURPHY_E01, &ERROR_ERROR);
+        assert_eq_test_data(DADEMURPHY_E01, &ERROR_ERROR);
     }
 
     const NFURY_E01: TestData = TestData {
@@ -189,7 +208,7 @@ mod test {
 
     #[test]
     fn test_nfury_e01() {
-        assert_hash_all(NFURY_E01, &ERROR_ERROR);
+        assert_eq_test_data(NFURY_E01, &ERROR_ERROR);
     }
 */
 }
