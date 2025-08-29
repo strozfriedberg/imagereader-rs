@@ -168,8 +168,13 @@ pub unsafe extern "C" fn e01_chunk_size(reader: *const E01Reader) -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn e01_total_size(reader: *const E01Reader) -> usize {
-    unsafe { &*reader }.total_size()
+pub unsafe extern "C" fn e01_sector_size(reader: *const E01Reader) -> usize {
+    unsafe { &*reader }.sector_size()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn e01_image_size(reader: *const E01Reader) -> usize {
+    unsafe { &*reader }.image_size()
 }
 
 #[unsafe(no_mangle)]
