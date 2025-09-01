@@ -26,7 +26,7 @@ pub struct EwfVolume {
     media_type: RefCell<EwfVolume_MediaTypesEnum>,
     unknown1: RefCell<Vec<u8>>,
     number_of_chunks: RefCell<u32>,
-    sector_per_chunk: RefCell<u32>,
+    sectors_per_chunk: RefCell<u32>,
     bytes_per_sector: RefCell<u32>,
     number_of_sectors: RefCell<u64>,
     chs_cylinders: RefCell<u32>,
@@ -67,7 +67,7 @@ impl KStruct for EwfVolume {
         *self_rc.media_type.borrow_mut() = (_io.read_u1()? as i64).try_into()?;
         *self_rc.unknown1.borrow_mut() = _io.read_bytes(3 as usize)?.into();
         *self_rc.number_of_chunks.borrow_mut() = _io.read_u4le()?.into();
-        *self_rc.sector_per_chunk.borrow_mut() = _io.read_u4le()?.into();
+        *self_rc.sectors_per_chunk.borrow_mut() = _io.read_u4le()?.into();
         *self_rc.bytes_per_sector.borrow_mut() = _io.read_u4le()?.into();
         *self_rc.number_of_sectors.borrow_mut() = _io.read_u8le()?.into();
         *self_rc.chs_cylinders.borrow_mut() = _io.read_u4le()?.into();
@@ -107,8 +107,8 @@ impl EwfVolume {
     }
 }
 impl EwfVolume {
-    pub fn sector_per_chunk(&self) -> Ref<u32> {
-        self.sector_per_chunk.borrow()
+    pub fn sectors_per_chunk(&self) -> Ref<u32> {
+        self.sectors_per_chunk.borrow()
     }
 }
 impl EwfVolume {

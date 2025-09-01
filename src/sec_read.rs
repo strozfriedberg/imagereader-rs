@@ -207,7 +207,7 @@ pub fn read_table(
 #[derive(Debug, Default)]
 pub struct VolumeSection {
     pub chunk_count: u32,
-    pub sector_per_chunk: u32,
+    pub sectors_per_chunk: u32,
     pub bytes_per_sector: u32,
     pub total_sector_count: u64
 }
@@ -231,7 +231,7 @@ impl VolumeSection {
 
             let vs = VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
-                sector_per_chunk: *vol_section.sector_per_chunk(),
+                sectors_per_chunk: *vol_section.sectors_per_chunk(),
                 bytes_per_sector: *vol_section.bytes_per_sector(),
                 total_sector_count: *vol_section.number_of_sectors(),
             };
@@ -252,7 +252,7 @@ impl VolumeSection {
 
             let vs = VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
-                sector_per_chunk: *vol_section.sector_per_chunk(),
+                sectors_per_chunk: *vol_section.sectors_per_chunk(),
                 bytes_per_sector: *vol_section.bytes_per_sector(),
                 total_sector_count: *vol_section.number_of_sectors() as u64,
             };
@@ -264,7 +264,7 @@ impl VolumeSection {
     }
 
     pub fn chunk_size(&self) -> usize {
-        self.sector_per_chunk as usize * self.bytes_per_sector as usize
+        self.sectors_per_chunk as usize * self.bytes_per_sector as usize
     }
 
     pub fn max_offset(&self) -> usize {

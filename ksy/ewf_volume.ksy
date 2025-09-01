@@ -10,7 +10,7 @@ seq:
     size: 3
   - id: number_of_chunks
     type: u4
-  - id: sector_per_chunk
+  - id: sectors_per_chunk
     type: u4
   - id: bytes_per_sector
     type: u4
