@@ -329,6 +329,7 @@ pub struct E01Reader {
     volume: VolumeSection,
     segments: Vec<Segment>,
     chunks: Vec<Chunk>,
+    chunk_size: usize, 
     stored_md5: Option<Vec<u8>>,
     stored_sha1: Option<Vec<u8>>,
     corrupt_section_policy: CorruptSectionPolicy,
@@ -476,10 +477,13 @@ impl E01Reader {
             return Err(OpenError::TooFewChunks(chunk_count, exp_chunk_count));
         }
 
+        let chunk_size = volume.chunk_size();
+
         Ok(E01Reader {
             volume,
             segments,
             chunks,
+            chunk_size,
             stored_md5,
             stored_sha1,
             corrupt_section_policy: options.corrupt_section_policy,
@@ -543,7 +547,7 @@ impl E01Reader {
     }
 
     pub fn chunk_size(&self) -> usize {
-        self.volume.chunk_size()
+        self.chunk_size
     }
 
     pub fn sector_size(&self) -> usize {
