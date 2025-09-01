@@ -329,11 +329,11 @@ pub struct E01Reader {
     segments: Vec<Segment>,
     chunks: Vec<Chunk>,
 
-    chunk_size: usize,
-    chunk_count: usize,
-    sector_count: usize,
-    sector_size: usize,
-    image_size: usize,
+    pub chunk_size: usize,
+    pub chunk_count: usize,
+    pub sector_count: usize,
+    pub sector_size: usize,
+    pub image_size: usize,
 
     stored_md5: Option<Vec<u8>>,
     stored_sha1: Option<Vec<u8>>,
@@ -508,16 +508,15 @@ impl E01Reader {
         buf: &mut [u8]
     ) -> Result<usize, ReadError>
     {
-        let image_size = self.image_size();
-        if offset > image_size {
-            return Err(ReadError::OffsetBeyondEnd(offset, image_size));
+        if offset > self.image_size {
+            return Err(ReadError::OffsetBeyondEnd(offset, self.image_size));
         }
 
         let mut bytes_read = 0;
         let mut remaining_buf = &mut buf[..];
 
-        while !remaining_buf.is_empty() && offset < image_size {
-            let chunk_number = offset / self.chunk_size();
+        while !remaining_buf.is_empty() && offset < self.image_size {
+            let chunk_number = offset / self.chunk_size;
             debug_assert!(chunk_number < self.chunk_count);
 
             let chunk_index = chunk_number;
@@ -534,11 +533,11 @@ impl E01Reader {
                 remaining_buf
             ).map_err(ReadError::from).map_err(|e| e.with_path(&seg.path))?;
 
-            if chunk_number * self.chunk_size() + data.len() > image_size {
-                data.truncate(image_size - chunk_number * self.chunk_size());
+            if chunk_number * self.chunk_size + data.len() > self.image_size {
+                data.truncate(self.image_size - chunk_number * self.chunk_size);
             }
 
-            let data_offset = offset % self.chunk_size();
+            let data_offset = offset % self.chunk_size;
 
             if buf.len() < bytes_read || data.len() < data_offset {
                 println!("todo");
@@ -548,25 +547,13 @@ impl E01Reader {
             remaining_buf = &mut buf[bytes_read..bytes_read + remaining_size];
             remaining_buf.copy_from_slice(&data[data_offset..data_offset + remaining_size]);
 
-            debug_assert!(offset + remaining_size <= image_size);
+            debug_assert!(offset + remaining_size <= self.image_size);
 
             bytes_read += remaining_size;
             offset += remaining_size;
         }
 
         Ok(bytes_read)
-    }
-
-    pub fn chunk_size(&self) -> usize {
-        self.chunk_size
-    }
-
-    pub fn sector_size(&self) -> usize {
-        self.sector_size
-    }
-
-    pub fn image_size(&self) -> usize {
-        self.image_size
     }
 
     pub fn get_stored_md5(&self) -> Option<&[u8]> {

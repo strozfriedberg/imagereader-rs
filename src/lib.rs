@@ -35,7 +35,7 @@ mod test {
         let mut buf: Vec<u8> = vec![0; 1048576];
         let mut offset = 0;
 
-        while offset < reader.image_size() {
+        while offset < reader.image_size {
             let buf_size = if random_buf_size {
                 rand::rng().random_range(0..buf.len())
             }
@@ -68,9 +68,9 @@ mod test {
     ) {
         let reader = E01Reader::open_glob(td.path, options).unwrap();
 
-        assert_eq!(reader.chunk_size(), td.chunk_size);
-        assert_eq!(reader.sector_size(), td.sector_size);
-        assert_eq!(reader.image_size(), td.image_size);
+        assert_eq!(reader.chunk_size, td.chunk_size);
+        assert_eq!(reader.sector_size, td.sector_size);
+        assert_eq!(reader.image_size, td.image_size);
 
         let stored_md5 = reader.get_stored_md5().map(hex::encode);
         let stored_sha1 = reader.get_stored_sha1().map(hex::encode);
