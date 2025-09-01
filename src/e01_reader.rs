@@ -330,8 +330,12 @@ pub struct E01Reader {
     segments: Vec<Segment>,
     chunks: Vec<Chunk>,
 
-    chunk_size: usize, 
+    chunk_size: usize,
+    chunk_count: usize,
+    sector_count: usize,
     sector_size: usize,
+    image_size: usize,
+
     stored_md5: Option<Vec<u8>>,
     stored_sha1: Option<Vec<u8>>,
     corrupt_section_policy: CorruptSectionPolicy,
@@ -480,14 +484,19 @@ impl E01Reader {
         }
 
         let chunk_size = volume.chunk_size();
+        let sector_count = volume.total_sector_count as usize;
         let sector_size = volume.bytes_per_sector as usize;
+        let image_size = volume.max_offset();
 
         Ok(E01Reader {
             volume,
             segments,
             chunks,
+            chunk_count,
             chunk_size,
+            sector_count,
             sector_size,
+            image_size,
             stored_md5,
             stored_sha1,
             corrupt_section_policy: options.corrupt_section_policy,
@@ -559,7 +568,7 @@ impl E01Reader {
     }
 
     pub fn image_size(&self) -> usize {
-        self.volume.max_offset()
+        self.image_size
     }
 
     pub fn get_stored_md5(&self) -> Option<&[u8]> {
