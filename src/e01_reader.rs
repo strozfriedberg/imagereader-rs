@@ -326,7 +326,6 @@ pub struct E01ReaderOptions {
 
 #[derive(Debug)]
 pub struct E01Reader {
-    volume: VolumeSection,
     segments: Vec<Segment>,
     chunks: Vec<Chunk>,
 
@@ -489,7 +488,6 @@ impl E01Reader {
         let image_size = volume.max_offset();
 
         Ok(E01Reader {
-            volume,
             segments,
             chunks,
             chunk_count,
@@ -520,13 +518,13 @@ impl E01Reader {
 
         while !remaining_buf.is_empty() && offset < image_size {
             let chunk_number = offset / self.chunk_size();
-            debug_assert!(chunk_number < self.volume.chunk_count as usize);
+            debug_assert!(chunk_number < self.chunk_count);
 
             let chunk_index = chunk_number;
             let chunk = &self.chunks[chunk_index];
             let seg = &self.segments[chunk.segment];
 
-            eprintln!("reading {chunk_index} / {}", self.volume.chunk_count);
+            eprintln!("reading {chunk_index} / {}", self.chunk_count);
 
             let mut data = read_chunk(
                 &self.chunks[chunk_index],
