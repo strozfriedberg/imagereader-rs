@@ -147,8 +147,8 @@ struct Segment {
 
 struct SegmentComponents {
     volume: Option<VolumeSection>,
-    md5: Option<Vec<u8>>,
-    sha1: Option<Vec<u8>>,
+    md5: Option<[u8; 16]>,
+    sha1: Option<[u8; 20]>,
     chunks: Vec<Chunk>,
     done: bool
 }
@@ -193,10 +193,10 @@ fn read_segment<T: AsRef<Path>>(
                 }
             },
             Section::Sectors(eos) => end_of_sectors = eos,
-            Section::Hash(h) => md5 = Some(h.md5().clone()),
-            Section::Digest(d) => {
-                md5 = Some(d.md5().clone());
-                sha1 = Some(d.sha1().clone());
+            Section::Hash(h) => md5 = Some(h),
+            Section::Digest(d_md5, d_sha1) => {
+                md5 = Some(d_md5);
+                sha1 = Some(d_sha1);
             },
             Section::Done => { done = true; break; },
             _ => {}
@@ -335,8 +335,9 @@ pub struct E01Reader {
     pub sector_size: usize,
     pub image_size: usize,
 
-    stored_md5: Option<Vec<u8>>,
-    stored_sha1: Option<Vec<u8>>,
+    pub stored_md5: Option<[u8; 16]>,
+    pub stored_sha1: Option<[u8; 20]>,
+
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy
 }

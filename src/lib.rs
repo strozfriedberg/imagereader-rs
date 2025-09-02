@@ -72,8 +72,8 @@ mod test {
         assert_eq!(reader.sector_size, td.sector_size);
         assert_eq!(reader.image_size, td.image_size);
 
-        let stored_md5 = reader.get_stored_md5().map(hex::encode);
-        let stored_sha1 = reader.get_stored_sha1().map(hex::encode);
+        let stored_md5 = reader.stored_md5.map(hex::encode);
+        let stored_sha1 = reader.stored_sha1.map(hex::encode);
 
         assert_eq!(stored_md5.as_deref(), Some(td.stored_md5));
         assert_eq!(stored_sha1.as_deref(), Some(td.stored_sha1));

@@ -87,16 +87,13 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
 
     let mut htypes: HashSet<HashType> = HashSet::from_iter(args.extra_hashes);
 
-    let stored_md5 = e01_reader.get_stored_md5();
-    let stored_sha1 = e01_reader.get_stored_sha1();
-
     // compute MD5 if we have one stored
-    if stored_md5.is_some() {
+    if e01_reader.stored_md5.is_some() {
         htypes.insert(HashType::MD5);
     }
 
     // compute SHA1 if we have one stored
-    if stored_sha1.is_some() {
+    if e01_reader.stored_sha1.is_some() {
         htypes.insert(HashType::SHA1);
     }
 
@@ -117,13 +114,13 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
     let mut checked = check_hash(
         HashType::MD5,
         hashes.get(&HashType::MD5),
-        stored_md5
+        e01_reader.stored_md5
     );
 
     checked &= check_hash(
         HashType::SHA1,
         hashes.get(&HashType::SHA1),
-        stored_sha1
+        e01_reader.stored_sha1
     );
 
     if let Some(sha256) = hashes.get(&HashType::SHA256) {
