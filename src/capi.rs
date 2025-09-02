@@ -83,10 +83,12 @@ impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
 }
 
 fn fill_error<E: ToString>(e: E, err: *mut *mut E01Error) {
-    let message = CString::new(e.to_string())
-        .expect("impossible")
-        .into_raw();
-    unsafe { *err = Box::into_raw(Box::new(E01Error { message })); }
+    if !err.is_null() {
+        let message = CString::new(e.to_string())
+            .expect("impossible")
+            .into_raw();
+        unsafe { *err = Box::into_raw(Box::new(E01Error { message })); }
+    }
 }
 
 fn c_str_to_osstr(p: *const c_char) -> &'static OsStr {
@@ -101,6 +103,16 @@ pub unsafe extern "C" fn e01_open(
     err: *mut *mut E01Error
 ) -> *mut E01Reader
 {
+    if options.is_null() {
+       fill_error("options is null", err);
+       return std::ptr::null_mut();
+    }
+
+    if segment_paths.is_null() {
+       fill_error("segment_paths is null", err);
+       return std::ptr::null_mut();
+    }
+
     let sl = unsafe { slice::from_raw_parts(segment_paths, segment_paths_len) };
     let segment_paths = sl.iter()
         .map(|p| c_str_to_osstr(*p))
@@ -124,6 +136,16 @@ pub unsafe extern "C" fn e01_open_glob(
     err: *mut *mut E01Error
 ) -> *mut E01Reader
 {
+    if options.is_null() {
+       fill_error("options is null", err);
+       return std::ptr::null_mut();
+    }
+
+    if example_segment_path.is_null() {
+       fill_error("example_segment_path is null", err);
+       return std::ptr::null_mut();
+    }
+
     let example_segment_path = c_str_to_osstr(example_segment_path);
     let options = unsafe { (*options).into() };
 
@@ -152,6 +174,16 @@ pub unsafe extern "C" fn e01_read(
     err: *mut *mut E01Error
 ) -> usize
 {
+    if reader.is_null() {
+       fill_error("reader is null", err);
+       return 0;
+    }
+
+    if buf.is_null() {
+       fill_error("buf is null", err);
+       return 0;
+    }
+
     let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
     match unsafe { &*reader }.read_at_offset(offset, buf) {
         Ok(count) => count,
