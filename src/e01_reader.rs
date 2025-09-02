@@ -338,6 +338,8 @@ pub struct E01Reader {
     pub stored_md5: Option<[u8; 16]>,
     pub stored_sha1: Option<[u8; 20]>,
 
+    pub segment_paths: Vec<PathBuf>,
+
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy
 }
@@ -373,16 +375,17 @@ impl E01Reader {
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
-        let mut segment_paths = segment_paths.into_iter().peekable();
+        let mut sp_itr = segment_paths.into_iter().peekable();
 
         // check that there are some segment files
-        segment_paths.peek().ok_or(OpenError::NoSegmentFiles)?;
+        sp_itr.peek().ok_or(OpenError::NoSegmentFiles)?;
 
         let mut volume = None;
         let mut stored_md5 = None;
         let mut stored_sha1 = None;
 
         let mut segments = vec![];
+        let mut segment_paths = vec![];
         let mut chunks = vec![];
 
         let mut done = false;
@@ -390,7 +393,7 @@ impl E01Reader {
         let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
         // read segments
-        for sp in segment_paths.by_ref() {
+        for sp in sp_itr.by_ref() {
             let sp = sp.as_ref();
 
             let _span = debug_span!("", segment_path = ?sp).entered();
@@ -456,6 +459,8 @@ impl E01Reader {
                 io
             });
 
+            segment_paths.push(sp.into());
+
             if seg_done {
                 done = true;
                 break;
@@ -463,7 +468,7 @@ impl E01Reader {
         }
 
         if done {
-            if segment_paths.next().is_some() {
+            if sp_itr.next().is_some() {
                 warn!("more segments after finding done section");
             }
         }
@@ -498,6 +503,7 @@ impl E01Reader {
             image_size,
             stored_md5,
             stored_sha1,
+            segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy
         })
@@ -555,26 +561,6 @@ impl E01Reader {
         }
 
         Ok(bytes_read)
-    }
-
-    pub fn get_stored_md5(&self) -> Option<&[u8]> {
-        self.stored_md5.as_deref()
-    }
-
-    pub fn get_stored_sha1(&self) -> Option<&[u8]> {
-        self.stored_sha1.as_deref()
-    }
-
-    pub fn segment_paths(&self) -> impl Iterator<Item = &PathBuf> {
-        self.segments.iter().map(|s| &s.path)
-    }
-
-    pub fn segment_count(&self) -> usize {
-        self.segments.len()
-    }
-
-    pub fn segment_path(&self, index: usize) -> Option<&Path> {
-        self.segments.get(index).map(|s| &s.path).map(|p| &**p)
     }
 }
 
