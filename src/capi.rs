@@ -5,8 +5,8 @@ use std::{
         OsStr,
         c_char
     },
+    mem::ManuallyDrop,
     os::unix::ffi::OsStrExt,
-    path::Path,
     slice
 };
 
@@ -85,9 +85,19 @@ impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
 
 fn fill_error<E: ToString>(e: E, err: *mut *mut E01Error) {
     if !err.is_null() {
+        // CString::new doesn't like internal nulls; the error message should
+        // not have any, but we must deal with it nonetheless
         let message = CString::new(e.to_string())
-            .expect("impossible")
+            .unwrap_or_else(|_|
+                CString::new(
+                    format!(
+                        "{}. Additionally, the original error message somehow contained an internal null, which should never happen.",
+                        e.to_string().replace("\0", "\u{FFFD}")
+                    )
+                ).expect("inconceivable!")
+            )
             .into_raw();
+
         unsafe { *err = Box::into_raw(Box::new(E01Error { message })); }
     }
 }
@@ -106,19 +116,6 @@ pub struct E01Thingy {
     pub stored_sha1: *const u8
 }
 
-fn paths_to_c_str_array<T: IntoIterator<Item: AsRef<Path>>>(v: T) -> *mut *mut c_char {
-    let mut c_strs = v.into_iter()
-        .map(|p| CString::new(&*p.as_ref().to_string_lossy()).expect("no internal nulls"))
-        .map(|s| s.into_raw())
-        .collect::<Vec<_>>();
-
-    c_strs.shrink_to_fit();
-
-    let ptr = c_strs.as_mut_ptr();
-    std::mem::forget(c_strs);
-    ptr
-}
-
 unsafe fn free_c_str_array(ptr: *mut *mut c_char, len: usize) {
     let v = unsafe { Vec::from_raw_parts(ptr, len, len) };
 
@@ -128,13 +125,14 @@ unsafe fn free_c_str_array(ptr: *mut *mut c_char, len: usize) {
     }
 }
 
-impl From<E01Reader> for E01Thingy {
-    fn from(reader: E01Reader) -> E01Thingy {
-        let segment_paths = paths_to_c_str_array(
-            &reader.segment_paths
-        ) as *const *const c_char;
+impl E01Thingy {
+    fn new(reader: E01Reader, segment_paths: Vec<*const c_char>) -> Self {
+        let mut segment_paths = segment_paths;
+        segment_paths.shrink_to_fit();
 
-        E01Thingy {
+        let segment_paths = ManuallyDrop::new(segment_paths).as_ptr();
+
+        Self {
             segment_paths,
             segment_paths_count: reader.segment_paths.len(),
             chunk_size: reader.chunk_size,
@@ -173,8 +171,12 @@ pub unsafe extern "C" fn e01_open(
        return std::ptr::null_mut();
     }
 
+    let options = unsafe { (*options).into() };
+
     let sl = unsafe { slice::from_raw_parts(segment_paths, segment_paths_len) };
+
     let mut segment_paths = Vec::with_capacity(segment_paths_len);
+    let mut cstr_segment_paths = Vec::with_capacity(segment_paths_len);
 
     for (i, p) in sl.iter().enumerate() {
         if p.is_null() {
@@ -182,14 +184,19 @@ pub unsafe extern "C" fn e01_open(
             return std::ptr::null_mut();
         }
 
-        let s = OsStr::from_bytes(unsafe { CStr::from_ptr(*p) }.to_bytes());
-        segment_paths.push(s);
+        let p = unsafe { CStr::from_ptr(*p) };
+
+        let cstr = CString::from(p);
+        cstr_segment_paths.push(cstr.into_raw() as *const c_char);
+
+        let as_p = OsStr::from_bytes(p.to_bytes());
+        segment_paths.push(as_p);
     }
 
-    let options = unsafe { (*options).into() };
-
     match E01Reader::open(segment_paths, &options) {
-        Ok(reader) => Box::into_raw(Box::new(reader.into())),
+        Ok(reader) => Box::into_raw(Box::new(
+            E01Thingy::new(reader, cstr_segment_paths)
+        )),
         Err(e) => {
             fill_error(e, err);
             std::ptr::null_mut()
@@ -214,14 +221,20 @@ pub unsafe extern "C" fn e01_open_glob(
        return std::ptr::null_mut();
     }
 
-    let example_segment_path = OsStr::from_bytes(
-        unsafe { CStr::from_ptr(example_segment_path) }.to_bytes()
-    );
-
     let options = unsafe { (*options).into() };
 
+    let p = unsafe { CStr::from_ptr(example_segment_path) };
+
+    let example_segment_path = OsStr::from_bytes(p.to_bytes());
+
+    let cstr_segment_paths = vec![
+        CString::from(p).into_raw() as *const c_char
+    ];
+
     match E01Reader::open_glob(example_segment_path, &options) {
-        Ok(reader) => Box::into_raw(Box::new(reader.into())),
+        Ok(reader) => Box::into_raw(Box::new(
+            E01Thingy::new(reader, cstr_segment_paths)
+        )),
         Err(e) => {
             fill_error(e, err);
             std::ptr::null_mut()
