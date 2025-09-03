@@ -102,7 +102,7 @@ fn fill_error<E: ToString>(e: E, err: *mut *mut E01Error) {
 
 #[repr(C)]
 pub struct E01Handle {
-    reader: E01Reader,
+    reader: *mut E01Reader,
     pub segment_paths: *const *const c_char,
     pub segment_paths_count: usize,
     pub chunk_size: usize,
@@ -145,7 +145,7 @@ impl E01Handle {
                 None => std::ptr::null_mut(),
                 Some(h) => h.as_ptr()
             },
-            reader
+            reader: Box::into_raw(Box::new(reader))
         }
     }
 }
@@ -254,6 +254,7 @@ pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
             reader.segment_paths as *mut *mut c_char,
             reader.segment_paths_count
         );
+        drop(Box::from_raw(reader.reader));
         drop(reader);
     }
 }
@@ -278,6 +279,6 @@ pub unsafe extern "C" fn e01_read(
     }
 
     let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-    unsafe { &*reader }.reader.read_at_offset(offset, buf)
+    unsafe { &*(*reader).reader }.read_at_offset(offset, buf)
         .unwrap_or_else(|e| { fill_error(e, err); 0 })
 }
