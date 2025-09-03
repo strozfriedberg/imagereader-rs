@@ -274,11 +274,6 @@ pub unsafe extern "C" fn e01_read(
     }
 
     let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-    match unsafe { &*reader }.reader.read_at_offset(offset, buf) {
-        Ok(count) => count,
-        Err(e) => {
-            fill_error(e, err);
-            0
-        }
-    }
+    unsafe { &*reader }.reader.read_at_offset(offset, buf)
+        .unwrap_or_else(|e| { fill_error(e, err); 0 })
 }
