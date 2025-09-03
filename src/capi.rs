@@ -103,7 +103,7 @@ fn fill_error<E: ToString>(e: E, err: *mut *mut E01Error) {
 }
 
 #[repr(C)]
-pub struct E01Thingy {
+pub struct E01Handle {
     reader: E01Reader,
     pub segment_paths: *const *const c_char,
     pub segment_paths_count: usize,
@@ -125,7 +125,7 @@ unsafe fn free_c_str_array(ptr: *mut *mut c_char, len: usize) {
     }
 }
 
-impl E01Thingy {
+impl E01Handle {
     fn new(reader: E01Reader, segment_paths: Vec<*const c_char>) -> Self {
         let mut segment_paths = segment_paths;
         segment_paths.shrink_to_fit();
@@ -159,7 +159,7 @@ pub unsafe extern "C" fn e01_open(
     segment_paths_len: usize,
     options: *const E01ReaderOptions,
     err: *mut *mut E01Error
-) -> *mut E01Thingy
+) -> *mut E01Handle
 {
     if options.is_null() {
        fill_error("options is null", err);
@@ -195,7 +195,7 @@ pub unsafe extern "C" fn e01_open(
 
     match E01Reader::open(segment_paths, &options) {
         Ok(reader) => Box::into_raw(Box::new(
-            E01Thingy::new(reader, cstr_segment_paths)
+            E01Handle::new(reader, cstr_segment_paths)
         )),
         Err(e) => {
             fill_error(e, err);
@@ -209,7 +209,7 @@ pub unsafe extern "C" fn e01_open_glob(
     example_segment_path: *const c_char,
     options: *const E01ReaderOptions,
     err: *mut *mut E01Error
-) -> *mut E01Thingy
+) -> *mut E01Handle
 {
     if options.is_null() {
        fill_error("options is null", err);
@@ -233,7 +233,7 @@ pub unsafe extern "C" fn e01_open_glob(
 
     match E01Reader::open_glob(example_segment_path, &options) {
         Ok(reader) => Box::into_raw(Box::new(
-            E01Thingy::new(reader, cstr_segment_paths)
+            E01Handle::new(reader, cstr_segment_paths)
         )),
         Err(e) => {
             fill_error(e, err);
@@ -243,7 +243,7 @@ pub unsafe extern "C" fn e01_open_glob(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn e01_close(reader: *mut E01Thingy) {
+pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
     if !reader.is_null() {
         let reader = unsafe { Box::from_raw(reader) };
         free_c_str_array(
@@ -256,7 +256,7 @@ pub unsafe extern "C" fn e01_close(reader: *mut E01Thingy) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_read(
-    reader: *mut E01Thingy,
+    reader: *mut E01Handle,
     offset: usize,
     buf: *mut c_char,
     buflen: usize,
