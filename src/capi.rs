@@ -2,11 +2,9 @@ use std::{
     ffi::{
         CStr,
         CString,
-        OsStr,
         c_char
     },
     mem::ManuallyDrop,
-    os::unix::ffi::OsStrExt,
     slice
 };
 
@@ -152,15 +150,6 @@ impl E01Handle {
     }
 }
 
-unsafe fn cstr_conv(ptr: *const c_char) -> (&'static OsStr, *const c_char) {
-    let p = unsafe { CStr::from_ptr(ptr) };
-
-    (
-        OsStr::from_bytes(p.to_bytes()),
-        CString::from(p).into_raw() as *const c_char
-    )
-}
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_open(
     segment_paths: *const *const c_char,
@@ -192,7 +181,14 @@ pub unsafe extern "C" fn e01_open(
             return std::ptr::null_mut();
         }
 
-        let (sp, cstr_sp) = cstr_conv(*p);
+        let p = unsafe { CStr::from_ptr(*p) };
+
+        let Ok(sp) = p.to_str() else {
+            fill_error(format!("segment_paths[{i}] is not UTF-8"), err);
+            return std::ptr::null_mut();
+        };
+
+        let cstr_sp = CString::from(p).into_raw() as *const c_char;
 
         segment_paths.push(sp);
         cstr_segment_paths.push(cstr_sp);
@@ -228,7 +224,14 @@ pub unsafe extern "C" fn e01_open_glob(
 
     let options = unsafe { (*options).into() };
 
-    let (sp, cstr_sp) = cstr_conv(example_segment_path);
+    let p = unsafe { CStr::from_ptr(example_segment_path) };
+
+    let Ok(sp) = p.to_str() else {
+        fill_error(format!("example_segment_path is not UTF-8"), err);
+        return std::ptr::null_mut();
+    };
+
+    let cstr_sp = CString::from(p).into_raw() as *const c_char;
 
     let cstr_segment_paths = vec![ cstr_sp ];
 
