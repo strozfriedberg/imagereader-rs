@@ -152,6 +152,15 @@ impl E01Handle {
     }
 }
 
+unsafe fn cstr_conv(ptr: *const c_char) -> (&'static OsStr, *const c_char) {
+    let p = unsafe { CStr::from_ptr(ptr) };
+
+    (
+        OsStr::from_bytes(p.to_bytes()),
+        CString::from(p).into_raw() as *const c_char
+    )
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_open(
     segment_paths: *const *const c_char,
@@ -183,13 +192,10 @@ pub unsafe extern "C" fn e01_open(
             return std::ptr::null_mut();
         }
 
-        let p = unsafe { CStr::from_ptr(*p) };
+        let (sp, cstr_sp) = cstr_conv(*p);
 
-        let cstr = CString::from(p);
-        cstr_segment_paths.push(cstr.into_raw() as *const c_char);
-
-        let as_p = OsStr::from_bytes(p.to_bytes());
-        segment_paths.push(as_p);
+        segment_paths.push(sp);
+        cstr_segment_paths.push(cstr_sp);
     }
 
     match E01Reader::open(segment_paths, &options) {
@@ -222,15 +228,11 @@ pub unsafe extern "C" fn e01_open_glob(
 
     let options = unsafe { (*options).into() };
 
-    let p = unsafe { CStr::from_ptr(example_segment_path) };
+    let (sp, cstr_sp) = cstr_conv(example_segment_path);
 
-    let example_segment_path = OsStr::from_bytes(p.to_bytes());
+    let cstr_segment_paths = vec![ cstr_sp ];
 
-    let cstr_segment_paths = vec![
-        CString::from(p).into_raw() as *const c_char
-    ];
-
-    match E01Reader::open_glob(example_segment_path, &options) {
+    match E01Reader::open_glob(sp, &options) {
         Ok(reader) => Box::into_raw(Box::new(
             E01Handle::new(reader, cstr_segment_paths)
         )),
