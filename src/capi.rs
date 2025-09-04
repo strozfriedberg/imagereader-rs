@@ -19,16 +19,20 @@ pub struct E01Error {
     message: *mut c_char
 }
 
+impl Drop for E01Error {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.message.is_null() {
+                drop(Box::from_raw(self.message));
+            }
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_free_error(err: *mut E01Error) {
     if !err.is_null() {
-        unsafe {
-            if !(*err).message.is_null() {
-                drop(Box::from_raw((*err).message));
-            }
-
-            drop(Box::from_raw(err));
-        }
+        unsafe { drop(Box::from_raw(err)); }
     }
 }
 
@@ -181,6 +185,18 @@ impl E01Handle {
     }
 }
 
+impl Drop for E01Handle {
+    fn drop(&mut self) {
+        unsafe {
+            free_c_str_array(
+                self.segment_paths as *mut *mut c_char,
+                self.segment_paths_count
+            );
+        }
+        drop(unsafe { Box::from_raw(self.reader) });
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_open(
     segment_paths: *const *const c_char,
@@ -290,13 +306,7 @@ pub unsafe extern "C" fn e01_open_glob(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
     if !reader.is_null() {
-        let reader = unsafe { Box::from_raw(reader) };
-        free_c_str_array(
-            reader.segment_paths as *mut *mut c_char,
-            reader.segment_paths_count
-        );
-        drop(unsafe { Box::from_raw(reader.reader) });
-        drop(reader);
+        drop(unsafe { Box::from_raw(reader) });
     }
 }
 
@@ -336,9 +346,11 @@ mod test {
     #[track_caller]
     fn assert_err(err: *mut E01Error, message: &CStr) {
         assert!(!err.is_null());
-        assert!(! unsafe { &*err }.message.is_null());
+        let err = unsafe { Box::from_raw(err) };
+
+        assert!(!err.message.is_null());
         assert_eq!(
-            unsafe { CStr::from_ptr(&*(*err).message) },
+            unsafe { CStr::from_ptr(&*err.message) },
             message
         );
     }
