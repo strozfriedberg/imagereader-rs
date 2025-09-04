@@ -254,7 +254,7 @@ pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
             reader.segment_paths as *mut *mut c_char,
             reader.segment_paths_count
         );
-        drop(Box::from_raw(reader.reader));
+        drop(unsafe { Box::from_raw(reader.reader) });
         drop(reader);
     }
 }
