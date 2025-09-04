@@ -120,8 +120,7 @@ unsafe fn free_c_str_array(ptr: *mut *mut c_char, len: usize) {
     let v = unsafe { Vec::from_raw_parts(ptr, len, len) };
 
     for s in v {
-        let s = unsafe { CString::from_raw(s) };
-        drop(s);
+        drop(unsafe { CString::from_raw(s) });
     }
 }
 
