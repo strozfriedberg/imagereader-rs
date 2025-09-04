@@ -5,6 +5,7 @@ use std::{
         c_char
     },
     mem::ManuallyDrop,
+    path::Path,
     slice
 };
 
@@ -115,6 +116,7 @@ pub struct E01Handle {
 }
 
 unsafe fn free_c_str_array(ptr: *mut *mut c_char, len: usize) {
+    // Vec should have been shrunk to fit so length == capacity
     let v = unsafe { Vec::from_raw_parts(ptr, len, len) };
 
     for s in v {
@@ -122,31 +124,58 @@ unsafe fn free_c_str_array(ptr: *mut *mut c_char, len: usize) {
     }
 }
 
+fn paths_to_cstring_vec<'a, P, T>(paths: T) -> Result<Vec<CString>, String>
+where
+    P: AsRef<Path> + 'a,
+    T: IntoIterator<Item = &'a P>
+{
+    paths.into_iter()
+        .enumerate()
+        .map(|(i, p)|
+            p.as_ref()
+                .to_str()
+                .ok_or_else(|| format!("path {i} is not UTF-8"))
+                .and_then(|s| CString::new(s)
+                    .or_else(|_| Err(format!("path {i} contains an internal null")))
+                )
+        )
+        .collect::<Result<Vec<_>, _>>()
+}
+
 impl E01Handle {
-    fn new(reader: E01Reader, segment_paths: Vec<*const c_char>) -> Self {
-        let mut segment_paths = segment_paths;
+    fn new(reader: E01Reader) -> Result<Self, String> {
+        // convert paths into CStrings, which will be dropped on error
+        let segment_paths = paths_to_cstring_vec(&reader.segment_paths)?;
+
+        // convert CStrings into *const c_char, which must be freed manually 
+        let mut segment_paths = segment_paths.into_iter()
+            .map(|sp| sp.into_raw() as *const c_char)
+            .collect::<Vec<_>>();
+
         segment_paths.shrink_to_fit();
 
         let segment_paths = ManuallyDrop::new(segment_paths).as_ptr();
 
-        Self {
-            segment_paths,
-            segment_paths_count: reader.segment_paths.len(),
-            chunk_size: reader.chunk_size,
-            chunk_count: reader.chunk_count,
-            sector_count: reader.sector_count,
-            sector_size: reader.sector_size,
-            image_size: reader.image_size,
-            stored_md5: match reader.stored_md5 {
-                None => std::ptr::null_mut(),
-                Some(h) => h.as_ptr()
-            },
-            stored_sha1: match reader.stored_sha1 {
-                None => std::ptr::null_mut(),
-                Some(h) => h.as_ptr()
-            },
-            reader: Box::into_raw(Box::new(reader))
-        }
+        Ok(
+            Self {
+                segment_paths,
+                segment_paths_count: reader.segment_paths.len(),
+                chunk_size: reader.chunk_size,
+                chunk_count: reader.chunk_count,
+                sector_count: reader.sector_count,
+                sector_size: reader.sector_size,
+                image_size: reader.image_size,
+                stored_md5: reader.stored_md5.map_or(
+                    std::ptr::null_mut(),
+                    |h| h.as_ptr()
+                ),
+                stored_sha1: reader.stored_sha1.map_or(
+                    std::ptr::null_mut(),
+                    |h| h.as_ptr()
+                ),
+                reader: Box::into_raw(Box::new(reader))
+            }
+        )
     }
 }
 
@@ -158,22 +187,22 @@ pub unsafe extern "C" fn e01_open(
     err: *mut *mut E01Error
 ) -> *mut E01Handle
 {
+    // convert options
     if options.is_null() {
        fill_error("options is null", err);
        return std::ptr::null_mut();
     }
 
+    let options = unsafe { (*options).into() };
+
+    // convert paths
     if segment_paths.is_null() {
        fill_error("segment_paths is null", err);
        return std::ptr::null_mut();
     }
 
-    let options = unsafe { (*options).into() };
-
     let sl = unsafe { slice::from_raw_parts(segment_paths, segment_paths_len) };
-
     let mut segment_paths = Vec::with_capacity(segment_paths_len);
-    let mut cstr_segment_paths = Vec::with_capacity(segment_paths_len);
 
     for (i, p) in sl.iter().enumerate() {
         if p.is_null() {
@@ -188,16 +217,18 @@ pub unsafe extern "C" fn e01_open(
             return std::ptr::null_mut();
         };
 
-        let cstr_sp = CString::from(p).into_raw() as *const c_char;
-
         segment_paths.push(sp);
-        cstr_segment_paths.push(cstr_sp);
     }
 
+    // do the open
     match E01Reader::open(segment_paths, &options) {
-        Ok(reader) => Box::into_raw(Box::new(
-            E01Handle::new(reader, cstr_segment_paths)
-        )),
+        Ok(reader) => match E01Handle::new(reader) {
+            Ok(handle) => Box::into_raw(Box::new(handle)),
+            Err(e) => {
+                fill_error(e, err);
+                std::ptr::null_mut()
+            }
+        },
         Err(e) => {
             fill_error(e, err);
             std::ptr::null_mut()
@@ -212,17 +243,19 @@ pub unsafe extern "C" fn e01_open_glob(
     err: *mut *mut E01Error
 ) -> *mut E01Handle
 {
+    // convert options
     if options.is_null() {
        fill_error("options is null", err);
        return std::ptr::null_mut();
     }
 
+    let options = unsafe { (*options).into() };
+
+    // convert path
     if example_segment_path.is_null() {
        fill_error("example_segment_path is null", err);
        return std::ptr::null_mut();
     }
-
-    let options = unsafe { (*options).into() };
 
     let p = unsafe { CStr::from_ptr(example_segment_path) };
 
@@ -231,14 +264,15 @@ pub unsafe extern "C" fn e01_open_glob(
         return std::ptr::null_mut();
     };
 
-    let cstr_sp = CString::from(p).into_raw() as *const c_char;
-
-    let cstr_segment_paths = vec![ cstr_sp ];
-
+    // do the open
     match E01Reader::open_glob(sp, &options) {
-        Ok(reader) => Box::into_raw(Box::new(
-            E01Handle::new(reader, cstr_segment_paths)
-        )),
+        Ok(reader) => match E01Handle::new(reader) {
+            Ok(handle) => Box::into_raw(Box::new(handle)),
+            Err(e) => {
+                fill_error(e, err);
+                std::ptr::null_mut()
+            }
+        },
         Err(e) => {
             fill_error(e, err);
             std::ptr::null_mut()
@@ -281,4 +315,9 @@ pub unsafe extern "C" fn e01_read(
     let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
     unsafe { &*(*reader).reader }.read_at_offset(offset, buf)
         .unwrap_or_else(|e| { fill_error(e, err); 0 })
+}
+
+#[cfg(test)]
+mod test {
+
 }
