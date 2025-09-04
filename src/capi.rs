@@ -184,7 +184,7 @@ impl E01Handle {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_open(
     segment_paths: *const *const c_char,
-    segment_paths_len: usize,
+    segment_paths_count: usize,
     options: *const E01ReaderOptions,
     err: *mut *mut E01Error
 ) -> *mut E01Handle
@@ -203,8 +203,13 @@ pub unsafe extern "C" fn e01_open(
        return std::ptr::null_mut();
     }
 
-    let sl = unsafe { slice::from_raw_parts(segment_paths, segment_paths_len) };
-    let mut segment_paths = Vec::with_capacity(segment_paths_len);
+    if segment_paths_count == 0 {
+       fill_error("segment_paths_count is zero", err);
+       return std::ptr::null_mut();
+    }
+
+    let sl = unsafe { slice::from_raw_parts(segment_paths, segment_paths_count) };
+    let mut segment_paths = Vec::with_capacity(sl.len());
 
     for (i, p) in sl.iter().enumerate() {
         if p.is_null() {
