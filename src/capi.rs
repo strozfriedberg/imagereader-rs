@@ -144,7 +144,7 @@ impl E01Handle {
                 None => std::ptr::null_mut(),
                 Some(h) => h.as_ptr()
             },
-            stored_sha1: match reader.stored_md5 {
+            stored_sha1: match reader.stored_sha1 {
                 None => std::ptr::null_mut(),
                 Some(h) => h.as_ptr()
             },
