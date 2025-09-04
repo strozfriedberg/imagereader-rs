@@ -147,11 +147,13 @@ impl E01Handle {
         // convert paths into CStrings, which will be dropped on error
         let segment_paths = paths_to_cstring_vec(&reader.segment_paths)?;
 
-        // convert CStrings into *const c_char, which must be freed manually 
+        // convert CStrings into *const c_char, which must be freed by
+        // calling e01_close on the handle
         let mut segment_paths = segment_paths.into_iter()
             .map(|sp| sp.into_raw() as *const c_char)
             .collect::<Vec<_>>();
 
+        // ensure that capacity == len, so we don't need to store both
         segment_paths.shrink_to_fit();
 
         let segment_paths = ManuallyDrop::new(segment_paths).as_ptr();
