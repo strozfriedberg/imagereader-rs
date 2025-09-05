@@ -2,7 +2,9 @@
 pub struct TestData {
     pub path: &'static str,
     pub chunk_size: usize,
+    pub chunk_count: usize,
     pub sector_size: usize,
+    pub sector_count: usize,
     pub image_size: usize,
     pub stored_md5: &'static str,
     pub stored_sha1: &'static str,
@@ -14,7 +16,9 @@ pub struct TestData {
 pub const IMAGE_E01: TestData = TestData {
     path: "data/image.E01",
     chunk_size: 32768,
+    chunk_count: 41,
     sector_size: 512,
+    sector_count: 2581,
     image_size: 1321472,
     stored_md5: "28035e42858e28326c23732e6234bcf8",
     stored_sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
@@ -26,7 +30,9 @@ pub const IMAGE_E01: TestData = TestData {
 pub const MIMAGE_E01: TestData = TestData {
     path: "data/mimage.E01",
     chunk_size: 32768,
+    chunk_count: 27,
     sector_size: 512,
+    sector_count: 1728,
     image_size: 884736,
     stored_md5: "5be32cdd1b96eac4d4a41d13234ee599",
     stored_sha1: "f8677bd8a38a12476ae655a9f9f5336c287603f7",
@@ -38,7 +44,9 @@ pub const MIMAGE_E01: TestData = TestData {
 pub const BAD_CHUNK_E01: TestData = TestData {
     path: "data/bad_chunk.E01",
     chunk_size: 32768,
+    chunk_count: 41,
     sector_size: 512,
+    sector_count: 2581,
     image_size: 1321472,
     stored_md5: "28035e42858e28326c23732e6234bcf8",
     stored_sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
@@ -50,7 +58,9 @@ pub const BAD_CHUNK_E01: TestData = TestData {
 pub const BAD_CHUNK_E01_ZEROED: TestData = TestData {
     path: "data/bad_chunk.E01",
     chunk_size: 32768,
+    chunk_count: 41,
     sector_size: 512,
+    sector_count: 2581,
     image_size: 1321472,
     stored_md5: "28035e42858e28326c23732e6234bcf8",
     stored_sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
