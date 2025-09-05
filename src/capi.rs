@@ -140,7 +140,7 @@ where
                 .to_str()
                 .ok_or_else(|| format!("path {i} is not UTF-8"))
                 .and_then(|s| CString::new(s)
-                    .or_else(|_| Err(format!("path {i} contains an internal null")))
+                    .map_err(|_| format!("path {i} contains an internal null"))
                 )
         )
         .collect::<Result<Vec<_>, _>>()
@@ -301,7 +301,7 @@ pub unsafe extern "C" fn e01_open_glob(
     let p = unsafe { CStr::from_ptr(example_segment_path) };
 
     let Ok(sp) = p.to_str() else {
-        fill_error(format!("example_segment_path is not UTF-8"), err);
+        fill_error("example_segment_path is not UTF-8", err);
         return std::ptr::null_mut();
     };
 
