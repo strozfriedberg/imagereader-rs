@@ -338,6 +338,8 @@ pub unsafe extern "C" fn e01_read(
 mod test {
     use super::*;
 
+    use crate::test_data::*;
+
     const ERROR_OPTS: E01ReaderOptions = E01ReaderOptions {
         corrupt_section_policy: CorruptSectionPolicy::CSP_ERROR,
         corrupt_chunk_policy: CorruptChunkPolicy::CCP_ERROR
@@ -383,6 +385,28 @@ mod test {
     fn assert_err_null(err: *mut E01Error) {
         let err = Holder::new(err);
         assert!(err.ptr.is_null());
+    }
+
+    #[track_caller]
+    fn assert_eq_test_data(handle: &E01Handle, td: &TestData) {
+//        assert_eq!(handle.segment_paths_count, 1);
+
+        assert_eq!(handle.chunk_size, td.chunk_size);
+//        assert_eq!(handle.chunk_count, 41);
+        assert_eq!(handle.sector_size, td.sector_size);
+//        assert_eq!(handle.sector_count, 2581);
+        assert_eq!(handle.image_size, td.image_size);
+
+/*
+        assert_eq!(
+            hex::encode(unsafe { slice::from_raw_parts(handle.stored_md5, 16) }),
+            "28035e42858e28326c23732e6234bcf8"
+        );
+        assert_eq!(
+            hex::encode(unsafe { slice::from_raw_parts(handle.stored_sha1, 20) }),
+            "e5c6c296485b1146fead7ad552e1c3ccfc00bfab"
+        );
+*/
     }
 
     #[test]
@@ -551,5 +575,27 @@ mod test {
 
         assert_err(err, c"options is null");
         assert!(h.ptr.is_null());
+    }
+
+    #[test]
+    fn e01_open_one_segment_null_err() {
+        let paths = [c"data/image.E01".as_ptr()];
+        let options = &ERROR_OPTS;
+        let mut err: *mut E01Error = std::ptr::null_mut();
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                &mut err
+            )
+        });
+
+        assert_err_null(err);
+        assert!(!h.ptr.is_null());
+
+        let handle = h.into_box();
+        assert_eq_test_data(&handle, &IMAGE_E01);
     }
 }
