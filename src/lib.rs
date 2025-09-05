@@ -6,6 +6,9 @@ pub mod capi;
 #[cfg(test)]
 mod test_data;
 
+#[cfg(test)]
+mod test_helper;
+
 mod error;
 mod generated;
 pub mod hasher;
@@ -17,53 +20,10 @@ mod segment;
 mod test {
     use crate::{
         e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Reader, E01ReaderOptions},
-        hasher::{HashType, MultiHasher},
-        test_data::*
+        hasher::HashType,
+        test_data::*,
+        test_helper::do_hash
     };
-
-    use rand::Rng;
-    use std::collections::HashMap;
-
-    #[track_caller]
-    fn do_hash(
-        reader: &E01Reader,
-        random_buf_size: bool
-    ) -> HashMap<HashType, String>
-    {
-        let mut hasher = MultiHasher::from([
-            HashType::MD5,
-            HashType::SHA1,
-            HashType::SHA256
-        ]);
-
-        let mut buf: Vec<u8> = vec![0; 1048576];
-        let mut offset = 0;
-
-        while offset < reader.image_size {
-            let buf_size = if random_buf_size {
-                rand::rng().random_range(0..buf.len())
-            }
-            else {
-                buf.len()
-            };
-
-            let read = reader
-                .read_at_offset(offset, &mut buf[..buf_size])
-                .unwrap();
-            if read == 0 {
-                break;
-            }
-
-            hasher.update(&buf[..read]);
-
-            offset += read;
-        }
-
-        hasher.finalize()
-            .into_iter()
-            .map(|(k, v)| (k, hex::encode(v)))
-            .collect()
-    }
 
     #[track_caller]
     fn assert_eq_test_data(exp: &TestData, options: &E01ReaderOptions) {
@@ -72,7 +32,15 @@ mod test {
             options
         ).unwrap();
 
-        let hashes = do_hash(&reader, false);
+        let hashes = do_hash(
+            |offset, buf: &mut [u8]| {
+                let buf_len = buf.len();
+                reader.read_at_offset(offset, &mut buf[..buf_len])
+                    .unwrap()
+            },
+            reader.image_size,
+            false
+        );
 
         let stored_md5 = reader.stored_md5.map(hex::encode);
         let stored_sha1 = reader.stored_sha1.map(hex::encode);
