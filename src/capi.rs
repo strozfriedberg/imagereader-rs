@@ -643,6 +643,34 @@ mod test {
     }
 
     #[test]
+    fn e01_open_two_segments_null_err() {
+        let paths = [
+            c"data/mimage.E01".as_ptr(),
+            c"data/mimage.E02".as_ptr()
+        ];
+        let options = &ERROR_OPTS;
+        let mut err = std::ptr::null_mut();
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                &mut err
+            )
+        });
+
+        assert_err_null(err);
+        assert!(!h.ptr.is_null());
+
+        let handle = h.into_box();
+        assert_eq_test_data(&handle, &MIMAGE_E01);
+
+        let handle = Box::into_raw(handle);
+        unsafe { e01_close(handle); }
+    }
+
+    #[test]
     fn e01_close_null() {
         // nothing to test here other than that it doesn't crash
         unsafe { e01_close(std::ptr::null_mut()) };
