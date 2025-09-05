@@ -461,7 +461,7 @@ mod test {
     #[test]
     fn e01_open_null_paths() {
         let options = &ERROR_OPTS;
-        let mut err: *mut E01Error = std::ptr::null_mut();
+        let mut err = std::ptr::null_mut();
 
         let h = Holder::new(unsafe {
             e01_open(
@@ -479,7 +479,7 @@ mod test {
     #[test]
     fn e01_open_null_options() {
         let paths = [c"whatever".as_ptr()];
-        let mut err: *mut E01Error = std::ptr::null_mut();
+        let mut err = std::ptr::null_mut();
 
         let h = Holder::new(unsafe {
             e01_open(
@@ -498,7 +498,7 @@ mod test {
     fn e01_open_zero_paths() {
         let paths = [c"whatever".as_ptr()];
         let options = &ERROR_OPTS;
-        let mut err: *mut E01Error = std::ptr::null_mut();
+        let mut err = std::ptr::null_mut();
 
         let h = Holder::new(unsafe {
             e01_open(
@@ -546,7 +546,7 @@ mod test {
     #[test]
     fn e01_open_glob_null_path() {
         let options = &ERROR_OPTS;
-        let mut err: *mut E01Error = std::ptr::null_mut();
+        let mut err = std::ptr::null_mut();
 
         let h = Holder::new(unsafe {
             e01_open_glob(
@@ -563,7 +563,7 @@ mod test {
     #[test]
     fn e01_open_glob_null_options() {
         let path = c"whatever".as_ptr();
-        let mut err: *mut E01Error = std::ptr::null_mut();
+        let mut err = std::ptr::null_mut();
 
         let h = Holder::new(unsafe {
             e01_open_glob(
@@ -581,7 +581,7 @@ mod test {
     fn e01_open_one_segment_null_err() {
         let paths = [c"data/image.E01".as_ptr()];
         let options = &ERROR_OPTS;
-        let mut err: *mut E01Error = std::ptr::null_mut();
+        let mut err = std::ptr::null_mut();
 
         let h = Holder::new(unsafe {
             e01_open(
