@@ -66,27 +66,28 @@ mod test {
     }
 
     #[track_caller]
-    fn assert_eq_test_data(
-        td: &TestData,
-        options: &E01ReaderOptions
-    ) {
-        let reader = E01Reader::open_glob(td.path, options).unwrap();
-
-        assert_eq!(reader.chunk_size, td.chunk_size);
-        assert_eq!(reader.sector_size, td.sector_size);
-        assert_eq!(reader.image_size, td.image_size);
+    fn assert_eq_test_data(exp: &TestData, options: &E01ReaderOptions) {
+        let reader = E01Reader::open_glob(exp.path, options).unwrap();
+        let hashes = do_hash(&reader, false);
 
         let stored_md5 = reader.stored_md5.map(hex::encode);
         let stored_sha1 = reader.stored_sha1.map(hex::encode);
 
-        assert_eq!(stored_md5.as_deref(), Some(td.stored_md5));
-        assert_eq!(stored_sha1.as_deref(), Some(td.stored_sha1));
+        let act = TestData {
+            path: exp.path,
+            chunk_size: reader.chunk_size,
+            chunk_count: reader.chunk_count,
+            sector_size: reader.sector_size,
+            sector_count: reader.sector_count,
+            image_size: reader.image_size,
+            stored_md5: stored_md5.as_deref(),
+            stored_sha1: stored_sha1.as_deref(),
+            md5: hashes.get(&HashType::MD5).map(String::as_str),
+            sha1: hashes.get(&HashType::SHA1).map(String::as_str),
+            sha256: hashes.get(&HashType::SHA256).map(String::as_str)
+        };
 
-        let hashes = do_hash(&reader, false);
-
-        assert_eq!(hashes.get(&HashType::MD5).unwrap(), td.md5);
-        assert_eq!(hashes.get(&HashType::SHA1).unwrap(), td.sha1);
-        assert_eq!(hashes.get(&HashType::SHA256).unwrap(), td.sha256);
+        assert_eq!(&act, exp);
     }
 
     const ERROR_ERROR: E01ReaderOptions = E01ReaderOptions {
