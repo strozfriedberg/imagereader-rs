@@ -388,25 +388,49 @@ mod test {
     }
 
     #[track_caller]
-    fn assert_eq_test_data(handle: &E01Handle, td: &TestData) {
-//        assert_eq!(handle.segment_paths_count, 1);
+    fn assert_eq_test_data(handle: &E01Handle, exp: &TestData) {
+        let sl = unsafe {
+            slice::from_raw_parts(
+                handle.segment_paths,
+                handle.segment_paths_count
+            )
+        };
 
-        assert_eq!(handle.chunk_size, td.chunk_size);
-//        assert_eq!(handle.chunk_count, 41);
-        assert_eq!(handle.sector_size, td.sector_size);
-//        assert_eq!(handle.sector_count, 2581);
-        assert_eq!(handle.image_size, td.image_size);
+        let segment_paths = sl.iter()
+            .map(|p| unsafe { CStr::from_ptr(*p) })
+            .map(|p| p.to_str())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
-/*
-        assert_eq!(
-            hex::encode(unsafe { slice::from_raw_parts(handle.stored_md5, 16) }),
-            "28035e42858e28326c23732e6234bcf8"
-        );
-        assert_eq!(
-            hex::encode(unsafe { slice::from_raw_parts(handle.stored_sha1, 20) }),
-            "e5c6c296485b1146fead7ad552e1c3ccfc00bfab"
-        );
-*/
+        let stored_md5 = match handle.stored_md5.is_null() {
+            true => None,
+            false => Some(hex::encode(unsafe {
+                slice::from_raw_parts(handle.stored_md5, 16)
+            }))
+        };
+
+        let stored_sha1 = match handle.stored_sha1.is_null() {
+            true => None,
+            false => Some(hex::encode(unsafe {
+                slice::from_raw_parts(handle.stored_sha1, 20)
+            }))
+        };
+
+        let act = TestData {
+            segment_paths: &segment_paths[..],
+            chunk_size: handle.chunk_size,
+            chunk_count: handle.chunk_count,
+            sector_size: handle.sector_size,
+            sector_count: handle.sector_count,
+            image_size: handle.image_size,
+            stored_md5: stored_md5.as_deref(),
+            stored_sha1: stored_sha1.as_deref(),
+            md5: exp.md5,
+            sha1: exp.sha1,
+            sha256: exp.sha256
+        };
+
+        assert_eq!(&act, exp);
     }
 
     #[test]
