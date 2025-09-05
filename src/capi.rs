@@ -356,7 +356,13 @@ pub unsafe extern "C" fn e01_read(
 mod test {
     use super::*;
 
-    use crate::test_data::*;
+    use crate::{
+        hasher::{HashType, MultiHasher},
+        test_data::*
+    };
+
+    use rand::Rng;
+    use std::collections::HashMap;
 
     const ERROR_OPTS: E01ReaderOptions = E01ReaderOptions {
         corrupt_section_policy: CorruptSectionPolicy::CSP_ERROR,
@@ -428,7 +434,97 @@ mod test {
     }
 
     #[track_caller]
-    fn assert_eq_test_data(handle: &E01Handle, exp: &TestData) {
+    fn do_hash(
+        handle: *mut E01Handle,
+        random_buf_size: bool
+    ) -> HashMap<HashType, String>
+    {
+        let mut hasher = MultiHasher::from([
+            HashType::MD5,
+            HashType::SHA1,
+            HashType::SHA256
+        ]);
+
+        let mut err = std::ptr::null_mut();
+        let mut buf: Vec<u8> = vec![0; 1048576];
+        let mut offset = 0;
+
+        while offset < unsafe { &*handle }.image_size {
+            let buf_size = if random_buf_size {
+                rand::rng().random_range(0..buf.len())
+            }
+            else {
+                buf.len()
+            };
+
+            let read = unsafe {
+                e01_read(
+                    handle,
+                    offset,
+                    buf.as_mut_ptr() as *mut c_char,
+                    buf.len(),
+                    &mut err
+                )
+            };
+
+            assert_err_null(err);
+
+            if read == 0 {
+                break;
+            }
+
+            hasher.update(&buf[..read]);
+
+            offset += read;
+        }
+
+        hasher.finalize()
+            .into_iter()
+            .map(|(k, v)| (k, hex::encode(v)))
+            .collect()
+    }
+
+    #[track_caller]
+    fn assert_eq_test_data(h: *mut E01Handle, exp: &TestData) {
+        let handle = unsafe { &*h };
+
+        let sl = unsafe {
+            slice::from_raw_parts(
+                handle.segment_paths,
+                handle.segment_paths_count
+            )
+        };
+
+        let segment_paths = sl.iter()
+            .map(|p| unsafe { CStr::from_ptr(*p) })
+            .map(|p| p.to_str())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let stored_md5 = ptr_to_opt_hash::<16>(handle.stored_md5);
+        let stored_sha1 = ptr_to_opt_hash::<20>(handle.stored_sha1);
+
+        let hashes = do_hash(h, false);
+
+        let act = TestData {
+            segment_paths: &segment_paths[..],
+            chunk_size: handle.chunk_size,
+            chunk_count: handle.chunk_count,
+            sector_size: handle.sector_size,
+            sector_count: handle.sector_count,
+            image_size: handle.image_size,
+            stored_md5: stored_md5.as_deref(),
+            stored_sha1: stored_sha1.as_deref(),
+            md5: hashes.get(&HashType::MD5).map(String::as_str),
+            sha1: hashes.get(&HashType::SHA1).map(String::as_str),
+            sha256: hashes.get(&HashType::SHA256).map(String::as_str)
+        };
+
+        assert_eq!(&act, exp);
+    }
+
+    #[track_caller]
+    fn assert_eq_test_data_no_hashing(handle: &E01Handle, exp: &TestData) {
         let sl = unsafe {
             slice::from_raw_parts(
                 handle.segment_paths,
@@ -719,7 +815,7 @@ mod test {
         assert!(!h.ptr.is_null());
 
         let handle = h.into_box();
-        assert_eq_test_data(&handle, &IMAGE_E01);
+        assert_eq_test_data_no_hashing(&handle, &IMAGE_E01);
 
         let handle = Box::into_raw(handle);
         unsafe { e01_close(handle); }
@@ -742,7 +838,7 @@ mod test {
         assert!(!h.ptr.is_null());
 
         let handle = h.into_box();
-        assert_eq_test_data(&handle, &IMAGE_E01);
+        assert_eq_test_data_no_hashing(&handle, &IMAGE_E01);
 
         let handle = Box::into_raw(handle);
         unsafe { e01_close(handle); }
@@ -770,7 +866,7 @@ mod test {
         assert!(!h.ptr.is_null());
 
         let handle = h.into_box();
-        assert_eq_test_data(&handle, &MIMAGE_E01);
+        assert_eq_test_data_no_hashing(&handle, &MIMAGE_E01);
 
         let handle = Box::into_raw(handle);
         unsafe { e01_close(handle); }
@@ -796,7 +892,7 @@ mod test {
         assert!(!h.ptr.is_null());
 
         let handle = h.into_box();
-        assert_eq_test_data(&handle, &MIMAGE_E01);
+        assert_eq_test_data_no_hashing(&handle, &MIMAGE_E01);
 
         let handle = Box::into_raw(handle);
         unsafe { e01_close(handle); }
@@ -940,5 +1036,30 @@ mod test {
             c"Requested offset 18446744073709551615 is beyond end of image"
         );
         assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn e01_read_and_hash() {
+        let paths = [c"data/image.E01".as_ptr()];
+        let options = &ERROR_OPTS;
+        let mut err = std::ptr::null_mut();
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                &mut err
+            )
+        });
+
+        assert_err_null(err);
+        assert!(!h.ptr.is_null());
+
+        let mut handle = h.into_box();
+        assert_eq_test_data(&mut *handle, &IMAGE_E01);
+
+        let handle = Box::into_raw(handle);
+        unsafe { e01_close(handle); }
     }
 }
