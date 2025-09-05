@@ -597,5 +597,14 @@ mod test {
 
         let handle = h.into_box();
         assert_eq_test_data(&handle, &IMAGE_E01);
+
+        let handle = unsafe { Box::into_raw(handle) };
+        unsafe { e01_close(handle); }
+    }
+
+    #[test]
+    fn e01_close_null() {
+        // nothing to test here other than that it doesn't crash
+        unsafe { e01_close(std::ptr::null_mut()) };
     }
 }
