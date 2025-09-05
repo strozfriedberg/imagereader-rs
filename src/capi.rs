@@ -598,7 +598,7 @@ mod test {
         let handle = h.into_box();
         assert_eq_test_data(&handle, &IMAGE_E01);
 
-        let handle = unsafe { Box::into_raw(handle) };
+        let handle = Box::into_raw(handle);
         unsafe { e01_close(handle); }
     }
 
