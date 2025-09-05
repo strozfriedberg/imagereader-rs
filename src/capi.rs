@@ -400,6 +400,19 @@ mod test {
     }
 
     #[track_caller]
+    fn assert_err_starts_with(err: *mut E01Error, message: &CStr) {
+        assert!(!err.is_null());
+        let err = unsafe { Box::from_raw(err) };
+
+        assert!(!err.message.is_null());
+        assert_eq!(
+            &(unsafe { CStr::from_ptr(&*err.message) }
+                .to_bytes()[..message.count_bytes()]),
+            message.to_bytes()
+        );
+    }
+
+    #[track_caller]
     fn assert_err_null(err: *mut E01Error) {
         let err = Holder::new(err);
         assert!(err.ptr.is_null());
@@ -499,6 +512,23 @@ mod test {
     }
 
     #[test]
+    fn e01_open_nonexistent_paths_null_err() {
+        let paths = [c"bogus".as_ptr()];
+        let options = &ERROR_OPTS;
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                std::ptr::null_mut()
+            )
+        });
+
+        assert!(h.ptr.is_null());
+    }
+
+    #[test]
     fn e01_open_null_paths() {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -554,6 +584,25 @@ mod test {
     }
 
     #[test]
+    fn e01_open_nonexistent_paths() {
+        let paths = [c"bogus".as_ptr()];
+        let options = &ERROR_OPTS;
+        let mut err = std::ptr::null_mut();
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                &mut err
+            )
+        });
+
+        assert_err_starts_with(err, c"Error reading bogus: ");
+        assert!(h.ptr.is_null());
+    }
+
+    #[test]
     fn e01_open_glob_null_path_null_err() {
         let options = &ERROR_OPTS;
 
@@ -576,6 +625,22 @@ mod test {
             e01_open_glob(
                 path,
                 std::ptr::null(),
+                std::ptr::null_mut()
+            )
+        });
+
+        assert!(h.ptr.is_null());
+    }
+
+    #[test]
+    fn e01_open_glob_nonexistent_path_null_err() {
+        let path = c"bogus".as_ptr();
+        let options = &ERROR_OPTS;
+
+        let h = Holder::new(unsafe {
+            e01_open_glob(
+                path,
+                options,
                 std::ptr::null_mut()
             )
         });
@@ -618,7 +683,25 @@ mod test {
     }
 
     #[test]
-    fn e01_open_one_segment_null_err() {
+    fn e01_open_glob_nonexistent_path() {
+        let path = c"bogus".as_ptr();
+        let options = &ERROR_OPTS;
+        let mut err = std::ptr::null_mut();
+
+        let h = Holder::new(unsafe {
+            e01_open_glob(
+                path,
+                options,
+                &mut err
+            )
+        });
+
+        assert_err_starts_with(err, c"Error reading bogus: ");
+        assert!(h.ptr.is_null());
+    }
+
+    #[test]
+    fn e01_open_one_segment() {
         let paths = [c"data/image.E01".as_ptr()];
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -643,7 +726,30 @@ mod test {
     }
 
     #[test]
-    fn e01_open_two_segments_null_err() {
+    fn e01_open_one_segment_null_err() {
+        let paths = [c"data/image.E01".as_ptr()];
+        let options = &ERROR_OPTS;
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                std::ptr::null_mut()
+            )
+        });
+
+        assert!(!h.ptr.is_null());
+
+        let handle = h.into_box();
+        assert_eq_test_data(&handle, &IMAGE_E01);
+
+        let handle = Box::into_raw(handle);
+        unsafe { e01_close(handle); }
+    }
+
+    #[test]
+    fn e01_open_two_segments() {
         let paths = [
             c"data/mimage.E01".as_ptr(),
             c"data/mimage.E02".as_ptr()
@@ -661,6 +767,32 @@ mod test {
         });
 
         assert_err_null(err);
+        assert!(!h.ptr.is_null());
+
+        let handle = h.into_box();
+        assert_eq_test_data(&handle, &MIMAGE_E01);
+
+        let handle = Box::into_raw(handle);
+        unsafe { e01_close(handle); }
+    }
+
+    #[test]
+    fn e01_open_two_segments_null_err() {
+        let paths = [
+            c"data/mimage.E01".as_ptr(),
+            c"data/mimage.E02".as_ptr()
+        ];
+        let options = &ERROR_OPTS;
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                std::ptr::null_mut()
+            )
+        });
+
         assert!(!h.ptr.is_null());
 
         let handle = h.into_box();
