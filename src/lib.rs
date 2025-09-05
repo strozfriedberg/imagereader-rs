@@ -67,14 +67,24 @@ mod test {
 
     #[track_caller]
     fn assert_eq_test_data(exp: &TestData, options: &E01ReaderOptions) {
-        let reader = E01Reader::open_glob(exp.path, options).unwrap();
+        let reader = E01Reader::open_glob(
+            exp.segment_paths[0],
+            options
+        ).unwrap();
+
         let hashes = do_hash(&reader, false);
 
         let stored_md5 = reader.stored_md5.map(hex::encode);
         let stored_sha1 = reader.stored_sha1.map(hex::encode);
 
+        let segment_paths = reader.segment_paths
+            .iter()
+            .map(|p| p.to_str())
+            .collect::<Option<Vec<_>>>()
+            .unwrap();
+
         let act = TestData {
-            path: exp.path,
+            segment_paths: &segment_paths[..],
             chunk_size: reader.chunk_size,
             chunk_count: reader.chunk_count,
             sector_size: reader.sector_size,

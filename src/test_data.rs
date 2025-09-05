@@ -1,7 +1,7 @@
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TestData<'a> {
-    pub path: &'a str,
+    pub segment_paths: &'a [&'a str],
     pub chunk_size: usize,
     pub chunk_count: usize,
     pub sector_size: usize,
@@ -15,7 +15,7 @@ pub struct TestData<'a> {
 }
 
 pub const IMAGE_E01: TestData = TestData {
-    path: "data/image.E01",
+    segment_paths: &["data/image.E01"],
     chunk_size: 32768,
     chunk_count: 41,
     sector_size: 512,
@@ -29,7 +29,7 @@ pub const IMAGE_E01: TestData = TestData {
 };
 
 pub const MIMAGE_E01: TestData = TestData {
-    path: "data/mimage.E01",
+    segment_paths: &["data/mimage.E01", "data/mimage.E02"],
     chunk_size: 32768,
     chunk_count: 27,
     sector_size: 512,
@@ -43,7 +43,7 @@ pub const MIMAGE_E01: TestData = TestData {
 };
 
 pub const BAD_CHUNK_E01: TestData = TestData {
-    path: "data/bad_chunk.E01",
+    segment_paths: &["data/bad_chunk.E01"],
     chunk_size: 32768,
     chunk_count: 41,
     sector_size: 512,
@@ -57,7 +57,7 @@ pub const BAD_CHUNK_E01: TestData = TestData {
 };
 
 pub const BAD_CHUNK_E01_ZEROED: TestData = TestData {
-    path: "data/bad_chunk.E01",
+    segment_paths: &["data/bad_chunk.E01"],
     chunk_size: 32768,
     chunk_count: 41,
     sector_size: 512,
