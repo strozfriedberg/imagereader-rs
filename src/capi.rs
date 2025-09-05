@@ -330,15 +330,15 @@ pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_read(
-    reader: *mut E01Handle,
+    handle: *mut E01Handle,
     offset: usize,
     buf: *mut c_char,
     buflen: usize,
     err: *mut *mut E01Error
 ) -> usize
 {
-    if reader.is_null() {
-       fill_error("reader is null", err);
+    if handle.is_null() {
+       fill_error("handle is null", err);
        return 0;
     }
 
@@ -348,7 +348,7 @@ pub unsafe extern "C" fn e01_read(
     }
 
     let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-    unsafe { &*(*reader).reader }.read_at_offset(offset, buf)
+    unsafe { &*(*handle).reader }.read_at_offset(offset, buf)
         .unwrap_or_else(|e| { fill_error(e, err); 0 })
 }
 
@@ -806,5 +806,139 @@ mod test {
     fn e01_close_null() {
         // nothing to test here other than that it doesn't crash
         unsafe { e01_close(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn e01_read_null_handle_null_err() {
+        let mut buf: [c_char; 1] = [0];
+
+        let r = unsafe {
+            e01_read(
+                std::ptr::null_mut(),
+                0,
+                buf.as_mut_ptr(),
+                buf.len(),
+                std::ptr::null_mut()
+            )
+        };
+
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn e01_read_null_buffer_null_err() {
+        let paths = [c"data/image.E01".as_ptr()];
+        let options = &ERROR_OPTS;
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                std::ptr::null_mut()
+            )
+        });
+
+        assert!(!h.ptr.is_null());
+
+        let r = unsafe {
+            e01_read(
+                h.ptr,
+                0,
+                std::ptr::null_mut(),
+                1,
+                std::ptr::null_mut()
+            )
+        };
+
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn e01_read_null_handle() {
+        let mut buf: [c_char; 1] = [0];
+        let mut err = std::ptr::null_mut();
+
+        let r = unsafe {
+            e01_read(
+                std::ptr::null_mut(),
+                0,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err
+            )
+        };
+
+        assert_err(err, c"handle is null");
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn e01_read_null_buffer() {
+        let paths = [c"data/image.E01".as_ptr()];
+        let options = &ERROR_OPTS;
+        let mut err = std::ptr::null_mut();
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                &mut err
+            )
+        });
+
+        assert_err_null(err);
+        assert!(!h.ptr.is_null());
+
+        let r = unsafe {
+            e01_read(
+                h.ptr,
+                0,
+                std::ptr::null_mut(),
+                1,
+                &mut err
+            )
+        };
+
+        assert_err(err, c"buf is null");
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn e01_read_offset_past_end() {
+        let paths = [c"data/image.E01".as_ptr()];
+        let options = &ERROR_OPTS;
+        let mut err = std::ptr::null_mut();
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                &mut err
+            )
+        });
+
+        assert_err_null(err);
+        assert!(!h.ptr.is_null());
+
+        let mut buf: [c_char; 1] = [0];
+
+        let r = unsafe {
+            e01_read(
+                h.ptr,
+                usize::MAX,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err
+            )
+        };
+
+        assert_err_starts_with(
+            err,
+            c"Requested offset 18446744073709551615 is beyond end of image"
+        );
+        assert_eq!(r, 0);
     }
 }
