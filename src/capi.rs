@@ -357,73 +357,66 @@ mod test {
 
     #[test]
     fn e01_open_null_paths_null_err() {
-        let options = Box::into_raw(Box::new(ERROR_OPTS));
+        let options = &ERROR_OPTS;
 
-        assert_eq!(
-            unsafe {
-                e01_open(
-                    std::ptr::null(),
-                    1,
-                    options,
-                    std::ptr::null_mut()
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle = unsafe {
+            e01_open(
+                std::ptr::null(),
+                1,
+                options,
+                std::ptr::null_mut()
+            )
+        };
     }
 
     #[test]
     fn e01_open_null_options_null_err() {
         let paths = [c"whatever".as_ptr()];
 
-        assert_eq!(
-            unsafe {
-                e01_open(
-                    paths.as_ptr(),
-                    paths.len(),
-                    std::ptr::null(),
-                    std::ptr::null_mut()
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle = unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                std::ptr::null(),
+                std::ptr::null_mut()
+            )
+        };
+
+        assert_eq!(handle, std::ptr::null_mut());
     }
 
     #[test]
     fn e01_open_zero_paths_null_err() {
         let paths = [c"whatever".as_ptr()];
-        let options = Box::into_raw(Box::new(ERROR_OPTS));
+        let options = &ERROR_OPTS;
 
-        assert_eq!(
-            unsafe {
-                e01_open(
-                    paths.as_ptr(),
-                    0,
-                    options,
-                    std::ptr::null_mut()
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle = unsafe {
+            e01_open(
+                paths.as_ptr(),
+                0,
+                options,
+                std::ptr::null_mut()
+            )
+        };
+
+        assert_eq!(handle, std::ptr::null_mut());
     }
 
     #[test]
     fn e01_open_null_paths() {
-        let options = Box::into_raw(Box::new(ERROR_OPTS));
+        let options = &ERROR_OPTS;
         let mut err: *mut E01Error = std::ptr::null_mut();
 
-        assert_eq!(
-            unsafe {
-                e01_open(
-                    std::ptr::null(),
-                    1,
-                    options,
-                    &mut err
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle = unsafe {
+            e01_open(
+                std::ptr::null(),
+                1,
+                options,
+                &mut err
+            )
+        };
 
+        assert_eq!(handle, std::ptr::null_mut());
         assert_err(err, c"segment_paths is null");
     }
 
@@ -432,90 +425,82 @@ mod test {
         let paths = [c"whatever".as_ptr()];
         let mut err: *mut E01Error = std::ptr::null_mut();
 
-        assert_eq!(
-            unsafe {
-                e01_open(
-                    paths.as_ptr(),
-                    paths.len(),
-                    std::ptr::null(),
-                    &mut err
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle = unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                std::ptr::null(),
+                &mut err
+            )
+        };
 
+        assert_eq!(handle, std::ptr::null_mut());
         assert_err(err, c"options is null");
     }
 
     #[test]
     fn e01_open_zero_paths() {
         let paths = [c"whatever".as_ptr()];
-        let options = Box::into_raw(Box::new(ERROR_OPTS));
+        let options = &ERROR_OPTS;
         let mut err: *mut E01Error = std::ptr::null_mut();
 
-        assert_eq!(
-            unsafe {
-                e01_open(
-                    paths.as_ptr(),
-                    0,
-                    options,
-                    &mut err
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle = unsafe {
+            e01_open(
+                paths.as_ptr(),
+                0,
+                options,
+                &mut err
+            )
+        };
 
+        assert_eq!(handle, std::ptr::null_mut());
         assert_err(err, c"segment_paths_count is zero");
     }
 
     #[test]
     fn e01_open_glob_null_path_null_err() {
-        let options = Box::into_raw(Box::new(ERROR_OPTS));
+        let options = &ERROR_OPTS;
 
-        assert_eq!(
-            unsafe {
-                e01_open_glob(
-                    std::ptr::null(),
-                    options,
-                    std::ptr::null_mut()
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle = unsafe {
+            e01_open_glob(
+                std::ptr::null(),
+                options,
+                std::ptr::null_mut()
+            )
+        };
+
+        assert_eq!(handle, std::ptr::null_mut());
     }
 
     #[test]
     fn e01_open_glob_null_options_null_err() {
         let path = c"whatever".as_ptr();
 
-        assert_eq!(
-            unsafe {
-                e01_open_glob(
-                    path,
-                    std::ptr::null(),
-                    std::ptr::null_mut()
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle = unsafe {
+            e01_open_glob(
+                path,
+                std::ptr::null(),
+                std::ptr::null_mut()
+            )
+        };
+
+        assert_eq!(handle, std::ptr::null_mut());
     }
 
     #[test]
     fn e01_open_glob_null_path() {
-        let options = Box::into_raw(Box::new(ERROR_OPTS));
+        let options = &ERROR_OPTS;
         let mut err: *mut E01Error = std::ptr::null_mut();
 
-        assert_eq!(
-            unsafe {
-                e01_open_glob(
-                    std::ptr::null(),
-                    options,
-                    &mut err
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle =  unsafe {
+            e01_open_glob(
+                std::ptr::null(),
+                options,
+                &mut err
+            )
+        };
 
+        assert_eq!(handle, std::ptr::null_mut());
         assert_err(err, c"example_segment_path is null");
     }
 
@@ -524,17 +509,15 @@ mod test {
         let path = c"whatever".as_ptr();
         let mut err: *mut E01Error = std::ptr::null_mut();
 
-        assert_eq!(
-            unsafe {
-                e01_open_glob(
-                    path,
-                    std::ptr::null(),
-                    &mut err
-                )
-            },
-            std::ptr::null_mut()
-        );
+        let handle = unsafe {
+            e01_open_glob(
+                path,
+                std::ptr::null(),
+                &mut err
+            )
+        };
 
+        assert_eq!(handle, std::ptr::null_mut());
         assert_err(err, c"options is null");
     }
 }
