@@ -146,6 +146,17 @@ where
         .collect::<Result<Vec<_>, _>>()
 }
 
+fn opt_array_to_ptr<const N: usize>(a: Option<[u8; N]>) -> *const u8 {
+    match a {
+        None => std::ptr::null_mut(),
+        Some(a) => {
+            let mut v = a.to_vec();
+            v.shrink_to_fit();
+            ManuallyDrop::new(v).as_ptr()
+        }
+    }
+}
+
 impl E01Handle {
     fn new(reader: E01Reader) -> Result<Self, String> {
         // convert paths into CStrings, which will be dropped on error
@@ -171,14 +182,8 @@ impl E01Handle {
                 sector_count: reader.sector_count,
                 sector_size: reader.sector_size,
                 image_size: reader.image_size,
-                stored_md5: reader.stored_md5.map_or(
-                    std::ptr::null_mut(),
-                    |h| h.as_ptr()
-                ),
-                stored_sha1: reader.stored_sha1.map_or(
-                    std::ptr::null_mut(),
-                    |h| h.as_ptr()
-                ),
+                stored_md5: opt_array_to_ptr(reader.stored_md5),
+                stored_sha1: opt_array_to_ptr(reader.stored_sha1),
                 reader: Box::into_raw(Box::new(reader))
             }
         )
@@ -193,6 +198,19 @@ impl Drop for E01Handle {
                 self.segment_paths_count
             );
         }
+
+        if !self.stored_md5.is_null() {
+            drop(unsafe {
+                Vec::from_raw_parts(self.stored_md5 as *mut u8, 16, 16)
+            });
+        }
+
+        if !self.stored_sha1.is_null() {
+            drop(unsafe {
+                Vec::from_raw_parts(self.stored_sha1 as *mut u8, 20, 20)
+            });
+        }
+
         drop(unsafe { Box::from_raw(self.reader) });
     }
 }
@@ -387,6 +405,15 @@ mod test {
         assert!(err.ptr.is_null());
     }
 
+    fn ptr_to_opt_hash<const N: usize>(ptr: *const u8) -> Option<String> {
+        match ptr.is_null() {
+            true => None,
+            false => Some(hex::encode(unsafe {
+                slice::from_raw_parts(ptr, N)
+            }))
+        }
+    }
+
     #[track_caller]
     fn assert_eq_test_data(handle: &E01Handle, exp: &TestData) {
         let sl = unsafe {
@@ -402,19 +429,8 @@ mod test {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        let stored_md5 = match handle.stored_md5.is_null() {
-            true => None,
-            false => Some(hex::encode(unsafe {
-                slice::from_raw_parts(handle.stored_md5, 16)
-            }))
-        };
-
-        let stored_sha1 = match handle.stored_sha1.is_null() {
-            true => None,
-            false => Some(hex::encode(unsafe {
-                slice::from_raw_parts(handle.stored_sha1, 20)
-            }))
-        };
+        let stored_md5 = ptr_to_opt_hash::<16>(handle.stored_md5);
+        let stored_sha1 = ptr_to_opt_hash::<20>(handle.stored_sha1);
 
         let act = TestData {
             segment_paths: &segment_paths[..],
