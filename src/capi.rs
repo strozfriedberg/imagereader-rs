@@ -404,15 +404,41 @@ mod test {
     }
 
     #[track_caller]
-    fn assert_err_starts_with(err: *mut E01Error, message: &CStr) {
+    fn assert_err_starts_with(err: *mut E01Error, prefix: &CStr) {
         assert!(!err.is_null());
         let err = unsafe { Box::from_raw(err) };
 
         assert!(!err.message.is_null());
+
+        let message = unsafe { CStr::from_ptr(&*err.message) };
+
+        let msg_b = message.to_bytes();
+        let pre_b = prefix.to_bytes();
+
         assert_eq!(
-            &(unsafe { CStr::from_ptr(&*err.message) }
-                .to_bytes()[..message.count_bytes()]),
-            message.to_bytes()
+            &msg_b[..pre_b.len()],
+            pre_b,
+            "{message:?} does not start with {prefix:?}"
+        );
+    }
+
+    #[track_caller]
+    fn assert_err_contains(err: *mut E01Error, substr: &CStr) {
+        assert!(!err.is_null());
+        let err = unsafe { Box::from_raw(err) };
+
+        assert!(!err.message.is_null());
+
+        let message = unsafe { CStr::from_ptr(&*err.message) };
+
+        let msg_b = message.to_bytes();
+        let sub_b = substr.to_bytes();
+
+        // This is a naive way to find a substring; we would want something
+        // faster like memchr in production, but it's fine for a test.
+        assert!(
+            msg_b.windows(sub_b.len()).any(|w| w == sub_b),
+            "{message:?} does not contain with {substr:?}"
         );
     }
 
@@ -1001,6 +1027,43 @@ mod test {
             c"Requested offset 18446744073709551615 is beyond end of image"
         );
         assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn e01_read_offset_bad_chunk_checksum() {
+        let paths = [c"data/bad_chunk.E01".as_ptr()];
+        let options = &ERROR_OPTS;
+        let mut err = std::ptr::null_mut();
+
+        let h = Holder::new(unsafe {
+            e01_open(
+                paths.as_ptr(),
+                paths.len(),
+                options,
+                &mut err
+            )
+        });
+
+        assert_err_null(err);
+        assert!(!h.ptr.is_null());
+
+        let mut buf: [c_char; 1] = [0];
+        let image_size = unsafe { (*h.ptr).image_size };
+
+        let r = unsafe {
+            e01_read(
+                h.ptr,
+                0,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err
+            )
+        };
+
+        let mut handle = h.into_box();
+
+        assert_eq!(r, 0);
+        assert_err_contains(err, c"Chunk 0 checksum failed");
     }
 
     #[test]
