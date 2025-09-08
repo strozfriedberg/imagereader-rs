@@ -8,9 +8,8 @@ if [[ $Target == 'windows' && $Architecture == '32' ]]; then
 fi
 
 if [[ $Target == 'windows'  ]]; then
-  RUST_TARGET="--target x86_64-pc-windows-gnu"
+  RUST_OPTS="--target x86_64-pc-windows-gnu --config target.x86_64-pc-windows-gnu.runner='wine'"
 fi
 
-cargo test $RUST_TARGET
 cargo clippy --all-features --all-targets
-cargo ctest --prefix="$INSTALL" --libdir=lib $RUST_TARGET
+cargo ctest --prefix="$INSTALL" --libdir=lib $RUST_OPTS

@@ -7,4 +7,8 @@ if [[ $Target == 'windows' && $Architecture == '32' ]]; then
   exit
 fi
 
-cargo cinstall --prefix="$INSTALL" --libdir=lib
+if [[ $Target == 'windows'  ]]; then
+  RUST_OPTS="--target x86_64-pc-windows-gnu"
+fi
+
+cargo cinstall --prefix="$INSTALL" --libdir=lib $RUST_OPTS
