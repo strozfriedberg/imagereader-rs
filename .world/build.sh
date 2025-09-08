@@ -13,4 +13,4 @@ fi
 
 cargo test $RUST_TARGET
 cargo clippy --all-features --all-targets
-cargo cbuild --prefix="$INSTALL" --libdir=lib $RUST_TARGET
+cargo ctest --prefix="$INSTALL" --libdir=lib $RUST_TARGET
