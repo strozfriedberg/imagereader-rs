@@ -550,7 +550,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_null_paths_null_err() {
+    fn test_e01_open_null_paths_null_err() {
         let options = &ERROR_OPTS;
 
         let h = Holder::new(unsafe {
@@ -566,7 +566,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_null_options_null_err() {
+    fn test_e01_open_null_options_null_err() {
         let paths = [c"whatever".as_ptr()];
 
         let h = Holder::new(unsafe {
@@ -582,7 +582,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_zero_paths_null_err() {
+    fn test_e01_open_zero_paths_null_err() {
         let paths = [c"whatever".as_ptr()];
         let options = &ERROR_OPTS;
 
@@ -599,7 +599,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_nonexistent_paths_null_err() {
+    fn test_e01_open_nonexistent_paths_null_err() {
         let paths = [c"bogus".as_ptr()];
         let options = &ERROR_OPTS;
 
@@ -616,7 +616,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_null_paths() {
+    fn test_e01_open_null_paths() {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
@@ -634,7 +634,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_null_options() {
+    fn test_e01_open_null_options() {
         let paths = [c"whatever".as_ptr()];
         let mut err = std::ptr::null_mut();
 
@@ -652,7 +652,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_zero_paths() {
+    fn test_e01_open_zero_paths() {
         let paths = [c"whatever".as_ptr()];
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -671,7 +671,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_nonexistent_paths() {
+    fn test_e01_open_nonexistent_paths() {
         let paths = [c"bogus".as_ptr()];
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -690,7 +690,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_glob_null_path_null_err() {
+    fn test_e01_open_glob_null_path_null_err() {
         let options = &ERROR_OPTS;
 
         let h = Holder::new(unsafe {
@@ -705,7 +705,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_glob_null_options_null_err() {
+    fn test_e01_open_glob_null_options_null_err() {
         let path = c"whatever".as_ptr();
 
         let h = Holder::new(unsafe {
@@ -720,7 +720,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_glob_nonexistent_path_null_err() {
+    fn test_e01_open_glob_nonexistent_path_null_err() {
         let path = c"bogus".as_ptr();
         let options = &ERROR_OPTS;
 
@@ -736,7 +736,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_glob_null_path() {
+    fn test_e01_open_glob_null_path() {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
@@ -753,7 +753,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_glob_null_options() {
+    fn test_e01_open_glob_null_options() {
         let path = c"whatever".as_ptr();
         let mut err = std::ptr::null_mut();
 
@@ -770,7 +770,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_glob_nonexistent_path() {
+    fn test_e01_open_glob_nonexistent_path() {
         let path = c"bogus".as_ptr();
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -788,7 +788,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_one_segment() {
+    fn test_e01_open_one_segment() {
         let paths = [c"data/image.E01".as_ptr()];
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -813,7 +813,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_one_segment_null_err() {
+    fn test_e01_open_one_segment_null_err() {
         let paths = [c"data/image.E01".as_ptr()];
         let options = &ERROR_OPTS;
 
@@ -836,7 +836,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_two_segments() {
+    fn test_e01_open_two_segments() {
         let paths = [
             c"data/mimage.E01".as_ptr(),
             c"data/mimage.E02".as_ptr()
@@ -864,7 +864,7 @@ mod test {
     }
 
     #[test]
-    fn e01_open_two_segments_null_err() {
+    fn test_e01_open_two_segments_null_err() {
         let paths = [
             c"data/mimage.E01".as_ptr(),
             c"data/mimage.E02".as_ptr()
@@ -890,13 +890,13 @@ mod test {
     }
 
     #[test]
-    fn e01_close_null() {
+    fn test_e01_close_null() {
         // nothing to test here other than that it doesn't crash
         unsafe { e01_close(std::ptr::null_mut()) };
     }
 
     #[test]
-    fn e01_read_null_handle_null_err() {
+    fn test_e01_read_null_handle_null_err() {
         let mut buf: [c_char; 1] = [0];
 
         let r = unsafe {
@@ -913,7 +913,7 @@ mod test {
     }
 
     #[test]
-    fn e01_read_null_buffer_null_err() {
+    fn test_e01_read_null_buffer_null_err() {
         let paths = [c"data/image.E01".as_ptr()];
         let options = &ERROR_OPTS;
 
@@ -942,7 +942,7 @@ mod test {
     }
 
     #[test]
-    fn e01_read_null_handle() {
+    fn test_e01_read_null_handle() {
         let mut buf: [c_char; 1] = [0];
         let mut err = std::ptr::null_mut();
 
@@ -961,7 +961,7 @@ mod test {
     }
 
     #[test]
-    fn e01_read_null_buffer() {
+    fn test_e01_read_null_buffer() {
         let paths = [c"data/image.E01".as_ptr()];
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -993,7 +993,7 @@ mod test {
     }
 
     #[test]
-    fn e01_read_offset_past_end() {
+    fn test_e01_read_offset_past_end() {
         let paths = [c"data/image.E01".as_ptr()];
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -1030,7 +1030,7 @@ mod test {
     }
 
     #[test]
-    fn e01_read_offset_bad_chunk_checksum() {
+    fn test_e01_read_offset_bad_chunk_checksum() {
         let paths = [c"data/bad_chunk.E01".as_ptr()];
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -1067,7 +1067,7 @@ mod test {
     }
 
     #[test]
-    fn e01_read_and_hash() {
+    fn test_e01_read_and_hash() {
         let paths = [c"data/image.E01".as_ptr()];
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
