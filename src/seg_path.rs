@@ -77,6 +77,19 @@ impl ExistsChecker for FileChecker {
     }
 }
 
+fn replace_extension<T: AsRef<Path>>(path: T, ext: &str) -> Option<PathBuf> {
+    // TODO: use Path::with_added_extension() once it's available
+    let path = path.as_ref();
+    let stem = path.file_stem()?;
+    let mut repl = path.parent()
+        .and_then(|p| Some(p.join(stem)))
+        .or_else(|| Some(Path::new(stem).to_path_buf()))?
+        .into_os_string();
+    repl.push(".");
+    repl.push(ext);
+    Some(repl.into())
+}
+
 fn validate_segment_path<T: AsRef<Path>, C: ExistsChecker>(
     base_path: T,
     ext: &str,
@@ -88,12 +101,15 @@ fn validate_segment_path<T: AsRef<Path>, C: ExistsChecker>(
     // Hilariously, EnCase will create .E02 etc. if you start with
     // .e01, so the extensions can actually differ in case through
     // the sequence...
-    let seg_path_uc = base_path.with_extension(ext);
+    let seg_path_uc = replace_extension(base_path, ext)?;
     if checker.is_file(&seg_path_uc) {
         Some(seg_path_uc)
     }
     else {
-        let seg_path_lc = base_path.with_extension(ext.to_ascii_lowercase());
+        let seg_path_lc = replace_extension(
+            base_path,
+            &ext.to_ascii_lowercase()
+        )?;
         if checker.is_file(&seg_path_lc) {
             Some(seg_path_lc)
         }
@@ -117,7 +133,9 @@ fn find_segment_paths_impl<T: AsRef<Path>, C: ExistsChecker>(
     let ext_start = proto_ext.chars().next()
         .ok_or(UnrecognizedExtension(proto_path.into()))?;
 
-    let base_path = proto_path.with_extension("");
+    let base_path = replace_extension(proto_path, "")
+        .ok_or(UnrecognizedExtension(proto_path.into()))?
+        .to_path_buf();
 
     // Get the segment paths
     Ok(
@@ -313,7 +331,8 @@ mod test {
         let good = [
             (PathBuf::from("a/img.E01"), "E01", SeqChecker::new([true, false])),
             (PathBuf::from("a/img.E02"), "E02", SeqChecker::new([true, false])),
-            (PathBuf::from("a/img.e02"), "E02", SeqChecker::new([false, true]))
+            (PathBuf::from("a/img.e02"), "E02", SeqChecker::new([false, true])),
+            (PathBuf::from("a/b.c.E01"), "E01", SeqChecker::new([true, false]))
         ];
 
         for (p, exp_ext, mut ch) in good {
@@ -330,7 +349,8 @@ mod test {
             ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
             ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
             ("a/i.e01", vec!["a/i.e01", "a/i.E02"], SeqChecker::new([false, true, true])),
-            ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, true]))
+            ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, true])),
+            ("a/i.j.e02", vec!["a/i.j.E01", "a/i.j.e02"], SeqChecker::new([true, false, true]))
         ];
 
         for (proto, paths, ch) in cases {
