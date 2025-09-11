@@ -147,8 +147,8 @@ struct Segment {
 
 struct SegmentComponents {
     volume: Option<VolumeSection>,
-    md5: Option<Vec<u8>>,
-    sha1: Option<Vec<u8>>,
+    md5: Option<[u8; 16]>,
+    sha1: Option<[u8; 20]>,
     chunks: Vec<Chunk>,
     done: bool
 }
@@ -193,10 +193,10 @@ fn read_segment<T: AsRef<Path>>(
                 }
             },
             Section::Sectors(eos) => end_of_sectors = eos,
-            Section::Hash(h) => md5 = Some(h.md5().clone()),
-            Section::Digest(d) => {
-                md5 = Some(d.md5().clone());
-                sha1 = Some(d.sha1().clone());
+            Section::Hash(h) => md5 = Some(h),
+            Section::Digest(d_md5, d_sha1) => {
+                md5 = Some(d_md5);
+                sha1 = Some(d_sha1);
             },
             Section::Done => { done = true; break; },
             _ => {}
@@ -326,11 +326,20 @@ pub struct E01ReaderOptions {
 
 #[derive(Debug)]
 pub struct E01Reader {
-    volume: VolumeSection,
     segments: Vec<Segment>,
     chunks: Vec<Chunk>,
-    stored_md5: Option<Vec<u8>>,
-    stored_sha1: Option<Vec<u8>>,
+
+    pub chunk_size: usize,
+    pub chunk_count: usize,
+    pub sector_count: usize,
+    pub sector_size: usize,
+    pub image_size: usize,
+
+    pub stored_md5: Option<[u8; 16]>,
+    pub stored_sha1: Option<[u8; 20]>,
+
+    pub segment_paths: Vec<PathBuf>,
+
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy
 }
@@ -366,16 +375,17 @@ impl E01Reader {
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
-        let mut segment_paths = segment_paths.into_iter().peekable();
+        let mut sp_itr = segment_paths.into_iter().peekable();
 
         // check that there are some segment files
-        segment_paths.peek().ok_or(OpenError::NoSegmentFiles)?;
+        sp_itr.peek().ok_or(OpenError::NoSegmentFiles)?;
 
         let mut volume = None;
         let mut stored_md5 = None;
         let mut stored_sha1 = None;
 
         let mut segments = vec![];
+        let mut segment_paths = vec![];
         let mut chunks = vec![];
 
         let mut done = false;
@@ -383,7 +393,7 @@ impl E01Reader {
         let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
         // read segments
-        for sp in segment_paths.by_ref() {
+        for sp in sp_itr.by_ref() {
             let sp = sp.as_ref();
 
             let _span = debug_span!("", segment_path = ?sp).entered();
@@ -449,6 +459,8 @@ impl E01Reader {
                 io
             });
 
+            segment_paths.push(sp.into());
+
             if seg_done {
                 done = true;
                 break;
@@ -456,7 +468,7 @@ impl E01Reader {
         }
 
         if done {
-            if segment_paths.next().is_some() {
+            if sp_itr.next().is_some() {
                 warn!("more segments after finding done section");
             }
         }
@@ -476,12 +488,22 @@ impl E01Reader {
             return Err(OpenError::TooFewChunks(chunk_count, exp_chunk_count));
         }
 
+        let chunk_size = volume.chunk_size();
+        let sector_count = volume.total_sector_count as usize;
+        let sector_size = volume.bytes_per_sector as usize;
+        let image_size = volume.max_offset();
+
         Ok(E01Reader {
-            volume,
             segments,
             chunks,
+            chunk_count,
+            chunk_size,
+            sector_count,
+            sector_size,
+            image_size,
             stored_md5,
             stored_sha1,
+            segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy
         })
@@ -493,23 +515,22 @@ impl E01Reader {
         buf: &mut [u8]
     ) -> Result<usize, ReadError>
     {
-        let image_size = self.image_size();
-        if offset > image_size {
-            return Err(ReadError::OffsetBeyondEnd(offset, image_size));
+        if offset > self.image_size {
+            return Err(ReadError::OffsetBeyondEnd(offset, self.image_size));
         }
 
         let mut bytes_read = 0;
         let mut remaining_buf = &mut buf[..];
 
-        while !remaining_buf.is_empty() && offset < image_size {
-            let chunk_number = offset / self.chunk_size();
-            debug_assert!(chunk_number < self.volume.chunk_count as usize);
+        while !remaining_buf.is_empty() && offset < self.image_size {
+            let chunk_number = offset / self.chunk_size;
+            debug_assert!(chunk_number < self.chunk_count);
 
             let chunk_index = chunk_number;
             let chunk = &self.chunks[chunk_index];
             let seg = &self.segments[chunk.segment];
 
-            eprintln!("reading {chunk_index} / {}", self.volume.chunk_count);
+            eprintln!("reading {chunk_index} / {}", self.chunk_count);
 
             let mut data = read_chunk(
                 &self.chunks[chunk_index],
@@ -519,11 +540,11 @@ impl E01Reader {
                 remaining_buf
             ).map_err(ReadError::from).map_err(|e| e.with_path(&seg.path))?;
 
-            if chunk_number * self.chunk_size() + data.len() > image_size {
-                data.truncate(image_size - chunk_number * self.chunk_size());
+            if chunk_number * self.chunk_size + data.len() > self.image_size {
+                data.truncate(self.image_size - chunk_number * self.chunk_size);
             }
 
-            let data_offset = offset % self.chunk_size();
+            let data_offset = offset % self.chunk_size;
 
             if buf.len() < bytes_read || data.len() < data_offset {
                 println!("todo");
@@ -533,45 +554,13 @@ impl E01Reader {
             remaining_buf = &mut buf[bytes_read..bytes_read + remaining_size];
             remaining_buf.copy_from_slice(&data[data_offset..data_offset + remaining_size]);
 
-            debug_assert!(offset + remaining_size <= image_size);
+            debug_assert!(offset + remaining_size <= self.image_size);
 
             bytes_read += remaining_size;
             offset += remaining_size;
         }
 
         Ok(bytes_read)
-    }
-
-    pub fn chunk_size(&self) -> usize {
-        self.volume.chunk_size()
-    }
-
-    pub fn sector_size(&self) -> usize {
-        self.volume.bytes_per_sector as usize
-    }
-
-    pub fn image_size(&self) -> usize {
-        self.volume.max_offset()
-    }
-
-    pub fn get_stored_md5(&self) -> Option<&[u8]> {
-        self.stored_md5.as_deref()
-    }
-
-    pub fn get_stored_sha1(&self) -> Option<&[u8]> {
-        self.stored_sha1.as_deref()
-    }
-
-    pub fn segment_paths(&self) -> impl Iterator<Item = &PathBuf> {
-        self.segments.iter().map(|s| &s.path)
-    }
-
-    pub fn segment_count(&self) -> usize {
-        self.segments.len()
-    }
-
-    pub fn segment_path(&self, index: usize) -> Option<&Path> {
-        self.segments.get(index).map(|s| &s.path).map(|p| &**p)
     }
 }
 

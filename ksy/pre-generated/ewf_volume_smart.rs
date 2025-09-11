@@ -25,7 +25,7 @@ pub struct EwfVolumeSmart {
     pub _self: SharedType<Self>,
     unknown1: RefCell<u32>,
     number_of_chunks: RefCell<u32>,
-    sector_per_chunk: RefCell<u32>,
+    sectors_per_chunk: RefCell<u32>,
     bytes_per_sector: RefCell<u32>,
     number_of_sectors: RefCell<u32>,
     unknown2: RefCell<Vec<u8>>,
@@ -53,7 +53,7 @@ impl KStruct for EwfVolumeSmart {
         let _r = _rrc.as_ref().unwrap();
         *self_rc.unknown1.borrow_mut() = _io.read_u4le()?.into();
         *self_rc.number_of_chunks.borrow_mut() = _io.read_u4le()?.into();
-        *self_rc.sector_per_chunk.borrow_mut() = _io.read_u4le()?.into();
+        *self_rc.sectors_per_chunk.borrow_mut() = _io.read_u4le()?.into();
         *self_rc.bytes_per_sector.borrow_mut() = _io.read_u4le()?.into();
         *self_rc.number_of_sectors.borrow_mut() = _io.read_u4le()?.into();
         *self_rc.unknown2.borrow_mut() = _io.read_bytes(20 as usize)?.into();
@@ -76,8 +76,8 @@ impl EwfVolumeSmart {
     }
 }
 impl EwfVolumeSmart {
-    pub fn sector_per_chunk(&self) -> Ref<u32> {
-        self.sector_per_chunk.borrow()
+    pub fn sectors_per_chunk(&self) -> Ref<u32> {
+        self.sectors_per_chunk.borrow()
     }
 }
 impl EwfVolumeSmart {

@@ -99,9 +99,9 @@ impl<T: IntoIterator<Item = HashType>> From<T> for MultiHasher {
 
 #[cfg(test)]
 mod test {
-    use hex::{self, FromHex};
-
     use super::*;
+
+    use hex::{self, FromHex};
 
     fn md5(s: &str) -> (HashType, Box<[u8]>) {
        (HashType::MD5, <[u8; 16]>::from_hex(s).unwrap().into())
@@ -170,4 +170,6 @@ mod test {
 
         assert_eq!(hasher.finalize(), exp);
     }
+
+
 }

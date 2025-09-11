@@ -3,6 +3,12 @@ pub mod e01_reader;
 #[cfg(feature = "capi")]
 pub mod capi;
 
+#[cfg(test)]
+mod test_data;
+
+#[cfg(test)]
+mod test_helper;
+
 mod error;
 mod generated;
 pub mod hasher;
@@ -14,87 +20,52 @@ mod segment;
 mod test {
     use crate::{
         e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Reader, E01ReaderOptions},
-        hasher::{HashType, MultiHasher}
+        hasher::HashType,
+        test_data::*,
+        test_helper::do_hash
     };
 
-    use rand::Rng;
-    use std::collections::HashMap;
-
     #[track_caller]
-    fn do_hash(
-        reader: &E01Reader,
-        random_buf_size: bool
-    ) -> HashMap<HashType, String>
-    {
-        let mut hasher = MultiHasher::from([
-            HashType::MD5,
-            HashType::SHA1,
-            HashType::SHA256
-        ]);
+    fn assert_eq_test_data(exp: &TestData, options: &E01ReaderOptions) {
+        let reader = E01Reader::open_glob(
+            exp.segment_paths[0],
+            options
+        ).unwrap();
 
-        let mut buf: Vec<u8> = vec![0; 1048576];
-        let mut offset = 0;
+        let hashes = do_hash(
+            |offset, buf: &mut [u8]| {
+                let buf_len = buf.len();
+                reader.read_at_offset(offset, &mut buf[..buf_len])
+                    .unwrap()
+            },
+            reader.image_size,
+            false
+        );
 
-        while offset < reader.image_size() {
-            let buf_size = if random_buf_size {
-                rand::rng().random_range(0..buf.len())
-            }
-            else {
-                buf.len()
-            };
+        let stored_md5 = reader.stored_md5.map(hex::encode);
+        let stored_sha1 = reader.stored_sha1.map(hex::encode);
 
-            let read = reader
-                .read_at_offset(offset, &mut buf[..buf_size])
-                .unwrap();
-            if read == 0 {
-                break;
-            }
+        let segment_paths = reader.segment_paths
+            .iter()
+            .map(|p| p.to_str())
+            .collect::<Option<Vec<_>>>()
+            .unwrap();
 
-            hasher.update(&buf[..read]);
+        let act = TestData {
+            segment_paths: &segment_paths[..],
+            chunk_size: reader.chunk_size,
+            chunk_count: reader.chunk_count,
+            sector_size: reader.sector_size,
+            sector_count: reader.sector_count,
+            image_size: reader.image_size,
+            stored_md5: stored_md5.as_deref(),
+            stored_sha1: stored_sha1.as_deref(),
+            md5: hashes.get(&HashType::MD5).map(String::as_str),
+            sha1: hashes.get(&HashType::SHA1).map(String::as_str),
+            sha256: hashes.get(&HashType::SHA256).map(String::as_str)
+        };
 
-            offset += read;
-        }
-
-        hasher.finalize()
-            .into_iter()
-            .map(|(k, v)| (k, hex::encode(v)))
-            .collect()
-    }
-
-    #[track_caller]
-    fn assert_eq_test_data(
-        td: &TestData,
-        options: &E01ReaderOptions
-    ) {
-        let reader = E01Reader::open_glob(td.path, options).unwrap();
-
-        assert_eq!(reader.chunk_size(), td.chunk_size);
-        assert_eq!(reader.sector_size(), td.sector_size);
-        assert_eq!(reader.image_size(), td.image_size);
-
-        let stored_md5 = reader.get_stored_md5().map(hex::encode);
-        let stored_sha1 = reader.get_stored_sha1().map(hex::encode);
-
-        assert_eq!(stored_md5.as_deref(), Some(td.stored_md5));
-        assert_eq!(stored_sha1.as_deref(), Some(td.stored_sha1));
-
-        let hashes = do_hash(&reader, false);
-
-        assert_eq!(hashes.get(&HashType::MD5).unwrap(), td.md5);
-        assert_eq!(hashes.get(&HashType::SHA1).unwrap(), td.sha1);
-        assert_eq!(hashes.get(&HashType::SHA256).unwrap(), td.sha256);
-    }
-
-    struct TestData {
-        pub path: &'static str,
-        pub chunk_size: usize,
-        pub sector_size: usize,
-        pub image_size: usize,
-        pub stored_md5: &'static str,
-        pub stored_sha1: &'static str,
-        pub md5: &'static str,
-        pub sha1: &'static str,
-        pub sha256: &'static str
+        assert_eq!(&act, exp);
     }
 
     const ERROR_ERROR: E01ReaderOptions = E01ReaderOptions {
@@ -105,30 +76,6 @@ mod test {
     const ERROR_ZERO: E01ReaderOptions = E01ReaderOptions {
         corrupt_section_policy: CorruptSectionPolicy::Error,
         corrupt_chunk_policy: CorruptChunkPolicy::Zero
-    };
-
-    const IMAGE_E01: TestData = TestData {
-        path: "data/image.E01",
-        chunk_size: 32768,
-        sector_size: 512,
-        image_size: 1321472,
-        stored_md5: "28035e42858e28326c23732e6234bcf8",
-        stored_sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
-        md5: "28035e42858e28326c23732e6234bcf8",
-        sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
-        sha256: "cab8049f5fba42e06609c9d0678eb9fff7fcb50afc6c9b531ee6216bbe40a827"
-    };
-
-    const MIMAGE_E01: TestData = TestData {
-        path: "data/mimage.E01",
-        chunk_size: 32768,
-        sector_size: 512,
-        image_size: 884736,
-        stored_md5: "5be32cdd1b96eac4d4a41d13234ee599",
-        stored_sha1: "f8677bd8a38a12476ae655a9f9f5336c287603f7",
-        md5: "5be32cdd1b96eac4d4a41d13234ee599",
-        sha1: "f8677bd8a38a12476ae655a9f9f5336c287603f7",
-        sha256: "bc730943b2247e11b18caf272b1e78289267864962751549b1722752bf1e2e3d"
     };
 
     #[test]
@@ -150,30 +97,6 @@ mod test {
     fn test_mimage_e01_zero_bad_chunks() {
         assert_eq_test_data(&MIMAGE_E01, &ERROR_ZERO);
     }
-
-    const BAD_CHUNK_E01: TestData = TestData {
-        path: "data/bad_chunk.E01",
-        chunk_size: 32768,
-        sector_size: 512,
-        image_size: 1321472,
-        stored_md5: "28035e42858e28326c23732e6234bcf8",
-        stored_sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
-        md5: "",
-        sha1: "",
-        sha256: ""
-    };
-
-    const BAD_CHUNK_E01_ZEROED: TestData = TestData {
-        path: "data/bad_chunk.E01",
-        chunk_size: 32768,
-        sector_size: 512,
-        image_size: 1321472,
-        stored_md5: "28035e42858e28326c23732e6234bcf8",
-        stored_sha1: "e5c6c296485b1146fead7ad552e1c3ccfc00bfab",
-        md5: "67c44c58dd4bb4f7d162b3d3ad521e33",
-        sha1: "18e70fcac21668a2ee849cdb815d45dab107f0fc",
-        sha256: "077861781adaad81e64b229111ef4a490884eecee74eb7c91fed5d291995caf2"
-    };
 
     #[test]
     #[should_panic]

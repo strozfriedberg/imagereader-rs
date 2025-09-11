@@ -9,7 +9,7 @@ use crate::generated::{
 };
 //use crate::generated::ewf_section_descriptor_v2::*;
 
-use kaitai::{BytesReader, KStream, KStruct, OptRc};
+use kaitai::{BytesReader, KStream, KStruct};
 
 #[derive(Debug)]
 pub struct Chunk {
@@ -24,8 +24,8 @@ pub enum Section {
     Volume(VolumeSection),
     Table(Vec<Chunk>),
     Sectors(u64),
-    Hash(OptRc<EwfHashSection>),
-    Digest(OptRc<EwfDigestSection>),
+    Hash([u8; 16]),
+    Digest([u8; 16], [u8; 20]),
     Done,
     Other
 }
@@ -81,8 +81,11 @@ fn read_section(
         "table" =>
             Section::Table(read_table(io, section_size, ignore_checksums)?),
         "sectors" => Section::Sectors(io.pos() as u64 + section_size),
-        "hash" => Section::Hash(get_hash_section(io, ignore_checksums)?),
-        "digest" => Section::Digest(get_digest_section(io, ignore_checksums)?),
+        "hash" => Section::Hash(read_hash_section(io, ignore_checksums)?),
+        "digest" => {
+            let (md5, sha1) = read_digest_section(io, ignore_checksums)?;
+            Section::Digest(md5, sha1)
+        },
         "done" => Section::Done,
         _ => Section::Other
     };
@@ -92,10 +95,10 @@ fn read_section(
     Ok((section_offset, section))
 }
 
-fn get_hash_section(
+fn read_hash_section(
     io: &BytesReader,
     ignore_checksums: bool,
-) -> Result<OptRc<EwfHashSection>, LibError> {
+) -> Result<[u8; 16], LibError> {
     let hash_section =
         EwfHashSection::read_into::<_, EwfHashSection>(io, None, None)
             .map_err(|e| LibError::DeserializationFailed("EwfHashSection", e))?;
@@ -109,13 +112,18 @@ fn get_hash_section(
         )?;
     }
 
-    Ok(hash_section.clone())
+    let md5 = hash_section.md5()
+        .as_slice()
+        .try_into()
+        .expect("MD5 must deserialize to 16 bytes");
+
+    Ok(md5)
 }
 
-fn get_digest_section(
+fn read_digest_section(
     io: &BytesReader,
     ignore_checksums: bool,
-) -> Result<OptRc<EwfDigestSection>, LibError> {
+) -> Result<([u8; 16], [u8; 20]), LibError> {
     let digest_section = EwfHashSection::read_into::<_, EwfDigestSection>(io, None, None)
         .map_err(|e| LibError::DeserializationFailed("EwfDigestSection", e))?;
 
@@ -128,7 +136,17 @@ fn get_digest_section(
         )?;
     }
 
-    Ok(digest_section.clone())
+    let md5 = digest_section.md5()
+        .as_slice()
+        .try_into()
+        .expect("MD5 must deserialize to 16 bytes");
+
+    let sha1 = digest_section.sha1()
+        .as_slice()
+        .try_into()
+        .expect("SHA1 must deserialize to 20 bytes");
+
+    Ok((md5, sha1))
 }
 
 fn read_table_entry(
@@ -207,7 +225,7 @@ pub fn read_table(
 #[derive(Debug, Default)]
 pub struct VolumeSection {
     pub chunk_count: u32,
-    pub sector_per_chunk: u32,
+    pub sectors_per_chunk: u32,
     pub bytes_per_sector: u32,
     pub total_sector_count: u64
 }
@@ -231,7 +249,7 @@ impl VolumeSection {
 
             let vs = VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
-                sector_per_chunk: *vol_section.sector_per_chunk(),
+                sectors_per_chunk: *vol_section.sectors_per_chunk(),
                 bytes_per_sector: *vol_section.bytes_per_sector(),
                 total_sector_count: *vol_section.number_of_sectors(),
             };
@@ -252,7 +270,7 @@ impl VolumeSection {
 
             let vs = VolumeSection {
                 chunk_count: *vol_section.number_of_chunks(),
-                sector_per_chunk: *vol_section.sector_per_chunk(),
+                sectors_per_chunk: *vol_section.sectors_per_chunk(),
                 bytes_per_sector: *vol_section.bytes_per_sector(),
                 total_sector_count: *vol_section.number_of_sectors() as u64,
             };
@@ -264,7 +282,7 @@ impl VolumeSection {
     }
 
     pub fn chunk_size(&self) -> usize {
-        self.sector_per_chunk as usize * self.bytes_per_sector as usize
+        self.sectors_per_chunk as usize * self.bytes_per_sector as usize
     }
 
     pub fn max_offset(&self) -> usize {
