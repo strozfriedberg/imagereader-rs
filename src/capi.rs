@@ -789,7 +789,11 @@ mod test {
 
     #[test]
     fn test_e01_open_one_segment() {
+        #[cfg(unix)]
         let paths = [c"data/image.E01".as_ptr()];
+        #[cfg(windows)]
+        let paths = [c"data\\image.E01".as_ptr()];
+
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
@@ -814,7 +818,11 @@ mod test {
 
     #[test]
     fn test_e01_open_one_segment_null_err() {
+        #[cfg(unix)]
         let paths = [c"data/image.E01".as_ptr()];
+        #[cfg(windows)]
+        let paths = [c"data\\image.E01".as_ptr()];
+
         let options = &ERROR_OPTS;
 
         let h = Holder::new(unsafe {
@@ -837,10 +845,17 @@ mod test {
 
     #[test]
     fn test_e01_open_two_segments() {
+        #[cfg(unix)]
         let paths = [
             c"data/mimage.E01".as_ptr(),
             c"data/mimage.E02".as_ptr()
         ];
+        #[cfg(windows)]
+        let paths = [
+            c"data\\mimage.E01".as_ptr(),
+            c"data\\mimage.E02".as_ptr()
+        ];
+
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
@@ -865,10 +880,17 @@ mod test {
 
     #[test]
     fn test_e01_open_two_segments_null_err() {
+        #[cfg(unix)]
         let paths = [
             c"data/mimage.E01".as_ptr(),
             c"data/mimage.E02".as_ptr()
         ];
+        #[cfg(windows)]
+        let paths = [
+            c"data\\mimage.E01".as_ptr(),
+            c"data\\mimage.E02".as_ptr()
+        ];
+
         let options = &ERROR_OPTS;
 
         let h = Holder::new(unsafe {
@@ -914,7 +936,11 @@ mod test {
 
     #[test]
     fn test_e01_read_null_buffer_null_err() {
+        #[cfg(unix)]
         let paths = [c"data/image.E01".as_ptr()];
+        #[cfg(windows)]
+        let paths = [c"data\\image.E01".as_ptr()];
+
         let options = &ERROR_OPTS;
 
         let h = Holder::new(unsafe {
