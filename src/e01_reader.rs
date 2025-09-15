@@ -530,7 +530,7 @@ impl E01Reader {
             let chunk = &self.chunks[chunk_index];
             let seg = &self.segments[chunk.segment];
 
-            eprintln!("reading {chunk_index} / {}", self.chunk_count);
+            debug!("reading {chunk_index} / {}", self.chunk_count);
 
             let mut data = read_chunk(
                 &self.chunks[chunk_index],
