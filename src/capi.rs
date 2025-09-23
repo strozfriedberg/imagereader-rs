@@ -1098,7 +1098,7 @@ mod test {
             )
         };
 
-        let mut handle = h.into_box();
+        let handle = h.into_box();
 
         assert_eq!(r, 0);
         assert_err_contains(err, c"Chunk 0 checksum failed");
