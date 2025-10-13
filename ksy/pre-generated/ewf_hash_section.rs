@@ -54,22 +54,22 @@ impl KStruct for EwfHashSection {
 impl EwfHashSection {
 }
 impl EwfHashSection {
-    pub fn md5(&self) -> Ref<Vec<u8>> {
+    pub fn md5(&self) -> Ref<'_, Vec<u8>> {
         self.md5.borrow()
     }
 }
 impl EwfHashSection {
-    pub fn unknown(&self) -> Ref<Vec<u8>> {
+    pub fn unknown(&self) -> Ref<'_, Vec<u8>> {
         self.unknown.borrow()
     }
 }
 impl EwfHashSection {
-    pub fn checksum(&self) -> Ref<u32> {
+    pub fn checksum(&self) -> Ref<'_, u32> {
         self.checksum.borrow()
     }
 }
 impl EwfHashSection {
-    pub fn _io(&self) -> Ref<BytesReader> {
+    pub fn _io(&self) -> Ref<'_, BytesReader> {
         self._io.borrow()
     }
 }

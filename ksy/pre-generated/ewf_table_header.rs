@@ -58,32 +58,32 @@ impl KStruct for EwfTableHeader {
 impl EwfTableHeader {
 }
 impl EwfTableHeader {
-    pub fn entry_count(&self) -> Ref<u32> {
+    pub fn entry_count(&self) -> Ref<'_, u32> {
         self.entry_count.borrow()
     }
 }
 impl EwfTableHeader {
-    pub fn padding1(&self) -> Ref<Vec<u8>> {
+    pub fn padding1(&self) -> Ref<'_, Vec<u8>> {
         self.padding1.borrow()
     }
 }
 impl EwfTableHeader {
-    pub fn table_base_offset(&self) -> Ref<u64> {
+    pub fn table_base_offset(&self) -> Ref<'_, u64> {
         self.table_base_offset.borrow()
     }
 }
 impl EwfTableHeader {
-    pub fn padding2(&self) -> Ref<Vec<u8>> {
+    pub fn padding2(&self) -> Ref<'_, Vec<u8>> {
         self.padding2.borrow()
     }
 }
 impl EwfTableHeader {
-    pub fn checksum(&self) -> Ref<u32> {
+    pub fn checksum(&self) -> Ref<'_, u32> {
         self.checksum.borrow()
     }
 }
 impl EwfTableHeader {
-    pub fn _io(&self) -> Ref<BytesReader> {
+    pub fn _io(&self) -> Ref<'_, BytesReader> {
         self._io.borrow()
     }
 }

@@ -92,117 +92,117 @@ impl KStruct for EwfVolume {
 impl EwfVolume {
 }
 impl EwfVolume {
-    pub fn media_type(&self) -> Ref<EwfVolume_MediaTypesEnum> {
+    pub fn media_type(&self) -> Ref<'_, EwfVolume_MediaTypesEnum> {
         self.media_type.borrow()
     }
 }
 impl EwfVolume {
-    pub fn unknown1(&self) -> Ref<Vec<u8>> {
+    pub fn unknown1(&self) -> Ref<'_, Vec<u8>> {
         self.unknown1.borrow()
     }
 }
 impl EwfVolume {
-    pub fn number_of_chunks(&self) -> Ref<u32> {
+    pub fn number_of_chunks(&self) -> Ref<'_, u32> {
         self.number_of_chunks.borrow()
     }
 }
 impl EwfVolume {
-    pub fn sectors_per_chunk(&self) -> Ref<u32> {
+    pub fn sectors_per_chunk(&self) -> Ref<'_, u32> {
         self.sectors_per_chunk.borrow()
     }
 }
 impl EwfVolume {
-    pub fn bytes_per_sector(&self) -> Ref<u32> {
+    pub fn bytes_per_sector(&self) -> Ref<'_, u32> {
         self.bytes_per_sector.borrow()
     }
 }
 impl EwfVolume {
-    pub fn number_of_sectors(&self) -> Ref<u64> {
+    pub fn number_of_sectors(&self) -> Ref<'_, u64> {
         self.number_of_sectors.borrow()
     }
 }
 impl EwfVolume {
-    pub fn chs_cylinders(&self) -> Ref<u32> {
+    pub fn chs_cylinders(&self) -> Ref<'_, u32> {
         self.chs_cylinders.borrow()
     }
 }
 impl EwfVolume {
-    pub fn chs_heads(&self) -> Ref<u32> {
+    pub fn chs_heads(&self) -> Ref<'_, u32> {
         self.chs_heads.borrow()
     }
 }
 impl EwfVolume {
-    pub fn chs_sectors(&self) -> Ref<u32> {
+    pub fn chs_sectors(&self) -> Ref<'_, u32> {
         self.chs_sectors.borrow()
     }
 }
 impl EwfVolume {
-    pub fn media_flags(&self) -> Ref<EwfVolume_MediaFlagsEnum> {
+    pub fn media_flags(&self) -> Ref<'_, EwfVolume_MediaFlagsEnum> {
         self.media_flags.borrow()
     }
 }
 impl EwfVolume {
-    pub fn unknown2(&self) -> Ref<Vec<u8>> {
+    pub fn unknown2(&self) -> Ref<'_, Vec<u8>> {
         self.unknown2.borrow()
     }
 }
 impl EwfVolume {
-    pub fn palm_volume_start_sector(&self) -> Ref<u32> {
+    pub fn palm_volume_start_sector(&self) -> Ref<'_, u32> {
         self.palm_volume_start_sector.borrow()
     }
 }
 impl EwfVolume {
-    pub fn unknown3(&self) -> Ref<Vec<u8>> {
+    pub fn unknown3(&self) -> Ref<'_, Vec<u8>> {
         self.unknown3.borrow()
     }
 }
 impl EwfVolume {
-    pub fn smart_logs_start_sector(&self) -> Ref<u32> {
+    pub fn smart_logs_start_sector(&self) -> Ref<'_, u32> {
         self.smart_logs_start_sector.borrow()
     }
 }
 impl EwfVolume {
-    pub fn compression_level(&self) -> Ref<EwfVolume_CompressionLevelEnum> {
+    pub fn compression_level(&self) -> Ref<'_, EwfVolume_CompressionLevelEnum> {
         self.compression_level.borrow()
     }
 }
 impl EwfVolume {
-    pub fn unknown4(&self) -> Ref<Vec<u8>> {
+    pub fn unknown4(&self) -> Ref<'_, Vec<u8>> {
         self.unknown4.borrow()
     }
 }
 impl EwfVolume {
-    pub fn error_granularity(&self) -> Ref<u32> {
+    pub fn error_granularity(&self) -> Ref<'_, u32> {
         self.error_granularity.borrow()
     }
 }
 impl EwfVolume {
-    pub fn unknown5(&self) -> Ref<Vec<u8>> {
+    pub fn unknown5(&self) -> Ref<'_, Vec<u8>> {
         self.unknown5.borrow()
     }
 }
 impl EwfVolume {
-    pub fn set_identifier(&self) -> Ref<Vec<u8>> {
+    pub fn set_identifier(&self) -> Ref<'_, Vec<u8>> {
         self.set_identifier.borrow()
     }
 }
 impl EwfVolume {
-    pub fn unknown6(&self) -> Ref<Vec<u8>> {
+    pub fn unknown6(&self) -> Ref<'_, Vec<u8>> {
         self.unknown6.borrow()
     }
 }
 impl EwfVolume {
-    pub fn signature(&self) -> Ref<Vec<u8>> {
+    pub fn signature(&self) -> Ref<'_, Vec<u8>> {
         self.signature.borrow()
     }
 }
 impl EwfVolume {
-    pub fn checksum(&self) -> Ref<u32> {
+    pub fn checksum(&self) -> Ref<'_, u32> {
         self.checksum.borrow()
     }
 }
 impl EwfVolume {
-    pub fn _io(&self) -> Ref<BytesReader> {
+    pub fn _io(&self) -> Ref<'_, BytesReader> {
         self._io.borrow()
     }
 }

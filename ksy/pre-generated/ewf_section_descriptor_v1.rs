@@ -58,32 +58,32 @@ impl KStruct for EwfSectionDescriptorV1 {
 impl EwfSectionDescriptorV1 {
 }
 impl EwfSectionDescriptorV1 {
-    pub fn type_string(&self) -> Ref<String> {
+    pub fn type_string(&self) -> Ref<'_, String> {
         self.type_string.borrow()
     }
 }
 impl EwfSectionDescriptorV1 {
-    pub fn next_offset(&self) -> Ref<u64> {
+    pub fn next_offset(&self) -> Ref<'_, u64> {
         self.next_offset.borrow()
     }
 }
 impl EwfSectionDescriptorV1 {
-    pub fn size(&self) -> Ref<u64> {
+    pub fn size(&self) -> Ref<'_, u64> {
         self.size.borrow()
     }
 }
 impl EwfSectionDescriptorV1 {
-    pub fn padding(&self) -> Ref<Vec<u8>> {
+    pub fn padding(&self) -> Ref<'_, Vec<u8>> {
         self.padding.borrow()
     }
 }
 impl EwfSectionDescriptorV1 {
-    pub fn checksum(&self) -> Ref<u32> {
+    pub fn checksum(&self) -> Ref<'_, u32> {
         self.checksum.borrow()
     }
 }
 impl EwfSectionDescriptorV1 {
-    pub fn _io(&self) -> Ref<BytesReader> {
+    pub fn _io(&self) -> Ref<'_, BytesReader> {
         self._io.borrow()
     }
 }
