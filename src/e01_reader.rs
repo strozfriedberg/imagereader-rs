@@ -454,7 +454,7 @@ impl E01Reader {
             );
         }
 
-        let mut x = Vec::with_capacity(end_chunk_index - beg_chunk_index);
+        let mut tasks = Vec::with_capacity(end_chunk_index - beg_chunk_index);
         let mut w = &mut self.workers[..];
 
         while offset < buf_end {
@@ -482,7 +482,7 @@ impl E01Reader {
             let handle = File::open(&seg.path)
                 .map_err(ReadErrorKind::IoError)?;
 
-            x.push((
+            tasks.push((
                 chunk_index,
                 chunk,
                 handle,
@@ -496,8 +496,8 @@ impl E01Reader {
             offset += end_in_buf - beg_in_buf;
         }
 
-        x.into_iter()
-//        x.into_par_iter()
+        tasks.into_iter()
+//        tasks.into_par_iter()
             .try_for_each(|(chunk_index, chunk, mut handle, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
                 worker.read(
                     chunk,
