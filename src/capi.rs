@@ -1086,7 +1086,6 @@ mod test {
         assert!(!h.ptr.is_null());
 
         let mut buf: [c_char; 1] = [0];
-        let image_size = unsafe { (*h.ptr).image_size };
 
         let r = unsafe {
             e01_read(
