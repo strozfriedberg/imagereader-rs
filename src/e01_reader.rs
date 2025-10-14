@@ -257,7 +257,7 @@ pub struct E01Reader {
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy,
 
-    worker: ReadWorker
+    workers: Vec<ReadWorker>
 }
 
 impl E01Reader {
@@ -417,11 +417,7 @@ impl E01Reader {
             segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
-            worker: ReadWorker::new(
-                chunk_size,
-                image_end,
-                options.corrupt_chunk_policy
-            )
+            workers: vec![]
         })
     }
 
@@ -447,6 +443,22 @@ impl E01Reader {
 
         let chunk_size = self.chunk_size;
 
+        let beg_chunk_index = buf_beg / chunk_size;
+        let end_chunk_index = buf_end / chunk_size + (buf_end % chunk_size).min(1);
+
+        if end_chunk_index - beg_chunk_index > self.workers.len() {
+            self.workers.resize(
+                end_chunk_index - beg_chunk_index,
+                ReadWorker::new(
+                    chunk_size,
+                    image_end,
+                    self.corrupt_chunk_policy
+                )
+            );
+        }
+
+        let mut worker = &mut self.workers[0];
+
         while offset < buf_end {
             // get the next chunk
             let chunk_index = offset / chunk_size;
@@ -455,7 +467,7 @@ impl E01Reader {
             let chunk = &self.chunks[chunk_index];
             let seg = &mut self.segments[chunk.segment];
 
-            offset += self.worker.read(
+            offset += worker.read(
                 offset,
                 buf_beg,
                 buf_end,
@@ -479,6 +491,16 @@ struct ReadWorker {
     corrupt_chunk_policy: CorruptChunkPolicy,
     scratch: Vec<u8>,
     decoder: ZlibDecoder<Cursor<Vec<u8>>>
+}
+
+impl Clone for ReadWorker {
+    fn clone(&self) -> Self {
+        Self::new(
+            self.chunk_size,
+            self.image_end,
+            self.corrupt_chunk_policy
+        )
+    }
 }
 
 impl ReadWorker {
