@@ -56,27 +56,27 @@ impl KStruct for EwfDigestSection {
 impl EwfDigestSection {
 }
 impl EwfDigestSection {
-    pub fn md5(&self) -> Ref<Vec<u8>> {
+    pub fn md5(&self) -> Ref<'_, Vec<u8>> {
         self.md5.borrow()
     }
 }
 impl EwfDigestSection {
-    pub fn sha1(&self) -> Ref<Vec<u8>> {
+    pub fn sha1(&self) -> Ref<'_, Vec<u8>> {
         self.sha1.borrow()
     }
 }
 impl EwfDigestSection {
-    pub fn padding(&self) -> Ref<Vec<u8>> {
+    pub fn padding(&self) -> Ref<'_, Vec<u8>> {
         self.padding.borrow()
     }
 }
 impl EwfDigestSection {
-    pub fn checksum(&self) -> Ref<u32> {
+    pub fn checksum(&self) -> Ref<'_, u32> {
         self.checksum.borrow()
     }
 }
 impl EwfDigestSection {
-    pub fn _io(&self) -> Ref<BytesReader> {
+    pub fn _io(&self) -> Ref<'_, BytesReader> {
         self._io.borrow()
     }
 }

@@ -27,10 +27,12 @@ mod test {
 
     #[track_caller]
     fn assert_eq_test_data(exp: &TestData, options: &E01ReaderOptions) {
-        let reader = E01Reader::open_glob(
+        let mut reader = E01Reader::open_glob(
             exp.segment_paths[0],
             options
         ).unwrap();
+
+        let image_size = reader.image_size;
 
         let hashes = do_hash(
             |offset, buf: &mut [u8]| {
@@ -38,7 +40,7 @@ mod test {
                 reader.read_at_offset(offset, &mut buf[..buf_len])
                     .unwrap()
             },
-            reader.image_size,
+            image_size,
             false
         );
 

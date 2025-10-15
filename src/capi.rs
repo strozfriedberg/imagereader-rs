@@ -348,7 +348,7 @@ pub unsafe extern "C" fn e01_read(
     }
 
     let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-    unsafe { &*(*handle).reader }.read_at_offset(offset, buf)
+    unsafe { &mut *(*handle).reader }.read_at_offset(offset, buf)
         .unwrap_or_else(|e| { fill_error(e, err); 0 })
 }
 
@@ -1086,7 +1086,6 @@ mod test {
         assert!(!h.ptr.is_null());
 
         let mut buf: [c_char; 1] = [0];
-        let image_size = unsafe { (*h.ptr).image_size };
 
         let r = unsafe {
             e01_read(

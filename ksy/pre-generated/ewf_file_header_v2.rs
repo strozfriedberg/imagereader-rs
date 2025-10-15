@@ -56,37 +56,37 @@ impl KStruct for EwfFileHeaderV2 {
 impl EwfFileHeaderV2 {
 }
 impl EwfFileHeaderV2 {
-    pub fn signature(&self) -> Ref<Vec<u8>> {
+    pub fn signature(&self) -> Ref<'_, Vec<u8>> {
         self.signature.borrow()
     }
 }
 impl EwfFileHeaderV2 {
-    pub fn major_version(&self) -> Ref<u8> {
+    pub fn major_version(&self) -> Ref<'_, u8> {
         self.major_version.borrow()
     }
 }
 impl EwfFileHeaderV2 {
-    pub fn minor_version(&self) -> Ref<u8> {
+    pub fn minor_version(&self) -> Ref<'_, u8> {
         self.minor_version.borrow()
     }
 }
 impl EwfFileHeaderV2 {
-    pub fn compression_method(&self) -> Ref<u16> {
+    pub fn compression_method(&self) -> Ref<'_, u16> {
         self.compression_method.borrow()
     }
 }
 impl EwfFileHeaderV2 {
-    pub fn segment_number(&self) -> Ref<u16> {
+    pub fn segment_number(&self) -> Ref<'_, u16> {
         self.segment_number.borrow()
     }
 }
 impl EwfFileHeaderV2 {
-    pub fn set_identifier(&self) -> Ref<Vec<u8>> {
+    pub fn set_identifier(&self) -> Ref<'_, Vec<u8>> {
         self.set_identifier.borrow()
     }
 }
 impl EwfFileHeaderV2 {
-    pub fn _io(&self) -> Ref<BytesReader> {
+    pub fn _io(&self) -> Ref<'_, BytesReader> {
         self._io.borrow()
     }
 }

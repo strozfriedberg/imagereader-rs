@@ -66,52 +66,52 @@ impl KStruct for EwfVolumeSmart {
 impl EwfVolumeSmart {
 }
 impl EwfVolumeSmart {
-    pub fn unknown1(&self) -> Ref<u32> {
+    pub fn unknown1(&self) -> Ref<'_, u32> {
         self.unknown1.borrow()
     }
 }
 impl EwfVolumeSmart {
-    pub fn number_of_chunks(&self) -> Ref<u32> {
+    pub fn number_of_chunks(&self) -> Ref<'_, u32> {
         self.number_of_chunks.borrow()
     }
 }
 impl EwfVolumeSmart {
-    pub fn sectors_per_chunk(&self) -> Ref<u32> {
+    pub fn sectors_per_chunk(&self) -> Ref<'_, u32> {
         self.sectors_per_chunk.borrow()
     }
 }
 impl EwfVolumeSmart {
-    pub fn bytes_per_sector(&self) -> Ref<u32> {
+    pub fn bytes_per_sector(&self) -> Ref<'_, u32> {
         self.bytes_per_sector.borrow()
     }
 }
 impl EwfVolumeSmart {
-    pub fn number_of_sectors(&self) -> Ref<u32> {
+    pub fn number_of_sectors(&self) -> Ref<'_, u32> {
         self.number_of_sectors.borrow()
     }
 }
 impl EwfVolumeSmart {
-    pub fn unknown2(&self) -> Ref<Vec<u8>> {
+    pub fn unknown2(&self) -> Ref<'_, Vec<u8>> {
         self.unknown2.borrow()
     }
 }
 impl EwfVolumeSmart {
-    pub fn unknown3(&self) -> Ref<Vec<u8>> {
+    pub fn unknown3(&self) -> Ref<'_, Vec<u8>> {
         self.unknown3.borrow()
     }
 }
 impl EwfVolumeSmart {
-    pub fn signature(&self) -> Ref<Vec<u8>> {
+    pub fn signature(&self) -> Ref<'_, Vec<u8>> {
         self.signature.borrow()
     }
 }
 impl EwfVolumeSmart {
-    pub fn checksum(&self) -> Ref<u32> {
+    pub fn checksum(&self) -> Ref<'_, u32> {
         self.checksum.borrow()
     }
 }
 impl EwfVolumeSmart {
-    pub fn _io(&self) -> Ref<BytesReader> {
+    pub fn _io(&self) -> Ref<'_, BytesReader> {
         self._io.borrow()
     }
 }

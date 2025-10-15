@@ -24,6 +24,4 @@ pub enum LibError {
     UnknownCompressionMethod(u16),
     #[error("Invalid segment file header")]
     InvalidSegmentFileHeader,
-    #[error("Decompression failed: {0}")]
-    DecompressionFailed(#[source] std::io::Error)
 }

@@ -62,52 +62,52 @@ impl KStruct for EwfSectionDescriptorV2 {
 impl EwfSectionDescriptorV2 {
 }
 impl EwfSectionDescriptorV2 {
-    pub fn type_num(&self) -> Ref<u32> {
+    pub fn type_num(&self) -> Ref<'_, u32> {
         self.type_num.borrow()
     }
 }
 impl EwfSectionDescriptorV2 {
-    pub fn data_flags(&self) -> Ref<u32> {
+    pub fn data_flags(&self) -> Ref<'_, u32> {
         self.data_flags.borrow()
     }
 }
 impl EwfSectionDescriptorV2 {
-    pub fn previous_offset(&self) -> Ref<u64> {
+    pub fn previous_offset(&self) -> Ref<'_, u64> {
         self.previous_offset.borrow()
     }
 }
 impl EwfSectionDescriptorV2 {
-    pub fn data_size(&self) -> Ref<u64> {
+    pub fn data_size(&self) -> Ref<'_, u64> {
         self.data_size.borrow()
     }
 }
 impl EwfSectionDescriptorV2 {
-    pub fn descriptor_size(&self) -> Ref<u32> {
+    pub fn descriptor_size(&self) -> Ref<'_, u32> {
         self.descriptor_size.borrow()
     }
 }
 impl EwfSectionDescriptorV2 {
-    pub fn padding_size(&self) -> Ref<u32> {
+    pub fn padding_size(&self) -> Ref<'_, u32> {
         self.padding_size.borrow()
     }
 }
 impl EwfSectionDescriptorV2 {
-    pub fn data_integrity_hash(&self) -> Ref<Vec<u8>> {
+    pub fn data_integrity_hash(&self) -> Ref<'_, Vec<u8>> {
         self.data_integrity_hash.borrow()
     }
 }
 impl EwfSectionDescriptorV2 {
-    pub fn padding(&self) -> Ref<Vec<u8>> {
+    pub fn padding(&self) -> Ref<'_, Vec<u8>> {
         self.padding.borrow()
     }
 }
 impl EwfSectionDescriptorV2 {
-    pub fn checksum(&self) -> Ref<u32> {
+    pub fn checksum(&self) -> Ref<'_, u32> {
         self.checksum.borrow()
     }
 }
 impl EwfSectionDescriptorV2 {
-    pub fn _io(&self) -> Ref<BytesReader> {
+    pub fn _io(&self) -> Ref<'_, BytesReader> {
         self._io.borrow()
     }
 }

@@ -62,27 +62,27 @@ impl KStruct for EwfFileHeaderV1 {
 impl EwfFileHeaderV1 {
 }
 impl EwfFileHeaderV1 {
-    pub fn signature(&self) -> Ref<Vec<u8>> {
+    pub fn signature(&self) -> Ref<'_, Vec<u8>> {
         self.signature.borrow()
     }
 }
 impl EwfFileHeaderV1 {
-    pub fn fields_start(&self) -> Ref<Vec<u8>> {
+    pub fn fields_start(&self) -> Ref<'_, Vec<u8>> {
         self.fields_start.borrow()
     }
 }
 impl EwfFileHeaderV1 {
-    pub fn segment_number(&self) -> Ref<u16> {
+    pub fn segment_number(&self) -> Ref<'_, u16> {
         self.segment_number.borrow()
     }
 }
 impl EwfFileHeaderV1 {
-    pub fn fields_end(&self) -> Ref<Vec<u8>> {
+    pub fn fields_end(&self) -> Ref<'_, Vec<u8>> {
         self.fields_end.borrow()
     }
 }
 impl EwfFileHeaderV1 {
-    pub fn _io(&self) -> Ref<BytesReader> {
+    pub fn _io(&self) -> Ref<'_, BytesReader> {
         self._io.borrow()
     }
 }
