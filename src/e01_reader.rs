@@ -426,6 +426,8 @@ impl E01Reader {
         mut buf: &mut [u8]
     ) -> Result<usize, ReadError>
     {
+//        use rayon::prelude::*;
+
         // don't start reading past the end
         let image_end = self.image_size;
         if offset > image_end {
