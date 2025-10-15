@@ -89,6 +89,8 @@ pub enum ReadErrorKind {
     OffsetBeyondEnd(usize, usize),
     #[error("{0}")]
     IoError(#[from] std::io::Error),
+    #[error("Chunk {0} is {1} bytes long, must be at least 5 bytes long")]
+    TooShort(usize, usize),
     #[error("Chunk {0} checksum failed: calculated {1}, expected {2}")]
     BadChecksum(usize, u32, u32),
     #[error("Decompression of chunk {0} failed: {1}")]
@@ -686,6 +688,9 @@ impl ReadWorker {
             .map_err(ReadErrorKind::IoError)?;
 
         let raw_data_len = raw_data.len();
+        if raw_data_len < 5 {
+            return Err(ReadErrorKind::TooShort(chunk_index, raw_data_len));
+        }
 
         // read stored checksum
         let crc_stored = u32::from_le_bytes(
