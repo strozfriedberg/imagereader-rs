@@ -1,10 +1,9 @@
 use flate2::read::ZlibDecoder;
 use simd_adler32::read::adler32;
-use std::{
-    io::{Cursor, Read, Seek, SeekFrom}
-};
+use std::io::{Cursor, Read};
 use tracing::error;
 
+use crate::bytessource::BytesSource;
 use crate::e01_reader::{CorruptChunkPolicy, ReadErrorKind};
 use crate::sec_read::Chunk;
 
@@ -43,9 +42,10 @@ impl ReadWorker {
         }
     }
 
-    fn read_compressed_read<R: Read>(
+    fn read_compressed_read<BS: BytesSource>(
         &mut self,
-        handle: &mut R,
+        handle: &mut BS,
+        chunk_off: u64,
         chunk_len: usize
     ) -> Result<(), ReadErrorKind>
     {
@@ -55,7 +55,7 @@ impl ReadWorker {
         let raw_data = &mut v[..chunk_len];
 
         // do the read
-        let r = handle.read_exact(raw_data)
+        let r = handle.read(chunk_off, raw_data)
             .map_err(ReadErrorKind::IoError);
 
         // give the buffer back to the decoder
@@ -113,17 +113,18 @@ impl ReadWorker {
         Ok(buf.len())
     }
 
-    fn read_compressed<R: Read>(
+    fn read_compressed<BS: BytesSource>(
         &mut self,
-        handle: &mut R,
+        handle: &mut BS,
         chunk_index: usize,
+        chunk_off: u64,
         chunk_len: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize
     ) -> Result<usize, ReadErrorKind>
     {
-        self.read_compressed_read(handle, chunk_len)?;
+        self.read_compressed_read(handle, chunk_off, chunk_len)?;
         self.read_compressed_decompress(
             chunk_index,
             chunk_len,
@@ -133,10 +134,11 @@ impl ReadWorker {
         )
     }
 
-    fn read_uncompressed<R: Read>(
+    fn read_uncompressed<BS: BytesSource>(
         &mut self,
-        handle: &mut R,
+        handle: &mut BS,
         chunk_index: usize,
+        chunk_off: u64,
         chunk_len: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
@@ -152,6 +154,7 @@ impl ReadWorker {
         let r = self.read_uncompressed_inner(
             handle,
             chunk_index,
+            chunk_off,
             buf,
             beg_in_chunk,
             end_in_chunk,
@@ -164,17 +167,18 @@ impl ReadWorker {
         r
     }
 
-    fn read_uncompressed_inner<R: Read>(
+    fn read_uncompressed_inner<BS: BytesSource>(
         &mut self,
-        handle: &mut R,
+        handle: &mut BS,
         chunk_index: usize,
+        chunk_off: u64,
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize,
         raw_data: &mut [u8]
     ) -> Result<usize, ReadErrorKind>
     {
-        handle.read_exact(raw_data)
+        handle.read(chunk_off, raw_data)
             .map_err(ReadErrorKind::IoError)?;
 
         let raw_data_len = raw_data.len();
@@ -219,28 +223,25 @@ impl ReadWorker {
         Ok(buf.len())
     }
 
-    pub fn read<R: Read + Seek>(
+    pub fn read<BS: BytesSource>(
         &mut self,
         chunk: &Chunk,
-        handle: &mut R,
+        handle: &mut BS,
         chunk_index: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize
     ) -> Result<usize, ReadErrorKind>
     {
-        // seek to the start of the chunk
-        handle
-            .seek(SeekFrom::Start(chunk.data_offset))
-            .map_err(ReadErrorKind::IoError)?;
-
         let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
+        let chunk_off = chunk.data_offset;
 
         // read the data into the buffer
         if chunk.compressed {
             self.read_compressed(
                 handle,
                 chunk_index,
+                chunk_off,
                 chunk_len,
                 buf,
                 beg_in_chunk,
@@ -251,6 +252,7 @@ impl ReadWorker {
             self.read_uncompressed(
                 handle,
                 chunk_index,
+                chunk_off,
                 chunk_len,
                 buf,
                 beg_in_chunk,

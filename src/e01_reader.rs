@@ -9,6 +9,7 @@ extern crate kaitai;
 use kaitai::{BytesReader, KError};
 
 use crate::error::{IoError, LibError};
+use crate::filesource::FileSource;
 use crate::readworker::ReadWorker;
 use crate::sec_read::{Chunk, VolumeSection, Section, SectionIterator};
 use crate::seg_path::{find_segment_paths, UnrecognizedExtension};
@@ -483,8 +484,10 @@ impl E01Reader {
             let (wleft, wright) = w.split_at_mut(1);
             w = wright;
 
-            let handle = File::open(&seg.path)
-                .map_err(ReadErrorKind::IoError)?;
+            let handle = FileSource::new(
+                File::open(&seg.path)
+                    .map_err(ReadErrorKind::IoError)?
+            );
 
             tasks.push((
                 chunk_index,
