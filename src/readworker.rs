@@ -44,7 +44,7 @@ impl ReadWorker {
 
     fn read_compressed_read<BS: BytesSource>(
         &mut self,
-        handle: &mut BS,
+        src: &mut BS,
         chunk_off: u64,
         chunk_len: usize
     ) -> Result<(), ReadErrorKind>
@@ -55,7 +55,7 @@ impl ReadWorker {
         let raw_data = &mut v[..chunk_len];
 
         // do the read
-        let r = handle.read(chunk_off, raw_data)
+        let r = src.read(chunk_off, raw_data)
             .map_err(ReadErrorKind::IoError);
 
         // give the buffer back to the decoder
@@ -71,7 +71,7 @@ impl ReadWorker {
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize
-    ) -> Result<usize, ReadErrorKind>
+    ) -> Result<(), ReadErrorKind>
     {
         // Every chunk contains the same amount of data except for the last
         // one; decompress directly into the buffer if there is sufficient
@@ -110,21 +110,21 @@ impl ReadWorker {
             buf.copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
         }
 
-        Ok(buf.len())
+        Ok(())
     }
 
     fn read_compressed<BS: BytesSource>(
         &mut self,
-        handle: &mut BS,
+        src: &mut BS,
         chunk_index: usize,
         chunk_off: u64,
         chunk_len: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize
-    ) -> Result<usize, ReadErrorKind>
+    ) -> Result<(), ReadErrorKind>
     {
-        self.read_compressed_read(handle, chunk_off, chunk_len)?;
+        self.read_compressed_read(src, chunk_off, chunk_len)?;
         self.read_compressed_decompress(
             chunk_index,
             chunk_len,
@@ -136,14 +136,14 @@ impl ReadWorker {
 
     fn read_uncompressed<BS: BytesSource>(
         &mut self,
-        handle: &mut BS,
+        src: &mut BS,
         chunk_index: usize,
         chunk_off: u64,
         chunk_len: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize
-    ) -> Result<usize, ReadErrorKind>
+    ) -> Result<(), ReadErrorKind>
     {
         // take the buffer from the decoder
         let cur = self.decoder.reset(Cursor::new(vec![0; 0]));
@@ -151,34 +151,34 @@ impl ReadWorker {
         let raw_data = &mut v[..chunk_len];
 
         // do the read
-        let r = self.read_uncompressed_inner(
-            handle,
+        self.read_uncompressed_inner(
+            src,
             chunk_index,
             chunk_off,
             buf,
             beg_in_chunk,
             end_in_chunk,
             raw_data
-        );
+        )?;
 
         // give the buffer back to the decoder
         self.decoder.reset(Cursor::new(v));
 
-        r
+        Ok(())
     }
 
     fn read_uncompressed_inner<BS: BytesSource>(
         &mut self,
-        handle: &mut BS,
+        src: &mut BS,
         chunk_index: usize,
         chunk_off: u64,
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize,
         raw_data: &mut [u8]
-    ) -> Result<usize, ReadErrorKind>
+    ) -> Result<(), ReadErrorKind>
     {
-        handle.read(chunk_off, raw_data)
+        src.read(chunk_off, raw_data)
             .map_err(ReadErrorKind::IoError)?;
 
         let raw_data_len = raw_data.len();
@@ -220,18 +220,18 @@ impl ReadWorker {
 
         buf.copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
 
-        Ok(buf.len())
+        Ok(())
     }
 
     pub fn read<BS: BytesSource>(
         &mut self,
         chunk: &Chunk,
-        handle: &mut BS,
+        src: &mut BS,
         chunk_index: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize
-    ) -> Result<usize, ReadErrorKind>
+    ) -> Result<(), ReadErrorKind>
     {
         let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
         let chunk_off = chunk.data_offset;
@@ -239,7 +239,7 @@ impl ReadWorker {
         // read the data into the buffer
         if chunk.compressed {
             self.read_compressed(
-                handle,
+                src,
                 chunk_index,
                 chunk_off,
                 chunk_len,
@@ -250,7 +250,7 @@ impl ReadWorker {
         }
         else {
             self.read_uncompressed(
-                handle,
+                src,
                 chunk_index,
                 chunk_off,
                 chunk_len,

@@ -516,7 +516,6 @@ impl E01Reader {
                 )
                 .map_err(ReadError::from)
                 .map_err(|e| e.with_path(seg_path))
-                .and(Ok(()))
             })?;
 
         Ok(offset - buf_beg)
