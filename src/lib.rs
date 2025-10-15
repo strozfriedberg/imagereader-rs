@@ -12,6 +12,7 @@ mod test_helper;
 mod error;
 mod generated;
 pub mod hasher;
+mod readworker;
 mod sec_read;
 mod seg_path;
 mod segment;
