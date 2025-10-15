@@ -445,6 +445,8 @@ impl E01Reader {
         let beg_chunk_index = buf_beg / chunk_size;
         let end_chunk_index = buf_end / chunk_size + (buf_end % chunk_size).min(1);
 
+// TODO: Number of workers should have some fixed/configured maximum,
+// should not scale with the number of chunks to be fetched.
         if end_chunk_index - beg_chunk_index > self.workers.len() {
             self.workers.resize(
                 end_chunk_index - beg_chunk_index,
