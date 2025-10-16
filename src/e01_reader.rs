@@ -29,13 +29,13 @@ pub enum OpenError {
     TooFewChunks(usize, usize),
     #[error("Error reading {path}: {source}")]
     IoError {
-        path: PathBuf,
+        path: String,
         #[source]
         source: LibError
     },
     #[error("Bad data in {path}: {source}")]
     BadData {
-        path: PathBuf,
+        path: String,
         #[source]
         source: LibError
     }
@@ -66,7 +66,7 @@ impl From<KError> for OpenError {
 }
 
 impl OpenError {
-    fn with_path<T: AsRef<Path>>(self, path: T) -> Self {
+    fn with_path<T: AsRef<str>>(self, path: T) -> Self {
         match self {
             Self::IoError { source, .. } => Self::IoError {
                 path: path.as_ref().into(),
@@ -136,7 +136,7 @@ pub enum E01Error {
 
 #[derive(Debug)]
 struct Segment {
-    pub path: PathBuf
+    pub path: String
 }
 
 struct SegmentComponents {
@@ -147,7 +147,7 @@ struct SegmentComponents {
     done: bool
 }
 
-fn read_segment<T: AsRef<Path>>(
+fn read_segment<T: AsRef<str>>(
     segment_path: T,
     segment_index: usize,
     io: &BytesReader,
@@ -275,7 +275,9 @@ impl E01Reader {
         else {
             Err(
                 OpenError::IoError {
-                    path: example_segment_path.as_ref().into(),
+                    path: example_segment_path.as_ref()
+                        .to_string_lossy()
+                        .into(),
                     source: LibError::IoError(
                         IoError::IoError(
                             std::io::ErrorKind::NotFound.into()
@@ -287,6 +289,20 @@ impl E01Reader {
     }
 
     pub fn open<T: IntoIterator<Item: AsRef<Path>>>(
+        segment_paths: T,
+        options: &E01ReaderOptions
+    ) -> Result<Self, OpenError>
+    {
+        let segment_paths = segment_paths
+            .into_iter()
+            // FIXME: this is wrong, should error on None
+            .map(|p| p.as_ref().to_str().map(str::to_string))
+            .flatten();
+
+        Self::open_x(segment_paths, options)
+    }
+
+    pub fn open_x<T: IntoIterator<Item: AsRef<str>>>(
         segment_paths: T,
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
@@ -313,13 +329,13 @@ impl E01Reader {
             let sp = sp.as_ref();
 
             let _span = debug_span!("", segment_path = ?sp).entered();
-            debug!("opening {}", sp.display());
+            debug!("opening {}", sp);
 
             let io = BytesReader::open(sp)
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(sp))?;
 
-            debug!("reading sections {}", sp.display());
+            debug!("reading sections {}", sp);
 
             let seg = read_segment(sp, segments.len(), &io, ignore_checksums)?;
 
