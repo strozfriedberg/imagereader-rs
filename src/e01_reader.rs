@@ -6,7 +6,7 @@ use tracing::{debug, debug_span, warn};
 
 extern crate kaitai;
 
-use kaitai::{BytesReader, KError};
+use kaitai::{BytesReader, KError, ReadSeek};
 
 use crate::error::{IoError, LibError};
 use crate::filesource::FileSource;
@@ -217,6 +217,18 @@ fn read_segment<T: AsRef<str>>(
     )
 }
 
+fn readseek_for<P: AsRef<str>>(p: P) -> Result<Box<dyn ReadSeek>, OpenError> {
+    Ok(
+        Box::new(
+            File::open(p.as_ref())
+                .map_err(IoError::from)
+                .map_err(LibError::from)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(p))?
+        )
+    )
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CorruptSectionPolicy {
     #[default]
@@ -331,9 +343,10 @@ impl E01Reader {
             let _span = debug_span!("", segment_path = ?sp).entered();
             debug!("opening {}", sp);
 
-            let io = BytesReader::open(sp)
-                .map_err(OpenError::from)
-                .map_err(|e| e.with_path(sp))?;
+            let rs = readseek_for(sp)?;
+            let io = BytesReader::try_from(rs)
+                 .map_err(OpenError::from)
+                 .map_err(|e| e.with_path(sp))?;
 
             debug!("reading sections {}", sp);
 
