@@ -67,7 +67,7 @@ impl ReadWorker {
     fn read_compressed_decompress(
         &mut self,
         chunk_index: usize,
-        chunk_len: usize,
+        _chunk_len: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize

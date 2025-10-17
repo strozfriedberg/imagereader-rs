@@ -4,8 +4,6 @@ use std::{
 };
 use tracing::{debug, debug_span, warn};
 
-extern crate kaitai;
-
 use kaitai::{BytesReader, KError, ReadSeek};
 
 use crate::error::{IoError, LibError};
@@ -154,7 +152,7 @@ fn read_segment<T: AsRef<str>>(
     ignore_checksums: bool
 ) -> Result<SegmentComponents, OpenError>
 {
-    let header = SegmentFileHeader::new(io)
+    let _header = SegmentFileHeader::new(io)
         .map_err(OpenError::from)
         .map_err(|e| e.with_path(&segment_path))?;
 
