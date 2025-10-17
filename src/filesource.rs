@@ -5,6 +5,7 @@ use std::{
 
 use crate::bytessource::BytesSource;
 
+#[derive(Debug)]
 pub struct FileSource {
     handle: File
 }

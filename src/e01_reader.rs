@@ -249,6 +249,35 @@ pub struct E01ReaderOptions {
 }
 
 #[derive(Debug)]
+pub struct DummyCache {
+    pub sources: Vec<FileSource>
+}
+
+impl DummyCache {
+    pub fn read_blocking(
+        &mut self,
+        idx: usize,
+        off: u64,
+        buf: &mut [u8]
+    ) -> Result<(), std::io::Error>
+    {
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(std::io::Error::other)?;
+        rt.block_on(self.read(idx, off, buf))
+    }
+
+    pub async fn read(
+        &mut self,
+        idx: usize,
+        off: u64,
+        buf: &mut [u8]
+    ) -> Result<(), std::io::Error>
+    {
+        self.sources[idx].read(off, buf)
+    }
+}
+
+#[derive(Debug)]
 pub struct E01Reader {
     segments: Vec<Segment>,
     chunks: Vec<Chunk>,
@@ -267,7 +296,8 @@ pub struct E01Reader {
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy,
 
-    workers: Vec<ReadWorker>
+    workers: Vec<ReadWorker>,
+    cache: DummyCache
 }
 
 impl E01Reader {
@@ -328,6 +358,7 @@ impl E01Reader {
 
         let mut segments = vec![];
         let mut segment_paths = vec![];
+        let mut sources = vec![];
         let mut chunks = vec![];
 
         let mut done = false;
@@ -341,7 +372,14 @@ impl E01Reader {
             let _span = debug_span!("", segment_path = ?sp).entered();
             debug!("opening {}", sp);
 
-            let rs = readseek_for(sp)?;
+            let rs = Box::new(
+                File::open(sp)
+                    .map_err(IoError::from)
+                    .map_err(LibError::from)
+                    .map_err(OpenError::from)
+                    .map_err(|e| e.with_path(sp))?
+            ) as Box<dyn ReadSeek>;
+
             let io = BytesReader::try_from(rs)
                  .map_err(OpenError::from)
                  .map_err(|e| e.with_path(sp))?;
@@ -397,6 +435,19 @@ impl E01Reader {
 
             segment_paths.push(sp.into());
 
+            sources.push(
+                FileSource::new(
+                    // we're done with the BytesReader, but irritatingly
+                    // we can't get the File back from it so we have to
+                    // open the file again...
+                    File::open(sp)
+                        .map_err(IoError::from)
+                        .map_err(LibError::from)
+                        .map_err(OpenError::from)
+                        .map_err(|e| e.with_path(sp))?
+                )
+            );
+
             if seg.done {
                 done = true;
                 break;
@@ -442,7 +493,8 @@ impl E01Reader {
             segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
-            workers: vec![]
+            workers: vec![],
+            cache: DummyCache { sources }
         })
     }
 
@@ -511,15 +563,9 @@ impl E01Reader {
             let (wleft, wright) = w.split_at_mut(1);
             w = wright;
 
-            let handle = FileSource::new(
-                File::open(&seg.path)
-                    .map_err(ReadErrorKind::IoError)?
-            );
-
             tasks.push((
                 chunk_index,
                 chunk,
-                handle,
                 bleft,
                 beg_in_chunk,
                 end_in_chunk,
@@ -532,10 +578,10 @@ impl E01Reader {
 
         tasks.into_iter()
 //        tasks.into_par_iter()
-            .try_for_each(|(chunk_index, chunk, mut handle, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
+            .try_for_each(|(chunk_index, chunk, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
                 worker.read(
                     chunk,
-                    &mut handle,
+                    &mut self.cache,
                     chunk_index,
                     sbuf,
                     beg_in_chunk,
