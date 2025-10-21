@@ -1,7 +1,11 @@
+use futures::future::BoxFuture;
+
 pub trait BytesSource {
     fn read(
-        &mut self,
-        off: u64,
-        buf: &mut [u8]
-    ) -> Result<(), std::io::Error>;
+        &self,
+        beg: u64,
+        end: u64
+    ) -> BoxFuture<'static, Result<Vec<u8>, std::io::Error>>;
+
+    fn end(&self) -> u64;
 }

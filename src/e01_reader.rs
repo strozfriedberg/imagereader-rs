@@ -1,17 +1,29 @@
-use std::{
-    fs::File,
-    path::{Path, PathBuf}
-};
-use tracing::{debug, debug_span, warn};
-
 use kaitai::{BytesReader, KError, ReadSeek};
+use s3::{
+    bucket::Bucket,
+    creds::Credentials,
+    region::Region,
+    request::request_trait::ResponseData,
+};
+use std::{
+    io::{Read, Seek, SeekFrom},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex}
+};
+use tracing::{debug, debug_span, trace, warn};
+use url::{self, Url};
 
+use crate::bytessource::BytesSource;
+use crate::cache::Cache;
 use crate::error::{IoError, LibError};
+use crate::filefoyercache::FileFoyerCache;
 use crate::filesource::FileSource;
 use crate::readworker::ReadWorker;
+use crate::s3source::S3Source;
 use crate::sec_read::{Chunk, VolumeSection, Section, SectionIterator};
 use crate::seg_path::{find_segment_paths, UnrecognizedExtension};
 use crate::segment::SegmentFileHeader;
+use crate::workersource::WorkerSource;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
@@ -36,7 +48,9 @@ pub enum OpenError {
         path: String,
         #[source]
         source: LibError
-    }
+    },
+    #[error("TODO")]
+    Todo
 }
 
 impl From<LibError> for OpenError {
@@ -215,18 +229,6 @@ fn read_segment<T: AsRef<str>>(
     )
 }
 
-fn readseek_for<P: AsRef<str>>(p: P) -> Result<Box<dyn ReadSeek>, OpenError> {
-    Ok(
-        Box::new(
-            File::open(p.as_ref())
-                .map_err(IoError::from)
-                .map_err(LibError::from)
-                .map_err(OpenError::from)
-                .map_err(|e| e.with_path(p))?
-        )
-    )
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CorruptSectionPolicy {
     #[default]
@@ -249,31 +251,157 @@ pub struct E01ReaderOptions {
 }
 
 #[derive(Debug)]
-pub struct DummyCache {
-    pub sources: Vec<FileSource>
+struct DummyCache {
+    sources: Vec<FileSource>
 }
 
 impl DummyCache {
-    pub fn read_blocking(
+    fn new() -> Self {
+        Self { sources: vec![] }
+    }
+
+    fn add_source(&mut self, fs: FileSource) {
+        self.sources.push(fs);
+    }
+} 
+
+impl Cache for DummyCache {
+    async fn read(
         &mut self,
         idx: usize,
+        off: u64,
+        buf: &mut [u8]
+    ) -> Result<(), std::io::Error>
+    {
+        let b = self.sources[idx].read(off, off + buf.len() as u64).await?;
+        buf.copy_from_slice(&b);
+        Ok(())
+    }
+
+    fn end(&self, idx: usize) -> Result<u64, std::io::Error> {
+        self.sources.get(idx)
+            .ok_or(std::io::Error::other(format!("{idx} out of bounds")))
+            .map(|src| src.end())
+    }
+}
+
+struct CacheWorkerSource<C>
+where
+    C: Cache
+{
+    pub cache: Arc<Mutex<C>>,
+    pub idx: usize
+}
+
+impl<C> WorkerSource for CacheWorkerSource<C>
+where
+    C: Cache
+{
+    fn read(
+        &mut self,
         off: u64,
         buf: &mut [u8]
     ) -> Result<(), std::io::Error>
     {
         let rt = tokio::runtime::Runtime::new()
             .map_err(std::io::Error::other)?;
-        rt.block_on(self.read(idx, off, buf))
-    }
 
-    pub async fn read(
+//        let cache = self.cache.lock()
+//            .map_err(std::io::Error::other)?;
+        let mut cache = self.cache.lock().unwrap();
+
+        rt.block_on(cache.read(self.idx, off, buf))
+    }
+}
+
+struct CacheReadSeek<C>
+where
+    C: Cache
+{
+    cache: Arc<Mutex<C>>,
+    idx: usize,
+    pos: u64
+}
+
+impl<C> CacheReadSeek<C>
+where
+    C: Cache
+{
+    fn new(cache: Arc<Mutex<C>>, idx: usize, len: u64) -> Self {
+        Self {
+            cache,
+            idx,
+            pos: 0
+        }
+    }
+}
+
+impl<C> Read for CacheReadSeek<C>
+where
+    C: Cache
+{
+    fn read(
         &mut self,
-        idx: usize,
-        off: u64,
         buf: &mut [u8]
-    ) -> Result<(), std::io::Error>
+    ) -> Result<usize, std::io::Error>
     {
-        self.sources[idx].read(off, buf)
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(std::io::Error::other)?;
+
+//        let cache = self.cache.lock()
+//            .map_err(std::io::Error::other)?;
+        let mut cache = self.cache.lock().unwrap();
+
+        rt.block_on(cache.read(self.idx, self.pos, buf))?;
+    
+        self.pos += buf.len() as u64;
+        Ok(buf.len())
+    }
+}
+
+impl<C> Seek for CacheReadSeek<C>
+where
+    C: Cache
+{
+    fn seek(
+        &mut self,
+        pos: SeekFrom
+    ) -> Result<u64, std::io::Error>
+    {
+        let end = self.cache.lock().unwrap().end(self.idx)?;
+
+        let (base, offset) = match pos {
+            SeekFrom::Start(n) => (n, 0),
+            SeekFrom::End(n) => (end, n),
+            SeekFrom::Current(n) => (self.pos, n)
+        };
+
+        self.pos = match base.checked_add_signed(offset) {
+            Some(n) if n <= end => Ok(n),
+            Some(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid seek past end"
+            )),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid seek to a negative or overflowing position"
+            ))
+        }?;
+
+        Ok(self.pos)
+    }
+}
+
+fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
+    match Url::parse(p.as_ref()) {
+        // might be a path; make it absolute and reparse
+        Err(url::ParseError::RelativeUrlWithoutBase) => Path::new(p.as_ref())
+            .canonicalize()
+            .map(Url::from_file_path)
+            .map_err(|_| ())
+            .flatten()
+            .ok(),
+        r => r.ok()
     }
 }
 
@@ -297,27 +425,30 @@ pub struct E01Reader {
     corrupt_chunk_policy: CorruptChunkPolicy,
 
     workers: Vec<ReadWorker>,
-    cache: DummyCache
+    cache: Arc<Mutex<DummyCache>>
+//    cache: Arc<Mutex<FileFoyerCache>>
 }
 
 impl E01Reader {
-    pub fn open_glob<T: AsRef<Path>>(
+// TODO: glob S3 somehow
+    pub fn open_glob<T: AsRef<str>>(
         example_segment_path: T,
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
-        if example_segment_path.as_ref().exists() {
+        let esp = Path::new(example_segment_path.as_ref());
+        if esp.exists() {
             Self::open(
-                find_segment_paths(&example_segment_path)?,
+                find_segment_paths(&esp)?
+// FIXME
+                    .map(|p| p.to_str().unwrap().to_string()),
                 options
             )
         }
         else {
             Err(
                 OpenError::IoError {
-                    path: example_segment_path.as_ref()
-                        .to_string_lossy()
-                        .into(),
+                    path: example_segment_path.as_ref().into(),
                     source: LibError::IoError(
                         IoError::IoError(
                             std::io::ErrorKind::NotFound.into()
@@ -328,21 +459,7 @@ impl E01Reader {
         }
     }
 
-    pub fn open<T: IntoIterator<Item: AsRef<Path>>>(
-        segment_paths: T,
-        options: &E01ReaderOptions
-    ) -> Result<Self, OpenError>
-    {
-        let segment_paths = segment_paths
-            .into_iter()
-            // FIXME: this is wrong, should error on None
-            .map(|p| p.as_ref().to_str().map(str::to_string))
-            .flatten();
-
-        Self::open_x(segment_paths, options)
-    }
-
-    pub fn open_x<T: IntoIterator<Item: AsRef<str>>>(
+    pub fn open<T: IntoIterator<Item: AsRef<str>>>(
         segment_paths: T,
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
@@ -358,27 +475,76 @@ impl E01Reader {
 
         let mut segments = vec![];
         let mut segment_paths = vec![];
-        let mut sources = vec![];
         let mut chunks = vec![];
 
         let mut done = false;
 
         let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
+        let mut cache = Arc::new(Mutex::new(DummyCache::new()));
+//        let mut cache = Arc::new(Mutex::new(FileFoyerCache::new()));
+
         // read segments
-        for sp in sp_itr.by_ref() {
+        for (idx, sp) in sp_itr.by_ref().enumerate() {
             let sp = sp.as_ref();
 
             let _span = debug_span!("", segment_path = ?sp).entered();
             debug!("opening {}", sp);
 
-            let rs = Box::new(
-                File::open(sp)
+            let surl = path_or_url_to_url(sp)
+                .ok_or(OpenError::Todo)?;
+
+            let src = match surl.scheme() {
+                "file" => {
+                    let len = std::fs::metadata(sp)
+                        .map_err(IoError::from)
+                        .map_err(LibError::from)
+                        .map_err(OpenError::from)
+                        .map_err(|e| e.with_path(sp))?
+                        .len();
+
+                    FileSource { path: sp.into(), len }
+                },
+                "s3" => {
+                    let name = surl.host_str()
+                        .ok_or(OpenError::Todo)?;
+
+                    let bucket = *Bucket::new(
+                        name, 
+                        Region::UsEast1, 
+                        Credentials::anonymous().unwrap()
+                    )
+                    .map_err(std::io::Error::other)
                     .map_err(IoError::from)
                     .map_err(LibError::from)
                     .map_err(OpenError::from)
-                    .map_err(|e| e.with_path(sp))?
-            ) as Box<dyn ReadSeek>;
+                    .map_err(|e| e.with_path(sp))?;
+
+                    let key = surl.path();
+
+                    let rt = tokio::runtime::Runtime::new()
+                        .map_err(|_| OpenError::Todo)?;
+
+                    let (h, code) = rt.block_on(bucket.head_object(key))
+                        .map_err(std::io::Error::other)
+                        .map_err(IoError::from)
+                        .map_err(LibError::from)
+                        .map_err(OpenError::from)
+                        .map_err(|e| e.with_path(sp))?;
+
+                    assert_eq!(code, 200);
+                    let len = h.content_length.unwrap().try_into().unwrap();
+
+                    S3Source::new(bucket, key.into(), len)
+                },
+                _ => return Err(OpenError::Todo)
+            };
+
+            let seg_len = src.end();
+            cache.lock().unwrap().add_source(src);
+
+            let crs = CacheReadSeek::new(cache.clone(), idx, seg_len); 
+            let rs = Box::new(crs) as Box<dyn ReadSeek>;
 
             let io = BytesReader::try_from(rs)
                  .map_err(OpenError::from)
@@ -429,24 +595,9 @@ impl E01Reader {
             chunks.extend(seg.chunks);
 
             // record the segment
-            segments.push(Segment {
-                path: sp.into()
-            });
+            segments.push(Segment { path: sp.into() });
 
             segment_paths.push(sp.into());
-
-            sources.push(
-                FileSource::new(
-                    // we're done with the BytesReader, but irritatingly
-                    // we can't get the File back from it so we have to
-                    // open the file again...
-                    File::open(sp)
-                        .map_err(IoError::from)
-                        .map_err(LibError::from)
-                        .map_err(OpenError::from)
-                        .map_err(|e| e.with_path(sp))?
-                )
-            );
 
             if seg.done {
                 done = true;
@@ -494,7 +645,7 @@ impl E01Reader {
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
             workers: vec![],
-            cache: DummyCache { sources }
+            cache
         })
     }
 
@@ -563,9 +714,15 @@ impl E01Reader {
             let (wleft, wright) = w.split_at_mut(1);
             w = wright;
 
+            let src = CacheWorkerSource {
+                cache: self.cache.clone(),
+                idx: chunk.segment
+            };
+
             tasks.push((
                 chunk_index,
                 chunk,
+                src,
                 bleft,
                 beg_in_chunk,
                 end_in_chunk,
@@ -578,10 +735,10 @@ impl E01Reader {
 
         tasks.into_iter()
 //        tasks.into_par_iter()
-            .try_for_each(|(chunk_index, chunk, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
+            .try_for_each(|(chunk_index, chunk, mut src, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
                 worker.read(
                     chunk,
-                    &mut self.cache,
+                    &mut src,
                     chunk_index,
                     sbuf,
                     beg_in_chunk,
@@ -597,7 +754,18 @@ impl E01Reader {
 
 #[cfg(test)]
 mod test {
-    use super::*;
 
+/*
+    #[test]
+    fn xxxxx() {
+
+        let s = "s3://cistorage-e2etestdatabucket263b174e-1pn3fzkwcfwh6";
+
+
+        let s = "s3://
+
+
+    }
+*/
 
 }
