@@ -3,8 +3,7 @@ use kaitai::{BytesReader, KError, ReadSeek};
 use s3::{
     bucket::Bucket,
     creds::Credentials,
-    region::Region,
-    request::request_trait::ResponseData,
+    region::Region
 };
 use std::{
     fmt::Debug,
