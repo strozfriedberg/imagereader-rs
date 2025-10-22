@@ -28,7 +28,7 @@ where
 }
 
 impl FoyerCache<DefaultHasher> {
-    pub fn with_default_cache(chlen: usize) -> Self {
+    pub async fn with_default_cache(chlen: usize) -> Self {
         let dir = "cache";
 
         let device = FsDeviceBuilder::new(dir)
@@ -36,14 +36,13 @@ impl FoyerCache<DefaultHasher> {
             .build()
             .unwrap();
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let cache = rt.block_on(
-            HybridCacheBuilder::new()
-                .memory(64 * 1024 * 1024)
-                .storage()
-                .with_engine_config(BlockEngineBuilder::new(device))
-                .build()
-        ).unwrap();
+        let cache = HybridCacheBuilder::new()
+            .memory(64 * 1024 * 1024)
+            .storage()
+            .with_engine_config(BlockEngineBuilder::new(device))
+            .build()
+            .await
+        .unwrap();
 
         Self::new(cache, chlen)
     }
@@ -96,7 +95,7 @@ where
                 source.read(choff, (choff + chlen as u64).min(end))
                     .map_err(foyer::Error::other::<std::io::Error>);
 
-            trace!("fetching {idx} [{choff},{})", choff + chlen as u64);
+            trace!("fetching {idx} [{choff},{})", (choff + chlen as u64).min(end));
             cache.fetch((idx, choff), fetch)
         };
 
@@ -107,22 +106,6 @@ where
 
         let chunks = fut.await.map_err(std::io::Error::other)?;
 
-/*
-        let futs = (csbeg..csend).step_by(chlen).map(getter).collect::<Vec<_>>();
-        trace!("{}", line!());
-        let mut r = vec![];
-        for f in futs {
-            r.push(f.await);
-        }
-
-        trace!("{}", line!());
-        let mut chunks = vec![];
-        for x in r {
-            chunks.push(x.map_err(std::io::Error::other)?);
-        }
-
-        trace!("{}", line!());
-*/
         let mut bbeg = 0;
 
         for (choff, ch) in (csbeg..csend).step_by(self.chlen).zip(chunks) {

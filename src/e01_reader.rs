@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex}
 };
+use tokio::runtime::Runtime;
 use tracing::{debug, debug_span, trace, warn};
 use url::{self, Url};
 
@@ -254,6 +255,7 @@ pub struct E01ReaderOptions {
 
 struct CacheWorkerSource {
     pub cache: Arc<Mutex<dyn Cache + Send>>,
+    pub runtime: Arc<Runtime>,
     pub idx: usize
 }
 
@@ -264,28 +266,29 @@ impl WorkerSource for CacheWorkerSource {
         buf: &mut [u8]
     ) -> Result<(), std::io::Error>
     {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(std::io::Error::other)?;
-
-//        let cache = self.cache.lock()
-//            .map_err(std::io::Error::other)?;
         let mut cache = self.cache.lock().unwrap();
-
-        rt.block_on(cache.read(self.idx, off, buf))
+        self.runtime.block_on(cache.read(self.idx, off, buf))
     }
 }
 
 struct CacheReadSeek {
     cache: Arc<Mutex<dyn Cache + Send>>,
+    runtime: Arc<Runtime>,
     idx: usize,
     pos: u64
 }
 
 impl CacheReadSeek
 {
-    fn new(cache: Arc<Mutex<dyn Cache + Send>>, idx: usize, len: u64) -> Self {
+    fn new(
+        cache: Arc<Mutex<dyn Cache + Send>>,
+        runtime: Arc<Runtime>,
+        idx: usize,
+        len: u64
+    ) -> Self {
         Self {
             cache,
+            runtime,
             idx,
             pos: 0
         }
@@ -298,15 +301,9 @@ impl Read for CacheReadSeek {
         buf: &mut [u8]
     ) -> Result<usize, std::io::Error>
     {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(std::io::Error::other)?;
-
-//        let cache = self.cache.lock()
-//            .map_err(std::io::Error::other)?;
         let mut cache = self.cache.lock().unwrap();
+        self.runtime.block_on(cache.read(self.idx, self.pos, buf))?;
 
-        rt.block_on(cache.read(self.idx, self.pos, buf))?;
-    
         self.pos += buf.len() as u64;
         Ok(buf.len())
     }
@@ -374,7 +371,8 @@ pub struct E01Reader {
     corrupt_chunk_policy: CorruptChunkPolicy,
 
     workers: Vec<ReadWorker>,
-    cache: Arc<Mutex<dyn Cache + Send>>
+    cache: Arc<Mutex<dyn Cache + Send>>,
+    runtime: Arc<Runtime>
 }
 
 impl Debug for E01Reader {
@@ -446,7 +444,11 @@ impl E01Reader {
 
         let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
-        let mut cache = Arc::new(Mutex::new(DummyCache::new()));
+        let runtime = Arc::new(tokio::runtime::Runtime::new()
+            .map_err(|_| OpenError::Todo)?);
+
+//        let mut cache = Arc::new(Mutex::new(DummyCache::new()));
+        let mut cache = Arc::new(Mutex::new(runtime.block_on(FoyerCache::with_default_cache(1024 * 1024))));
 
         // read segments
         for (idx, sp) in sp_itr.by_ref().enumerate() {
@@ -486,10 +488,7 @@ impl E01Reader {
 
                     let key = surl.path();
 
-                    let rt = tokio::runtime::Runtime::new()
-                        .map_err(|_| OpenError::Todo)?;
-
-                    let (h, code) = rt.block_on(bucket.head_object(key))
+                    let (h, code) = runtime.block_on(bucket.head_object(key))
                         .map_err(std::io::Error::other)
                         .map_err(IoError::from)
                         .map_err(LibError::from)
@@ -498,6 +497,7 @@ impl E01Reader {
 
                     assert_eq!(code, 200);
                     let len = h.content_length.unwrap().try_into().unwrap();
+                    debug!("content-length: {len}");
 
                     Box::new(S3Source::new(bucket, key.into(), len))
                 },
@@ -507,7 +507,12 @@ impl E01Reader {
             let seg_len = src.end();
             cache.lock().unwrap().add_source(src);
 
-            let crs = CacheReadSeek::new(cache.clone(), idx, seg_len); 
+            let crs = CacheReadSeek::new(
+                cache.clone(),
+                runtime.clone(),
+                idx,
+                seg_len
+            ); 
             let rs = Box::new(crs) as Box<dyn ReadSeek>;
 
             let io = BytesReader::try_from(rs)
@@ -609,7 +614,8 @@ impl E01Reader {
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
             workers: vec![],
-            cache
+            cache,
+            runtime
         })
     }
 
@@ -680,6 +686,7 @@ impl E01Reader {
 
             let src = CacheWorkerSource {
                 cache: self.cache.clone(),
+                runtime: self.runtime.clone(),
                 idx: chunk.segment
             };
 

@@ -70,8 +70,6 @@ impl BytesSource for S3Source {
         end: u64
     ) -> BoxFuture<'static, Result<Vec<u8>, std::io::Error>>
     {
-        trace!("about to read [{beg},{end}) from S3");
-
         let bucket = self.bucket.clone();
         let path = self.path.clone();
 
