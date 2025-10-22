@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use kaitai::{BytesReader, KError, ReadSeek};
 use s3::{
     bucket::Bucket,
@@ -6,6 +7,7 @@ use s3::{
     request::request_trait::ResponseData,
 };
 use std::{
+    fmt::Debug,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     sync::{Arc, Mutex}
@@ -16,7 +18,7 @@ use url::{self, Url};
 use crate::bytessource::BytesSource;
 use crate::cache::Cache;
 use crate::error::{IoError, LibError};
-use crate::filefoyercache::FileFoyerCache;
+//use crate::filefoyercache::FileFoyerCache;
 use crate::filesource::FileSource;
 use crate::readworker::ReadWorker;
 use crate::s3source::S3Source;
@@ -250,9 +252,8 @@ pub struct E01ReaderOptions {
     pub corrupt_chunk_policy: CorruptChunkPolicy
 }
 
-#[derive(Debug)]
 struct DummyCache {
-    sources: Vec<FileSource>
+    sources: Vec<Box<dyn BytesSource + Send>>
 }
 
 impl DummyCache {
@@ -260,12 +261,14 @@ impl DummyCache {
         Self { sources: vec![] }
     }
 
-    fn add_source(&mut self, fs: FileSource) {
-        self.sources.push(fs);
+    fn add_source(&mut self, src: Box<dyn BytesSource + Send>) {
+        self.sources.push(src);
     }
-} 
+}
 
-impl Cache for DummyCache {
+#[async_trait]
+impl Cache for DummyCache
+{
     async fn read(
         &mut self,
         idx: usize,
@@ -285,18 +288,12 @@ impl Cache for DummyCache {
     }
 }
 
-struct CacheWorkerSource<C>
-where
-    C: Cache
-{
-    pub cache: Arc<Mutex<C>>,
+struct CacheWorkerSource {
+    pub cache: Arc<Mutex<dyn Cache + Send>>,
     pub idx: usize
 }
 
-impl<C> WorkerSource for CacheWorkerSource<C>
-where
-    C: Cache
-{
+impl WorkerSource for CacheWorkerSource {
     fn read(
         &mut self,
         off: u64,
@@ -314,20 +311,15 @@ where
     }
 }
 
-struct CacheReadSeek<C>
-where
-    C: Cache
-{
-    cache: Arc<Mutex<C>>,
+struct CacheReadSeek {
+    cache: Arc<Mutex<dyn Cache + Send>>,
     idx: usize,
     pos: u64
 }
 
-impl<C> CacheReadSeek<C>
-where
-    C: Cache
+impl CacheReadSeek
 {
-    fn new(cache: Arc<Mutex<C>>, idx: usize, len: u64) -> Self {
+    fn new(cache: Arc<Mutex<dyn Cache + Send>>, idx: usize, len: u64) -> Self {
         Self {
             cache,
             idx,
@@ -336,10 +328,7 @@ where
     }
 }
 
-impl<C> Read for CacheReadSeek<C>
-where
-    C: Cache
-{
+impl Read for CacheReadSeek {
     fn read(
         &mut self,
         buf: &mut [u8]
@@ -359,10 +348,7 @@ where
     }
 }
 
-impl<C> Seek for CacheReadSeek<C>
-where
-    C: Cache
-{
+impl Seek for CacheReadSeek {
     fn seek(
         &mut self,
         pos: SeekFrom
@@ -405,15 +391,14 @@ fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
     }
 }
 
-#[derive(Debug)]
 pub struct E01Reader {
     segments: Vec<Segment>,
     chunks: Vec<Chunk>,
 
     pub chunk_size: usize,
     pub chunk_count: usize,
-    pub sector_count: usize,
     pub sector_size: usize,
+    pub sector_count: usize,
     pub image_size: usize,
 
     pub stored_md5: Option<[u8; 16]>,
@@ -425,8 +410,24 @@ pub struct E01Reader {
     corrupt_chunk_policy: CorruptChunkPolicy,
 
     workers: Vec<ReadWorker>,
-    cache: Arc<Mutex<DummyCache>>
-//    cache: Arc<Mutex<FileFoyerCache>>
+    cache: Arc<Mutex<dyn Cache + Send>>
+}
+
+impl Debug for E01Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("E01Reader")
+            .field("segments", &self.segments)
+            .field("chunks", &self.chunks)
+            .field("chunk_size", &self.chunk_size)
+            .field("chunk_count", &self.chunk_count)
+            .field("sector_size", &self.sector_size)
+            .field("sector_count", &self.sector_count)
+            .field("image_size", &self.image_size)
+            .field("stored_md5", &self.stored_md5)
+            .field("stored_sha1", &self.stored_sha1)
+            .field("segment_paths", &self.segment_paths)
+            .finish()
+    }
 }
 
 impl E01Reader {
@@ -482,7 +483,6 @@ impl E01Reader {
         let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
         let mut cache = Arc::new(Mutex::new(DummyCache::new()));
-//        let mut cache = Arc::new(Mutex::new(FileFoyerCache::new()));
 
         // read segments
         for (idx, sp) in sp_itr.by_ref().enumerate() {
@@ -494,7 +494,7 @@ impl E01Reader {
             let surl = path_or_url_to_url(sp)
                 .ok_or(OpenError::Todo)?;
 
-            let src = match surl.scheme() {
+            let src: Box<dyn BytesSource + Send> = match surl.scheme() {
                 "file" => {
                     let len = std::fs::metadata(sp)
                         .map_err(IoError::from)
@@ -503,7 +503,7 @@ impl E01Reader {
                         .map_err(|e| e.with_path(sp))?
                         .len();
 
-                    FileSource { path: sp.into(), len }
+                    Box::new(FileSource { path: sp.into(), len })
                 },
                 "s3" => {
                     let name = surl.host_str()
@@ -535,7 +535,7 @@ impl E01Reader {
                     assert_eq!(code, 200);
                     let len = h.content_length.unwrap().try_into().unwrap();
 
-                    S3Source::new(bucket, key.into(), len)
+                    Box::new(S3Source::new(bucket, key.into(), len))
                 },
                 _ => return Err(OpenError::Todo)
             };
@@ -754,18 +754,4 @@ impl E01Reader {
 
 #[cfg(test)]
 mod test {
-
-/*
-    #[test]
-    fn xxxxx() {
-
-        let s = "s3://cistorage-e2etestdatabucket263b174e-1pn3fzkwcfwh6";
-
-
-        let s = "s3://
-
-
-    }
-*/
-
 }

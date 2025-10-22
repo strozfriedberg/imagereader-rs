@@ -560,6 +560,7 @@ name = "e01-rs"
 version = "0.1.0"
 dependencies = [
  "adler32",
+ "async-trait",
  "byteorder",
  "clap",
  "const_format",
@@ -2049,8 +2050,7 @@ dependencies = [
 [[package]]
 name = "rust-s3"
 version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94f9b973bd4097f5bb47e5827dcb9fb5dc17e93879e46badc27d2a4e9a4e5588"
+source = "git+https://github.com/uckelman-sf/rust-s3.git?branch=master#f1406a082978c4d0c1fbce5e8eea370ad3a7fa12"
 dependencies = [
  "async-trait",
  "aws-creds",

@@ -12,9 +12,9 @@ mod test_helper;
 mod cache;
 mod bytessource;
 mod error;
-mod filefoyercache;
+//mod filefoyercache;
 mod filesource;
-mod foyercache;
+//mod foyercache;
 mod generated;
 pub mod hasher;
 mod readworker;
@@ -37,6 +37,51 @@ mod test {
     fn assert_eq_test_data(exp: &TestData, options: &E01ReaderOptions) {
         let mut reader = E01Reader::open_glob(
             exp.segment_paths[0],
+            options
+        ).unwrap();
+
+        let image_size = reader.image_size;
+
+        let hashes = do_hash(
+            |offset, buf: &mut [u8]| {
+                let buf_len = buf.len();
+                reader.read_at_offset(offset, &mut buf[..buf_len])
+                    .unwrap()
+            },
+            image_size,
+            false
+        );
+
+        let stored_md5 = reader.stored_md5.map(hex::encode);
+        let stored_sha1 = reader.stored_sha1.map(hex::encode);
+
+        let segment_paths = reader.segment_paths
+            .iter()
+            .map(|p| p.to_str())
+            .collect::<Option<Vec<_>>>()
+            .unwrap();
+
+        let act = TestData {
+            segment_paths: &segment_paths[..],
+            chunk_size: reader.chunk_size,
+            chunk_count: reader.chunk_count,
+            sector_size: reader.sector_size,
+            sector_count: reader.sector_count,
+            image_size: reader.image_size,
+            stored_md5: stored_md5.as_deref(),
+            stored_sha1: stored_sha1.as_deref(),
+            md5: hashes.get(&HashType::MD5).map(String::as_str),
+            sha1: hashes.get(&HashType::SHA1).map(String::as_str),
+            sha256: hashes.get(&HashType::SHA256).map(String::as_str)
+        };
+
+        assert_eq!(&act, exp);
+    }
+
+    #[track_caller]
+    fn assert_eq_test_data_nonglob(exp: &TestData, options: &E01ReaderOptions) {
+        let mut reader = E01Reader::open(
+            exp.segment_paths,
             options
         ).unwrap();
 
@@ -119,6 +164,11 @@ mod test {
     #[test]
     fn test_bad_chunk_e01_zero_bad_chunks() {
         assert_eq_test_data(&BAD_CHUNK_E01_ZEROED, &ERROR_ZERO);
+    }
+
+    #[test]
+    fn test_imageformat_mmls_1_e01() {
+        assert_eq_test_data_nonglob(&IMAGEFORMAT_MMLS_1_E01, &ERROR_ERROR);
     }
 
 /*

@@ -75,3 +75,42 @@ pub const BAD_CHUNK_E01_ZEROED: TestData = TestData {
     sha1: Some("18e70fcac21668a2ee849cdb815d45dab107f0fc"),
     sha256: Some("077861781adaad81e64b229111ef4a490884eecee74eb7c91fed5d291995caf2")
 };
+
+pub const IMAGEFORMAT_MMLS_1_E01: TestData = TestData {
+    segment_paths: &[
+        "s3://digitalcorpora/corpora/drives/dftt-2004/imageformat_mmls_1.E01"
+    ],
+    chunk_size: 32768,
+    chunk_count: 41,
+    sector_size: 512,
+    sector_count: 2581,
+    image_size: 1321472,
+    stored_md5: Some("28035e42858e28326c23732e6234bcf8"),
+    stored_sha1: Some("e5c6c296485b1146fead7ad552e1c3ccfc00bfab"),
+    md5: Some("67c44c58dd4bb4f7d162b3d3ad521e33"),
+    sha1: Some("18e70fcac21668a2ee849cdb815d45dab107f0fc"),
+    sha256: Some("077861781adaad81e64b229111ef4a490884eecee74eb7c91fed5d291995caf2")
+};
+
+/*
+pub const S3_E01: TestData = TestData {
+    segment_paths: &[
+        "s3://cistorage-e2etestdatabucket263b174e-1pn3fzkwcfwh6/images/nfury/win7-64-nfury-c-drive.E01",
+        "s3://cistorage-e2etestdatabucket263b174e-1pn3fzkwcfwh6/images/nfury/win7-64-nfury-c-drive.E02",
+        "s3://cistorage-e2etestdatabucket263b174e-1pn3fzkwcfwh6/images/nfury/win7-64-nfury-c-drive.E03",
+        "s3://cistorage-e2etestdatabucket263b174e-1pn3fzkwcfwh6/images/nfury/win7-64-nfury-c-drive.E04",
+        "s3://cistorage-e2etestdatabucket263b174e-1pn3fzkwcfwh6/images/nfury/win7-64-nfury-c-drive.E05",
+        "s3://cistorage-e2etestdatabucket263b174e-1pn3fzkwcfwh6/images/nfury/win7-64-nfury-c-drive.E06"
+    ],
+    chunk_size: 32768,
+    chunk_count: 41,
+    sector_size: 512,
+    sector_count: 2581,
+    image_size: 1321472,
+    stored_md5: Some("28035e42858e28326c23732e6234bcf8"),
+    stored_sha1: Some("e5c6c296485b1146fead7ad552e1c3ccfc00bfab"),
+    md5: Some("67c44c58dd4bb4f7d162b3d3ad521e33"),
+    sha1: Some("18e70fcac21668a2ee849cdb815d45dab107f0fc"),
+    sha256: Some("077861781adaad81e64b229111ef4a490884eecee74eb7c91fed5d291995caf2")
+};
+*/
