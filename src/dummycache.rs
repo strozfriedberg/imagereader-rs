@@ -18,8 +18,7 @@ impl DummyCache {
 }
 
 #[async_trait]
-impl Cache for DummyCache
-{
+impl Cache for DummyCache {
     async fn read(
         &mut self,
         idx: usize,

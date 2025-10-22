@@ -18,7 +18,7 @@ use crate::bytessource::BytesSource;
 use crate::cache::Cache;
 use crate::dummycache::DummyCache;
 use crate::error::{IoError, LibError};
-//use crate::filefoyercache::FileFoyerCache;
+use crate::foyercache::FoyerCache;
 use crate::filesource::FileSource;
 use crate::readworker::ReadWorker;
 use crate::s3source::S3Source;
