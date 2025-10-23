@@ -1,5 +1,6 @@
 use rand::Rng;
 use std::collections::HashMap;
+use tracing::trace;
 
 use crate::hasher::{HashType, MultiHasher};
 
@@ -37,6 +38,7 @@ where
         hasher.update(&buf[..read]);
 
         offset += read;
+        trace!("hashed to {offset}");
     }
 
     hasher.finalize()
