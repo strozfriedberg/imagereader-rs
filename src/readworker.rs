@@ -86,7 +86,7 @@ impl ReadWorker {
         }
         else {
             // decompress into scratch buffer
-            (&mut self.scratch[..], true)
+            (&mut self.scratch[..buf.len()], true)
         };
 
         // compressed chunks are either ok or unrecoverable
