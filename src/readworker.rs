@@ -1,7 +1,7 @@
 use flate2::read::ZlibDecoder;
 use simd_adler32::read::adler32;
 use std::io::{Cursor, Read};
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::workersource::WorkerSource;
 use crate::e01_reader::{CorruptChunkPolicy, ReadErrorKind};
@@ -235,6 +235,8 @@ impl ReadWorker {
     {
         let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
         let chunk_off = chunk.data_offset;
+
+        debug!("reading chunk {chunk_index} [{beg_in_chunk},{end_in_chunk})");
 
         // read the data into the buffer
         if chunk.compressed {
