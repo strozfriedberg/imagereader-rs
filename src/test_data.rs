@@ -81,15 +81,15 @@ pub const IMAGEFORMAT_MMLS_1_E01: TestData = TestData {
         "s3://digitalcorpora/corpora/drives/dftt-2004/imageformat_mmls_1.E01"
     ],
     chunk_size: 32768,
-    chunk_count: 41,
+    chunk_count: 1921,
     sector_size: 512,
-    sector_count: 2581,
-    image_size: 1321472,
-    stored_md5: Some("28035e42858e28326c23732e6234bcf8"),
-    stored_sha1: Some("e5c6c296485b1146fead7ad552e1c3ccfc00bfab"),
-    md5: Some("67c44c58dd4bb4f7d162b3d3ad521e33"),
-    sha1: Some("18e70fcac21668a2ee849cdb815d45dab107f0fc"),
-    sha256: Some("077861781adaad81e64b229111ef4a490884eecee74eb7c91fed5d291995caf2")
+    sector_count: 122881,
+    image_size: 62915072,
+    stored_md5: Some("8ec671e301095c258224aad701740503"),
+    stored_sha1: Some("067bc6ab29685ee19b0cf82c9d15ac510d1e7d95"),
+    md5: Some("8ec671e301095c258224aad701740503"),
+    sha1: Some("067bc6ab29685ee19b0cf82c9d15ac510d1e7d95"),
+    sha256: Some("e7eb6fca46bebeedc4af4cc5bfe9675691bab8ce471315317b561a28899e7902")
 };
 
 /*
