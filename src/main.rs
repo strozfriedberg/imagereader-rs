@@ -6,7 +6,7 @@ use std::{
     process::ExitCode
 };
 use tracing_subscriber::{
-    filter::LevelFilter,
+    EnvFilter,
     layer::SubscriberExt,
     util::SubscriberInitExt
 };
@@ -153,13 +153,22 @@ fn main() -> ExitCode {
         .with_line_number(false)
         .with_thread_ids(false)
         .with_thread_names(false)
-        .with_target(false)
+//        .with_target(false)
         .with_writer(std::io::stderr);
 
     tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| {
+                [
+                    // log at info by default
+                    "info",
+                    // foyer is noisy below warn level
+                    "foyer_memory=warn",
+                    "foyer_storage=warn"
+                ].join(",").into()
+            })
+        )
         .with(stderr_layer)
-        .with(LevelFilter::INFO)
-//        .with(LevelFilter::DEBUG)
         .init();
 
     let args = Args::parse();
