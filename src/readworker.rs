@@ -90,7 +90,7 @@ impl ReadWorker {
         };
 
         // compressed chunks are either ok or unrecoverable
-        if let Err(e) = self.decoder.read_exact(&mut out) {
+        if let Err(e) = self.decoder.read_exact(out) {
             error!("decompression failed for chunk {}: {}", chunk_index, e);
             match self.corrupt_chunk_policy {
                 CorruptChunkPolicy::Error => return Err(

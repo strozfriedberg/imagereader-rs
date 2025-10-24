@@ -24,7 +24,7 @@ impl S3Source {
     {
         Self {
             bucket,
-            path: path.into(),
+            path,
             len
         }
     }

@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use kaitai::{BytesReader, KError, ReadSeek};
 use s3::{
     bucket::Bucket,
@@ -7,7 +6,6 @@ use s3::{
 };
 use std::{
     fmt::Debug,
-    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     sync::{Arc, Mutex}
 };
@@ -363,8 +361,8 @@ impl E01Reader {
         let runtime = Arc::new(tokio::runtime::Runtime::new()
             .map_err(|_| OpenError::Todo)?);
 
-//        let mut cache = Arc::new(Mutex::new(DummyCache::new()));
-        let mut cache = Arc::new(Mutex::new(runtime.block_on(FoyerCache::with_default_cache(1024 * 1024))));
+//        let cache = Arc::new(Mutex::new(DummyCache::new()));
+        let cache = Arc::new(Mutex::new(runtime.block_on(FoyerCache::with_default_cache(1024 * 1024))));
 
         // read segments
         for (idx, sp) in sp_itr.by_ref().enumerate() {
