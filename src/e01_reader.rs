@@ -266,6 +266,61 @@ fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
     }
 }
 
+fn source_for<P: AsRef<str>>(
+    p: P,
+    runtime: &Runtime
+) -> Result<Box<dyn BytesSource + Send>, OpenError>
+{
+    let p = p.as_ref();
+
+    let url = path_or_url_to_url(p)
+        .ok_or(OpenError::Todo)?;
+
+    match url.scheme() {
+        "file" => {
+            let len = std::fs::metadata(p)
+                .map_err(IoError::from)
+                .map_err(LibError::from)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(p))?
+                .len();
+
+            Ok(Box::new(FileSource { path: p.into(), len }))
+        },
+        "s3" => {
+            let name = url.host_str()
+                .ok_or(OpenError::Todo)?;
+
+            let bucket = *Bucket::new(
+                name,
+                Region::UsEast1,
+                Credentials::anonymous().unwrap()
+            )
+            .map_err(std::io::Error::other)
+            .map_err(IoError::from)
+            .map_err(LibError::from)
+            .map_err(OpenError::from)
+            .map_err(|e| e.with_path(p))?;
+
+            let key = url.path();
+
+            let (h, code) = runtime.block_on(bucket.head_object(key))
+                .map_err(std::io::Error::other)
+                .map_err(IoError::from)
+                .map_err(LibError::from)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(p))?;
+
+            assert_eq!(code, 200);
+            let len = h.content_length.unwrap().try_into().unwrap();
+            debug!("content-length: {len}");
+
+            Ok(Box::new(S3Source::new(bucket, key.into(), len)))
+        },
+        _ => Err(OpenError::Todo)
+    }
+}
+
 pub struct E01Reader {
     segments: Vec<Segment>,
     chunks: Vec<Chunk>,
@@ -371,52 +426,7 @@ impl E01Reader {
             let _span = debug_span!("", segment_path = ?sp).entered();
             debug!("opening {}", sp);
 
-            let surl = path_or_url_to_url(sp)
-                .ok_or(OpenError::Todo)?;
-
-            let src: Box<dyn BytesSource + Send> = match surl.scheme() {
-                "file" => {
-                    let len = std::fs::metadata(sp)
-                        .map_err(IoError::from)
-                        .map_err(LibError::from)
-                        .map_err(OpenError::from)
-                        .map_err(|e| e.with_path(sp))?
-                        .len();
-
-                    Box::new(FileSource { path: sp.into(), len })
-                },
-                "s3" => {
-                    let name = surl.host_str()
-                        .ok_or(OpenError::Todo)?;
-
-                    let bucket = *Bucket::new(
-                        name, 
-                        Region::UsEast1, 
-                        Credentials::anonymous().unwrap()
-                    )
-                    .map_err(std::io::Error::other)
-                    .map_err(IoError::from)
-                    .map_err(LibError::from)
-                    .map_err(OpenError::from)
-                    .map_err(|e| e.with_path(sp))?;
-
-                    let key = surl.path();
-
-                    let (h, code) = runtime.block_on(bucket.head_object(key))
-                        .map_err(std::io::Error::other)
-                        .map_err(IoError::from)
-                        .map_err(LibError::from)
-                        .map_err(OpenError::from)
-                        .map_err(|e| e.with_path(sp))?;
-
-                    assert_eq!(code, 200);
-                    let len = h.content_length.unwrap().try_into().unwrap();
-                    debug!("content-length: {len}");
-
-                    Box::new(S3Source::new(bucket, key.into(), len))
-                },
-                _ => return Err(OpenError::Todo)
-            };
+            let src = source_for(sp, &runtime)?;
 
             let seg_len = src.end();
             cache.lock().unwrap().add_source(src);
@@ -426,7 +436,7 @@ impl E01Reader {
                 runtime.clone(),
                 idx,
                 seg_len
-            ); 
+            );
             let rs = Box::new(crs) as Box<dyn ReadSeek>;
 
             let io = BytesReader::try_from(rs)
