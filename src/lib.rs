@@ -10,6 +10,7 @@ mod test_data;
 mod test_helper;
 
 mod cache;
+mod cachereadseek;
 mod bytessource;
 mod dummycache;
 mod error;
