@@ -11,6 +11,7 @@ mod test_helper;
 
 mod cache;
 mod cachereadseek;
+mod cacheworkersource;
 mod bytessource;
 mod dummycache;
 mod error;

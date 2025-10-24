@@ -18,6 +18,7 @@ use url::{self, Url};
 use crate::bytessource::BytesSource;
 use crate::cache::Cache;
 use crate::cachereadseek::CacheReadSeek;
+use crate::cacheworkersource::CacheWorkerSource;
 use crate::dummycache::DummyCache;
 use crate::error::{IoError, LibError};
 use crate::foyercache::FoyerCache;
@@ -252,24 +253,6 @@ pub enum CorruptChunkPolicy {
 pub struct E01ReaderOptions {
     pub corrupt_section_policy: CorruptSectionPolicy,
     pub corrupt_chunk_policy: CorruptChunkPolicy
-}
-
-struct CacheWorkerSource {
-    pub cache: Arc<Mutex<dyn Cache + Send>>,
-    pub runtime: Arc<Runtime>,
-    pub idx: usize
-}
-
-impl WorkerSource for CacheWorkerSource {
-    fn read(
-        &mut self,
-        off: u64,
-        buf: &mut [u8]
-    ) -> Result<(), std::io::Error>
-    {
-        let mut cache = self.cache.lock().unwrap();
-        self.runtime.block_on(cache.read(self.idx, off, buf))
-    }
 }
 
 fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
