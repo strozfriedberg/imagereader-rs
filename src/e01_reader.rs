@@ -357,6 +357,8 @@ impl Debug for E01Reader {
             .field("stored_md5", &self.stored_md5)
             .field("stored_sha1", &self.stored_sha1)
             .field("segment_paths", &self.segment_paths)
+            .field("corrupt_section_policy", &self.corrupt_section_policy)
+            .field("corrupt_chunk_policy", &self.corrupt_chunk_policy)
             .finish()
     }
 }
