@@ -82,7 +82,7 @@ fn replace_extension<T: AsRef<Path>>(path: T, ext: &str) -> Option<PathBuf> {
     let path = path.as_ref();
     let stem = path.file_stem()?;
     let mut repl = path.parent()
-        .and_then(|p| Some(p.join(stem)))
+        .map(|p| p.join(stem))
         .or_else(|| Some(Path::new(stem).to_path_buf()))?
         .into_os_string();
     repl.push(".");

@@ -9,9 +9,12 @@ mod test_data;
 #[cfg(test)]
 mod test_helper;
 
+mod bytessource;
 mod error;
+mod filesource;
 mod generated;
 pub mod hasher;
+mod readworker;
 mod sec_read;
 mod seg_path;
 mod segment;

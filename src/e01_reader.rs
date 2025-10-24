@@ -1,17 +1,16 @@
-use flate2::read::ZlibDecoder;
 use std::{
     fs::File,
-    io::{Cursor, Read, Seek, SeekFrom},
     path::{Path, PathBuf}
 };
-use simd_adler32::read::adler32;
-use tracing::{debug, debug_span, error, warn};
+use tracing::{debug, debug_span, warn};
 
 extern crate kaitai;
 
 use kaitai::{BytesReader, KError};
 
 use crate::error::{IoError, LibError};
+use crate::filesource::FileSource;
+use crate::readworker::ReadWorker;
 use crate::sec_read::{Chunk, VolumeSection, Section, SectionIterator};
 use crate::seg_path::{find_segment_paths, UnrecognizedExtension};
 use crate::segment::SegmentFileHeader;
@@ -89,6 +88,8 @@ pub enum ReadErrorKind {
     OffsetBeyondEnd(usize, usize),
     #[error("{0}")]
     IoError(#[from] std::io::Error),
+    #[error("Chunk {0} is {1} bytes long, must be at least 5 bytes long")]
+    TooShort(usize, usize),
     #[error("Chunk {0} checksum failed: calculated {1}, expected {2}")]
     BadChecksum(usize, u32, u32),
     #[error("Decompression of chunk {0} failed: {1}")]
@@ -135,8 +136,7 @@ pub enum E01Error {
 
 #[derive(Debug)]
 struct Segment {
-    pub path: PathBuf,
-    pub handle: Option<File>
+    pub path: PathBuf
 }
 
 struct SegmentComponents {
@@ -257,7 +257,7 @@ pub struct E01Reader {
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy,
 
-    worker: ReadWorker
+    workers: Vec<ReadWorker>
 }
 
 impl E01Reader {
@@ -365,8 +365,7 @@ impl E01Reader {
 
             // record the segment
             segments.push(Segment {
-                path: sp.into(),
-                handle: None
+                path: sp.into()
             });
 
             segment_paths.push(sp.into());
@@ -402,7 +401,6 @@ impl E01Reader {
         let sector_count = volume.total_sector_count as usize;
         let sector_size = volume.bytes_per_sector as usize;
         let image_size = volume.max_offset();
-        let image_end = volume.max_offset();
 
         Ok(E01Reader {
             segments,
@@ -417,11 +415,7 @@ impl E01Reader {
             segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
-            worker: ReadWorker::new(
-                chunk_size,
-                image_end,
-                options.corrupt_chunk_policy
-            )
+            workers: vec![]
         })
     }
 
@@ -431,6 +425,8 @@ impl E01Reader {
         mut buf: &mut [u8]
     ) -> Result<usize, ReadError>
     {
+//        use rayon::prelude::*;
+
         // don't start reading past the end
         let image_end = self.image_size;
         if offset > image_end {
@@ -447,292 +443,82 @@ impl E01Reader {
 
         let chunk_size = self.chunk_size;
 
+        let beg_chunk_index = buf_beg / chunk_size;
+        let end_chunk_index = buf_end / chunk_size + (buf_end % chunk_size).min(1);
+
+// TODO: Number of workers should have some fixed/configured maximum,
+// should not scale with the number of chunks to be fetched.
+        if end_chunk_index - beg_chunk_index > self.workers.len() {
+            self.workers.resize(
+                end_chunk_index - beg_chunk_index,
+                ReadWorker::new(
+                    chunk_size,
+                    image_end,
+                    self.corrupt_chunk_policy
+                )
+            );
+        }
+
+        let mut tasks = Vec::with_capacity(end_chunk_index - beg_chunk_index);
+        let mut w = &mut self.workers[..];
+
         while offset < buf_end {
             // get the next chunk
             let chunk_index = offset / chunk_size;
-            debug!("reading {chunk_index} / {}", self.chunk_count);
 
             let chunk = &self.chunks[chunk_index];
-            let seg = &mut self.segments[chunk.segment];
+            let seg = &self.segments[chunk.segment];
 
-            offset += self.worker.read(
-                offset,
-                buf_beg,
-                buf_end,
-                chunk,
-                seg,
+            let chunk_beg = chunk_index * chunk_size;
+            let chunk_end = std::cmp::min(chunk_beg + chunk_size, image_end);
+
+            let beg_in_chunk = offset - chunk_beg;
+            let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
+
+            let beg_in_buf = offset - buf_beg;
+            let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
+
+            let (bleft, bright) = buf.split_at_mut(end_in_buf - beg_in_buf);
+            buf = bright;
+
+            let (wleft, wright) = w.split_at_mut(1);
+            w = wright;
+
+            let handle = FileSource::new(
+                File::open(&seg.path)
+                    .map_err(ReadErrorKind::IoError)?
+            );
+
+            tasks.push((
                 chunk_index,
-                buf
-            )
-            .map_err(ReadError::from)
-            .map_err(|e| e.with_path(&seg.path))?;
+                chunk,
+                handle,
+                bleft,
+                beg_in_chunk,
+                end_in_chunk,
+                &seg.path,
+                &mut wleft[0]
+            ));
+
+            offset += end_in_buf - beg_in_buf;
         }
+
+        tasks.into_iter()
+//        tasks.into_par_iter()
+            .try_for_each(|(chunk_index, chunk, mut handle, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
+                worker.read(
+                    chunk,
+                    &mut handle,
+                    chunk_index,
+                    sbuf,
+                    beg_in_chunk,
+                    end_in_chunk
+                )
+                .map_err(ReadError::from)
+                .map_err(|e| e.with_path(seg_path))
+            })?;
 
         Ok(offset - buf_beg)
-    }
-}
-
-#[derive(Debug)]
-struct ReadWorker {
-    chunk_size: usize,
-    image_end: usize,
-    corrupt_chunk_policy: CorruptChunkPolicy,
-    scratch: Vec<u8>,
-    decoder: ZlibDecoder<Cursor<Vec<u8>>>
-}
-
-impl ReadWorker {
-    fn new(
-        chunk_size: usize,
-        image_end: usize,
-        corrupt_chunk_policy: CorruptChunkPolicy
-    ) -> Self
-    {
-        Self {
-            chunk_size,
-            image_end,
-            corrupt_chunk_policy,
-            scratch: vec![0; chunk_size],
-            decoder: ZlibDecoder::new(Cursor::new(vec![0; chunk_size + 4]))
-        }
-    }
-
-    fn read_compressed_read<R: Read>(
-        &mut self,
-        handle: &mut R,
-        chunk_len: usize
-    ) -> Result<(), ReadErrorKind>
-    {
-        // take the buffer from the decoder
-        let cur = self.decoder.reset(Cursor::new(vec![0; 0]));
-        let mut v = cur.into_inner();
-        let raw_data = &mut v[..chunk_len];
-
-        // do the read
-        let r = handle.read_exact(raw_data)
-            .map_err(ReadErrorKind::IoError);
-
-        // give the buffer back to the decoder
-        self.decoder.reset(Cursor::new(v));
-
-        r
-    }
-
-    fn read_compressed_decompress(
-        &mut self,
-        chunk_index: usize,
-        chunk_len: usize,
-        buf: &mut [u8],
-        beg_in_chunk: usize,
-        end_in_chunk: usize
-    ) -> Result<usize, ReadErrorKind>
-    {
-        // Every chunk contains the same amount of data except for the last
-        // one; decompress directly into the buffer if there is sufficient
-        // space.
-
-        let (mut out, use_scratch) = if buf.len() == self.chunk_size ||
-            (buf.len() < self.chunk_size &&
-            chunk_index * self.chunk_size > self.image_end)
-        {
-            // decompress directly into output buffer
-            (&mut buf[..], false)
-        }
-        else {
-            // decompress into scratch buffer
-            (&mut self.scratch[..], true)
-        };
-
-        // compressed chunks are either ok or unrecoverable
-        if let Err(e) = self.decoder.read_exact(&mut out) {
-            error!("decompression failed for chunk {}: {}", chunk_index, e);
-            match self.corrupt_chunk_policy {
-                CorruptChunkPolicy::Error => return Err(
-                    ReadErrorKind::DecompressionFailed(chunk_index, e)
-                ),
-                CorruptChunkPolicy::Zero |
-                CorruptChunkPolicy::RawIfPossible => {
-                    // zero out corrupt chunk
-                    out.fill(0);
-                }
-            }
-        }
-
-        // copy requested portion of scratch into user buffer
-        if use_scratch {
-            let out = &self.scratch[..];
-            buf.copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
-        }
-
-        Ok(buf.len())
-    }
-
-    fn read_compressed<R: Read>(
-        &mut self,
-        handle: &mut R,
-        chunk_index: usize,
-        chunk_len: usize,
-        buf: &mut [u8],
-        beg_in_chunk: usize,
-        end_in_chunk: usize
-    ) -> Result<usize, ReadErrorKind>
-    {
-        self.read_compressed_read(handle, chunk_len)?;
-        self.read_compressed_decompress(
-            chunk_index,
-            chunk_len,
-            buf,
-            beg_in_chunk,
-            end_in_chunk
-        )
-    }
-
-    fn read_uncompressed<R: Read>(
-        &mut self,
-        handle: &mut R,
-        chunk_index: usize,
-        chunk_len: usize,
-        buf: &mut [u8],
-        beg_in_chunk: usize,
-        end_in_chunk: usize
-    ) -> Result<usize, ReadErrorKind>
-    {
-        // take the buffer from the decoder
-        let cur = self.decoder.reset(Cursor::new(vec![0; 0]));
-        let mut v = cur.into_inner();
-        let raw_data = &mut v[..chunk_len];
-
-        // do the read
-        let r = self.read_uncompressed_inner(
-            handle,
-            chunk_index,
-            buf,
-            beg_in_chunk,
-            end_in_chunk,
-            raw_data
-        );
-
-        // give the buffer back to the decoder
-        self.decoder.reset(Cursor::new(v));
-
-        r
-    }
-
-    fn read_uncompressed_inner<R: Read>(
-        &mut self,
-        handle: &mut R,
-        chunk_index: usize,
-        buf: &mut [u8],
-        beg_in_chunk: usize,
-        end_in_chunk: usize,
-        raw_data: &mut [u8]
-    ) -> Result<usize, ReadErrorKind>
-    {
-        handle.read_exact(raw_data)
-            .map_err(ReadErrorKind::IoError)?;
-
-        let raw_data_len = raw_data.len();
-
-        // read stored checksum
-        let crc_stored = u32::from_le_bytes(
-            raw_data[raw_data_len - 4..]
-                .try_into()
-                .expect("slice of last 4 bytes not 4 bytes long, wtf")
-        );
-
-        // trim stored checksum from data
-        let out = &mut raw_data[..raw_data_len - 4];
-
-        // checksum the data
-        let mut reader = Cursor::new(&out);
-        let crc = adler32(&mut reader)
-            .map_err(ReadErrorKind::IoError)?;
-
-        // deal with checksum mismatch
-        if crc != crc_stored {
-            error!("checksum mismatch reading chunk {}", chunk_index);
-            match self.corrupt_chunk_policy {
-                CorruptChunkPolicy::Error => return Err(
-                    ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc)
-                ),
-                CorruptChunkPolicy::Zero => {
-                    // zero out corrupt chunk
-                    out.fill(0);
-                },
-                CorruptChunkPolicy::RawIfPossible => {
-                    // let's gooooooooo!
-                }
-            }
-        }
-
-        buf.copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
-
-        Ok(buf.len())
-    }
-
-    fn read(
-        &mut self,
-        offset: usize,
-        buf_beg: usize,
-        buf_end: usize,
-        chunk: &Chunk,
-        seg: &mut Segment,
-        chunk_index: usize,
-        buf: &mut [u8]
-    ) -> Result<usize, ReadErrorKind>
-    {
-        // open the segment file if it's not already open
-        let mut handle = match &seg.handle {
-            None => {
-                let h = File::open(&seg.path)
-                    .map_err(ReadErrorKind::IoError)?;
-                seg.handle = Some(h);
-                seg.handle.as_ref().unwrap()
-            },
-            Some(h) => h
-        };
-
-        // seek to the start of the chunk
-        handle
-            .seek(SeekFrom::Start(chunk.data_offset))
-            .map_err(ReadErrorKind::IoError)?;
-
-        // determine various offsets and indices
-        let chunk_beg = chunk_index * self.chunk_size;
-        let chunk_end = std::cmp::min(
-            chunk_beg + self.chunk_size,
-            self.image_end
-        );
-
-        let beg_in_chunk = offset - chunk_beg;
-        let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
-
-        let beg_in_buf = offset - buf_beg;
-        let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
-
-        let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
-
-        // read the data into the buffer
-        if chunk.compressed {
-            self.read_compressed(
-                &mut handle,
-                chunk_index,
-                chunk_len,
-                &mut buf[beg_in_buf..end_in_buf],
-                beg_in_chunk,
-                end_in_chunk
-            )
-        }
-        else {
-            self.read_uncompressed(
-                &mut handle,
-                chunk_index,
-                chunk_len,
-                &mut buf[beg_in_buf..end_in_buf],
-                beg_in_chunk,
-                end_in_chunk
-            )
-        }
     }
 }
 
