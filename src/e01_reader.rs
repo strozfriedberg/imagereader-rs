@@ -559,7 +559,7 @@ impl E01Reader {
             return Err(ReadErrorKind::OffsetBeyondEnd(offset, image_end))?;
         }
 
-        // clamp the buffer to the end
+        // limit the buffer to the image end
         if offset + buf.len() > image_end {
             buf = &mut buf[..(image_end - offset)];
         }
