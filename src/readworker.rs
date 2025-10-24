@@ -77,7 +77,7 @@ impl ReadWorker {
         // one; decompress directly into the buffer if there is sufficient
         // space.
 
-        let (mut out, use_scratch) = if buf.len() == self.chunk_size ||
+        let (out, use_scratch) = if buf.len() == self.chunk_size ||
             (buf.len() < self.chunk_size &&
             chunk_index * self.chunk_size > self.image_end)
         {
