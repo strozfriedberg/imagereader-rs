@@ -415,9 +415,8 @@ mod test {
         let msg_b = message.to_bytes();
         let pre_b = prefix.to_bytes();
 
-        assert_eq!(
-            &msg_b[..pre_b.len()],
-            pre_b,
+        assert!(
+            msg_b.starts_with(pre_b),
             "{message:?} does not start with {prefix:?}"
         );
     }
