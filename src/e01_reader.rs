@@ -417,8 +417,9 @@ impl E01Reader {
 
         let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
-        let runtime = Arc::new(tokio::runtime::Runtime::new()
-            .map_err(OpenError::TokioRuntimeFailed)?
+        let runtime = Arc::new(
+            tokio::runtime::Runtime::new()
+                .map_err(OpenError::TokioRuntimeFailed)?
         );
 
 //        let cache = Arc::new(Mutex::new(DummyCache::new()));
