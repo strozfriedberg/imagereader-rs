@@ -135,7 +135,7 @@ mod test {
         corrupt_chunk_policy: CorruptChunkPolicy::Zero
     };
 
-    #[test_log::test]
+    #[test]
     fn test_image_e01() {
         assert_eq_test_data(&IMAGE_E01, &ERROR_ERROR);
     }
@@ -175,17 +175,26 @@ mod test {
 
 /*
     const DADEMURPHY_E01: TestData = TestData {
-        path: "/home/juckelman/Downloads/dademurphy.E01",
-        md5: "caadd3db26d633249fcf9143d67d69bd",
-        sha1: "109a68fc6921ea3f30aa5718177a435222b4fd15",
-        sha256: "6a3720e277f54e9038b8faa5266aaa30cc5912511fbbac7256f570fa46e7060c"
+        segment_paths: &[ "/home/juckelman/Downloads/dademurphy.E01" ],
+        chunk_size: 32768,
+        chunk_count: 41,
+        sector_size: 512,
+        sector_count: 2581,
+        image_size: 1321472,
+        stored_md5: Some("caadd3db26d633249fcf9143d67d69bd"),
+        stored_sha1: Some("109a68fc6921ea3f30aa5718177a435222b4fd15"),
+        md5: Some("caadd3db26d633249fcf9143d67d69bd"),
+        sha1: Some("109a68fc6921ea3f30aa5718177a435222b4fd15"),
+        sha256: Some("6a3720e277f54e9038b8faa5266aaa30cc5912511fbbac7256f570fa46e7060c")
     };
 
     #[test]
     fn test_dademurphy_e01() {
-        assert_eq_test_data(DADEMURPHY_E01, &ERROR_ERROR);
+        assert_eq_test_data(&DADEMURPHY_E01, &ERROR_ERROR);
     }
+*/
 
+/*
     const NFURY_E01: TestData = TestData {
         path: "/home/juckelman/Downloads/nfury/win7-64-nfury-c-drive.E01",
         md5: "a98416e60bb81f57cb99125ec41bfe4c",
