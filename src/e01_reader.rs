@@ -52,6 +52,8 @@ pub enum OpenError {
         #[source]
         source: LibError
     },
+    #[error("Failed to start tokio Runtime: {0}")]
+    TokioRuntimeFailed(#[from] std::io::Error),
     #[error("TODO")]
     Todo
 }
@@ -416,7 +418,8 @@ impl E01Reader {
         let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
         let runtime = Arc::new(tokio::runtime::Runtime::new()
-            .map_err(|_| OpenError::Todo)?);
+            .map_err(OpenError::TokioRuntimeFailed)?
+        );
 
 //        let cache = Arc::new(Mutex::new(DummyCache::new()));
         let cache = Arc::new(Mutex::new(runtime.block_on(FoyerCache::with_default_cache(1024 * 1024))));
