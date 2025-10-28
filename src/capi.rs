@@ -684,7 +684,7 @@ mod test {
             )
         });
 
-        assert_err_starts_with(err, c"Error reading bogus: ");
+        assert_err_starts_with(err, c"Malformed path or URL: ");
         assert!(h.ptr.is_null());
     }
 

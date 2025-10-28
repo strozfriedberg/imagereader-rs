@@ -40,6 +40,8 @@ pub enum OpenError {
     TooManyChunks(usize, usize),
     #[error("Too few chunks found: actual {0}, expected {1}")]
     TooFewChunks(usize, usize),
+    #[error("Failed to start tokio Runtime: {0}")]
+    TokioRuntimeFailed(std::io::Error),
     #[error("Error reading {path}: {source}")]
     IoError {
         path: String,
@@ -52,10 +54,16 @@ pub enum OpenError {
         #[source]
         source: LibError
     },
-    #[error("Failed to start tokio Runtime: {0}")]
-    TokioRuntimeFailed(#[from] std::io::Error),
-    #[error("TODO")]
-    Todo
+    #[error("Malformed path or URL: {0}")]
+    BadPath(String),
+    #[error("Unsupported URL scheme: {0}")]
+    UnsupportedScheme(String)
+}
+
+impl From<std::io::Error> for OpenError {
+    fn from(e: std::io::Error) -> Self {
+        OpenError::from(LibError::from(IoError::from(e)))
+    }
 }
 
 impl From<LibError> for OpenError {
@@ -276,13 +284,11 @@ fn source_for<P: AsRef<str>>(
     let p = p.as_ref();
 
     let url = path_or_url_to_url(p)
-        .ok_or(OpenError::Todo)?;
+        .ok_or(OpenError::BadPath(p.into()))?;
 
     match url.scheme() {
         "file" => {
             let len = std::fs::metadata(p)
-                .map_err(IoError::from)
-                .map_err(LibError::from)
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(p))?
                 .len();
@@ -291,7 +297,7 @@ fn source_for<P: AsRef<str>>(
         },
         "s3" => {
             let name = url.host_str()
-                .ok_or(OpenError::Todo)?;
+                .ok_or(OpenError::BadPath(p.into()))?;
 
             let bucket = *Bucket::new(
                 name,
@@ -299,8 +305,6 @@ fn source_for<P: AsRef<str>>(
                 Credentials::anonymous().unwrap()
             )
             .map_err(std::io::Error::other)
-            .map_err(IoError::from)
-            .map_err(LibError::from)
             .map_err(OpenError::from)
             .map_err(|e| e.with_path(p))?;
 
@@ -308,8 +312,6 @@ fn source_for<P: AsRef<str>>(
 
             let (h, code) = runtime.block_on(bucket.head_object(key))
                 .map_err(std::io::Error::other)
-                .map_err(IoError::from)
-                .map_err(LibError::from)
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(p))?;
 
@@ -319,7 +321,7 @@ fn source_for<P: AsRef<str>>(
 
             Ok(Box::new(S3Source::new(bucket, key.into(), len)))
         },
-        _ => Err(OpenError::Todo)
+        _ => Err(OpenError::UnsupportedScheme(p.into()))
     }
 }
 
