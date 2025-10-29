@@ -35,6 +35,7 @@ itertools = "0.14.0"
 #kaitai = { git = "https://github.com/kaitai-io/kaitai_struct_rust_runtime.git", branch = "master" }
 kaitai = { git = "https://github.com/uckelman-sf/kaitai_struct_rust_runtime.git", branch = "master" }
 md-5 = "0.10"
+rayon = "1.11.0"
 #rust-s3 = "0.37.0"
 rust-s3 = { git = "https://github.com/uckelman-sf/rust-s3.git", branch = "master" }
 sha1 = "0.10"

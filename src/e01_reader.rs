@@ -1,4 +1,5 @@
 use kaitai::{BytesReader, KError, ReadSeek};
+use rayon::prelude::*;
 use s3::{
     bucket::Bucket,
     creds::Credentials,
@@ -166,6 +167,7 @@ struct Segment {
 }
 
 struct SegmentComponents {
+    path: String,
     volume: Option<VolumeSection>,
     md5: Option<[u8; 16]>,
     sha1: Option<[u8; 20]>,
@@ -180,6 +182,8 @@ fn read_segment<T: AsRef<str>>(
     ignore_checksums: bool
 ) -> Result<SegmentComponents, OpenError>
 {
+    debug!("reading sections {}", segment_path.as_ref());
+
     let _header = SegmentFileHeader::new(io)
         .map_err(OpenError::from)
         .map_err(|e| e.with_path(&segment_path))?;
@@ -199,10 +203,13 @@ fn read_segment<T: AsRef<str>>(
     let mut sections = SectionIterator::new(io, ignore_checksums);
 
     for section in sections.by_ref() {
-        match section
+        let section = section
             .map_err(OpenError::from)
-            .map_err(|e| e.with_path(&segment_path))?
-        {
+            .map_err(|e| e.with_path(&segment_path))?;
+
+        debug!("found section {section:?}");
+
+        match section {
             Section::Volume(v) => volume = Some(v),
             Section::Table(t) => {
                 if !t.is_empty() {
@@ -234,11 +241,141 @@ fn read_segment<T: AsRef<str>>(
 
     Ok(
         SegmentComponents {
+            path: segment_path.as_ref().into(),
             volume,
             md5,
             sha1,
             chunks,
             done
+        }
+    )
+}
+
+fn make_bytes_reader(
+    p: &str,
+    idx: usize,
+    cache: Arc<Mutex<dyn Cache + Send>>,
+    runtime: Arc<Runtime>
+) -> Result<BytesReader, OpenError>
+{
+    debug!("opening {}", p);
+
+    let src = source_for(p, &runtime)?;
+
+    let seg_len = src.end();
+    cache.lock().unwrap().add_source(idx, src);
+
+    let crs = CacheReadSeek::new(
+        cache,
+        runtime,
+        idx,
+        seg_len
+    );
+
+    let rs = Box::new(crs) as Box<dyn ReadSeek>;
+
+    Ok(
+        BytesReader::try_from(rs)
+            .map_err(OpenError::from)
+            .map_err(|e| e.with_path(p))?
+    )
+}
+
+struct E01Metadata {
+    volume: VolumeSection,
+    md5: Option<[u8; 16]>,
+    sha1: Option<[u8; 20]>,
+    segments: Vec<Segment>,
+    segment_paths: Vec<PathBuf>,
+    chunks: Vec<Chunk>
+}
+
+fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
+    segs: S,
+    ignore_checksums: bool
+) -> Result<E01Metadata, OpenError>
+{
+    let mut volume = None;
+    let mut stored_md5 = None;
+    let mut stored_sha1 = None;
+
+    let mut segments = vec![];
+    let mut segment_paths = vec![];
+    let mut chunks = vec![];
+
+    let mut done = false;
+
+    for seg in segs {
+        debug!("handling {}", seg.path);
+
+        // take the volume section if it's the first one
+        match (seg.volume, &volume) {
+            // we have no volume section, and saw one
+            (Some(sv), None) => {
+                // we can size the chunks vec now
+                let unread_chunks = (sv.chunk_count as usize)
+                    .saturating_sub(chunks.len());
+                chunks.reserve_exact(unread_chunks);
+                volume = Some(sv);
+            },
+            // we have a volume section, and didn't see a new one
+            (None, Some(_)) => {},
+            // we have no volume section, and saw none;
+            // this can happen only on the first segment
+            (None, None) =>
+                return Err(OpenError::MissingVolumeSection((&seg.path).into())),
+            // we have a volume section and saw another one!
+            (Some(_), Some(_)) =>
+                warn!("duplicate volume section")
+        }
+
+        // take the stored MD5 if it's the first one
+        match (seg.md5, &stored_md5) {
+            (Some(h), None) => stored_md5 = Some(h),
+            (Some(new), Some(old)) if new != *old =>
+                warn!("duplicate stored MD5s disagree"),
+            _ => {}
+        }
+
+        // take the stored SHA1 if it's the first one
+        match (seg.sha1, &stored_sha1) {
+            (Some(h), None) => stored_sha1 = Some(h),
+            (Some(new), Some(old)) if new != *old =>
+                warn!("duplicate stored SHA1s disagree"),
+            _ => {}
+        }
+
+        // record the chunks
+        chunks.extend(seg.chunks);
+
+        // record the segment
+        segment_paths.push((&seg.path).into());
+        segments.push(Segment { path: seg.path });
+
+        if seg.done {
+            if done {
+                warn!("more segments after finding done section");
+            }
+            else {
+                done = true;
+            }
+        }
+    }
+
+    if !done {
+        warn!("read all segments without finding done section");
+    }
+
+    let volume = volume.expect("volume section must have been found");
+
+    Ok(
+        E01Metadata {
+            volume,
+            md5: stored_md5,
+            sha1: stored_sha1,
+            segments,
+            segment_paths,
+            chunks
         }
     )
 }
@@ -408,16 +545,6 @@ impl E01Reader {
         // check that there are some segment files
         sp_itr.peek().ok_or(OpenError::NoSegmentFiles)?;
 
-        let mut volume = None;
-        let mut stored_md5 = None;
-        let mut stored_sha1 = None;
-
-        let mut segments = vec![];
-        let mut segment_paths = vec![];
-        let mut chunks = vec![];
-
-        let mut done = false;
-
         let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
         let runtime = Arc::new(
@@ -428,98 +555,28 @@ impl E01Reader {
 //        let cache = Arc::new(Mutex::new(DummyCache::new()));
         let cache = Arc::new(Mutex::new(runtime.block_on(FoyerCache::with_default_cache(1024 * 1024))));
 
-        // read segments
-        for (idx, sp) in sp_itr.by_ref().enumerate() {
-            let sp = sp.as_ref();
+        // read the segment metadata
+        let segs = sp_itr.map(|p| p.as_ref().to_string())
+            .collect::<Vec<_>>()
+//            .into_iter()
+            .into_par_iter()
+            .enumerate()
+            .map(|(idx, sp)| {
+                let io = make_bytes_reader(
+                    &sp,
+                    idx,
+                    cache.clone(),
+                    runtime.clone()
+                )?;
+                read_segment(sp, idx, &io, ignore_checksums)
+            })
+            .collect::<Result<Vec<SegmentComponents>, _>>()?;
 
-            let _span = debug_span!("", segment_path = ?sp).entered();
-            debug!("opening {}", sp);
+        // process segment metadata
+        let meta = process_segments(segs, ignore_checksums)?;
 
-            let src = source_for(sp, &runtime)?;
-
-            let seg_len = src.end();
-            cache.lock().unwrap().add_source(src);
-
-            let crs = CacheReadSeek::new(
-                cache.clone(),
-                runtime.clone(),
-                idx,
-                seg_len
-            );
-            let rs = Box::new(crs) as Box<dyn ReadSeek>;
-
-            let io = BytesReader::try_from(rs)
-                 .map_err(OpenError::from)
-                 .map_err(|e| e.with_path(sp))?;
-
-            debug!("reading sections {}", sp);
-
-            let seg = read_segment(sp, segments.len(), &io, ignore_checksums)?;
-
-            // take the volume section if it's the first one
-            match (seg.volume, &volume) {
-                // we have no volume section, and saw one
-                (Some(sv), None) => {
-                    // we can size the chunks vec now
-                    let unread_chunks = (sv.chunk_count as usize)
-                        .saturating_sub(chunks.len());
-                    chunks.reserve_exact(unread_chunks);
-                    volume = Some(sv);
-                },
-                // we have a volume section, and didn't see a new one
-                (None, Some(_)) => {},
-                // we have no volume section, and saw none;
-                // this can happen only on the first segment
-                (None, None) =>
-                    return Err(OpenError::MissingVolumeSection(sp.into())),
-                // we have a volume section and saw another one!
-                (Some(_), Some(_)) =>
-                    warn!("duplicate volume section")
-            }
-
-            // take the stored MD5 if it's the first one
-            match (seg.md5, &stored_md5) {
-                (Some(h), None) => stored_md5 = Some(h),
-                (Some(new), Some(old)) if new != *old =>
-                    warn!("duplicate stored MD5s disagree"),
-                _ => {}
-            }
-
-            // take the stored SHA1 if it's the first one
-            match (seg.sha1, &stored_sha1) {
-                (Some(h), None) => stored_sha1 = Some(h),
-                (Some(new), Some(old)) if new != *old =>
-                    warn!("duplicate stored SHA1s disagree"),
-                _ => {}
-            }
-
-            // record the chunks
-            chunks.extend(seg.chunks);
-
-            // record the segment
-            segments.push(Segment { path: sp.into() });
-
-            segment_paths.push(sp.into());
-
-            if seg.done {
-                done = true;
-                break;
-            }
-        }
-
-        if done {
-            if sp_itr.next().is_some() {
-                warn!("more segments after finding done section");
-            }
-        }
-        else {
-            warn!("read all segments without finding done section");
-        }
-
-        let volume = volume.expect("volume section must have been found");
-
-        let exp_chunk_count = volume.chunk_count as usize;
-        let chunk_count = chunks.len();
+        let exp_chunk_count = meta.volume.chunk_count as usize;
+        let chunk_count = meta.chunks.len();
 
         if chunk_count > exp_chunk_count {
             return Err(OpenError::TooManyChunks(chunk_count, exp_chunk_count));
@@ -528,22 +585,22 @@ impl E01Reader {
             return Err(OpenError::TooFewChunks(chunk_count, exp_chunk_count));
         }
 
-        let chunk_size = volume.chunk_size();
-        let sector_count = volume.total_sector_count as usize;
-        let sector_size = volume.bytes_per_sector as usize;
-        let image_size = volume.max_offset();
+        let chunk_size = meta.volume.chunk_size();
+        let sector_count = meta.volume.total_sector_count as usize;
+        let sector_size = meta.volume.bytes_per_sector as usize;
+        let image_size = meta.volume.max_offset();
 
         Ok(E01Reader {
-            segments,
-            chunks,
+            segments: meta.segments,
+            chunks: meta.chunks,
             chunk_count,
             chunk_size,
             sector_count,
             sector_size,
             image_size,
-            stored_md5,
-            stored_sha1,
-            segment_paths,
+            stored_md5: meta.md5,
+            stored_sha1: meta.sha1,
+            segment_paths: meta.segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
             workers: vec![],
@@ -558,8 +615,6 @@ impl E01Reader {
         mut buf: &mut [u8]
     ) -> Result<usize, ReadError>
     {
-//        use rayon::prelude::*;
-
         // don't start reading past the end
         let image_end = self.image_size;
         if offset > image_end {
@@ -637,8 +692,8 @@ impl E01Reader {
             offset += end_in_buf - beg_in_buf;
         }
 
-        tasks.into_iter()
-//        tasks.into_par_iter()
+//        tasks.into_iter()
+        tasks.into_par_iter()
             .try_for_each(|(chunk_index, chunk, mut src, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
                 worker.read(
                     chunk,
