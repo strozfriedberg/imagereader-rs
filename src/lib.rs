@@ -19,6 +19,7 @@ mod filesource;
 mod foyercache;
 mod generated;
 pub mod hasher;
+mod placeholdersource;
 mod readworker;
 mod s3source;
 mod sec_read;

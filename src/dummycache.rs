@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 
-use crate::bytessource::BytesSource;
-use crate::cache::Cache;
+use crate::{
+    bytessource::BytesSource,
+    cache::Cache,
+    placeholdersource::PlaceholderSource
+};
 
 pub struct DummyCache {
     sources: Vec<Box<dyn BytesSource + Send>>
@@ -10,10 +13,6 @@ pub struct DummyCache {
 impl DummyCache {
     pub fn new() -> Self {
         Self { sources: vec![] }
-    }
-
-    pub fn add_source(&mut self, src: Box<dyn BytesSource + Send>) {
-        self.sources.push(src);
     }
 }
 
@@ -35,5 +34,12 @@ impl Cache for DummyCache {
         self.sources.get(idx)
             .ok_or(std::io::Error::other(format!("{idx} out of bounds")))
             .map(|src| src.end())
+    }
+
+    fn add_source(&mut self, idx: usize, src: Box<dyn BytesSource + Send>) {
+        if self.sources.len() <= idx {
+            self.sources.resize_with(idx + 1, || Box::new(PlaceholderSource));
+        }
+        self.sources[idx] = src;
     }
 }

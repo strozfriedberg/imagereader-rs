@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 
+use crate::bytessource::BytesSource;
+
 #[async_trait]
 pub trait Cache {
     async fn read(
@@ -10,4 +12,6 @@ pub trait Cache {
     ) -> Result<(), std::io::Error>;
 
     fn end(&self, idx: usize) -> Result<u64, std::io::Error>;
+
+    fn add_source(&mut self, idx: usize, src: Box<dyn BytesSource + Send>);
 }
