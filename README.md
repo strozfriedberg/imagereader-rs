@@ -5,22 +5,25 @@ This project is in active development and is intended for forensic research and 
 
 # [Expert Witness Compression Format (EWF)](https://github.com/libyal/libewf/blob/main/documentation/Expert%20Witness%20Compression%20Format%20(EWF).asciidoc)
 
-### Supported file formats:
+### Supported file formats
 
 * EWF
 * EWF-E01
 * EWF-S01
 * EWF-L01
 
-### Supported features:
+### Supported features
+
 * multiple segments (files)
 * chunk decompression (zlib)
 * checking all checksums
 
 ## TODO
+
 * [EWF2](https://github.com/libyal/libewf/blob/main/documentation/Expert%20Witness%20Compression%20Format%202%20(EWF2).asciidoc)
 
 Sample of usage:
+
 ```
     use e01::e01_reader::E01Reader;
 
@@ -43,6 +46,6 @@ Sample of usage:
 
 ```
 
-
 ### Copyright
-Copyright 2025, Aon. `e01-rs` is licensed under the Apache License, Version 2.0.
+
+Copyright 2025, LevelBlue. `e01-rs` is licensed under the Apache License, Version 2.0.
