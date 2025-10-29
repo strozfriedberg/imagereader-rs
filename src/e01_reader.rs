@@ -13,20 +13,21 @@ use tokio::runtime::Runtime;
 use tracing::{debug, debug_span, trace, warn};
 use url::{self, Url};
 
-use crate::bytessource::BytesSource;
-use crate::cache::Cache;
-use crate::cachereadseek::CacheReadSeek;
-use crate::cacheworkersource::CacheWorkerSource;
-use crate::dummycache::DummyCache;
-use crate::error::{IoError, LibError};
-use crate::foyercache::FoyerCache;
-use crate::filesource::FileSource;
-use crate::readworker::ReadWorker;
-use crate::s3source::S3Source;
-use crate::sec_read::{Chunk, VolumeSection, Section, SectionIterator};
-use crate::seg_path::{find_segment_paths, UnrecognizedExtension};
-use crate::segment::SegmentFileHeader;
-use crate::workersource::WorkerSource;
+use crate::{
+    bytessource::BytesSource,
+    cache::Cache,
+    cachereadseek::CacheReadSeek,
+    cacheworkersource::CacheWorkerSource,
+    dummycache::DummyCache,
+    error::{IoError, LibError},
+    foyercache::FoyerCache,
+    filesource::FileSource,
+    readworker::ReadWorker,
+    s3source::S3Source,
+    sec_read::{Chunk, VolumeSection, Section, SectionIterator},
+    seg_path::{find_segment_paths, UnrecognizedExtension},
+    segment::SegmentFileHeader
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
