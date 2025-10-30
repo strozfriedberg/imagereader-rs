@@ -31,6 +31,14 @@ use crate::{
 };
 
 #[derive(Debug, thiserror::Error)]
+pub enum InitError {
+    #[error("Failed to start tokio Runtime: {0}")]
+    TokioRuntimeFailed(std::io::Error),
+    #[error("{0}")]
+    CacheSetupFailed(std::io::Error)
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error("{0}")]
     PathGlobError(#[from] UnrecognizedExtension),
@@ -42,8 +50,6 @@ pub enum OpenError {
     TooManyChunks(usize, usize),
     #[error("Too few chunks found: actual {0}, expected {1}")]
     TooFewChunks(usize, usize),
-    #[error("Failed to start tokio Runtime: {0}")]
-    TokioRuntimeFailed(std::io::Error),
     #[error("Error reading {path}: {source}")]
     IoError {
         path: String,
@@ -59,7 +65,9 @@ pub enum OpenError {
     #[error("Malformed path or URL: {0}")]
     BadPath(String),
     #[error("Unsupported URL scheme: {0}")]
-    UnsupportedScheme(String)
+    UnsupportedScheme(String),
+    #[error("{0}")]
+    InitializationFailed(#[from] InitError)
 }
 
 impl From<std::io::Error> for OpenError {
@@ -551,11 +559,16 @@ impl E01Reader {
 
         let runtime = Arc::new(
             tokio::runtime::Runtime::new()
-                .map_err(OpenError::TokioRuntimeFailed)?
+                .map_err(InitError::TokioRuntimeFailed)?
         );
 
 //        let cache = Arc::new(Mutex::new(DummyCache::new()));
-        let cache = Arc::new(Mutex::new(runtime.block_on(FoyerCache::with_default_cache(1024 * 1024))));
+
+        let cache_size = 1024 * 1024;
+        let fc = runtime.block_on(FoyerCache::with_default_cache(cache_size))
+            .map_err(InitError::CacheSetupFailed)?;
+
+        let cache = Arc::new(Mutex::new(fc));
 
         // read the segment metadata
         let segs = sp_itr.map(|p| p.as_ref().to_string())
