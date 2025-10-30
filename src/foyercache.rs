@@ -32,18 +32,20 @@ where
 
 impl FoyerCache<DefaultHasher> {
     pub async fn with_default_cache(
-        chlen: usize
+        chlen: usize,
+        mem_size: usize,
+        disk_size: usize
     ) -> Result<Self, std::io::Error>
     {
         let dir = "cache";
 
         let device = FsDeviceBuilder::new(dir)
-            .with_capacity(256 * 1024 * 1024)
+            .with_capacity(disk_size)
             .build()
             .map_err(std::io::Error::other)?;
 
         let cache = HybridCacheBuilder::new()
-            .memory(64 * 1024 * 1024)
+            .memory(mem_size)
             .storage()
             .with_engine_config(BlockEngineBuilder::new(device))
             .build()
