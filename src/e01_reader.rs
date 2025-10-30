@@ -562,13 +562,13 @@ impl E01Reader {
                 .map_err(InitError::TokioRuntimeFailed)?
         );
 
-//        let cache = Arc::new(Mutex::new(DummyCache::new()));
+//        let c = DummyCache::new();
 
         let cache_size = 1024 * 1024;
-        let fc = runtime.block_on(FoyerCache::with_default_cache(cache_size))
+        let c = runtime.block_on(FoyerCache::with_default_cache(cache_size))
             .map_err(InitError::CacheSetupFailed)?;
 
-        let cache = Arc::new(Mutex::new(fc));
+        let cache = Arc::new(Mutex::new(c));
 
         // read the segment metadata
         let segs = sp_itr.map(|p| p.as_ref().to_string())
