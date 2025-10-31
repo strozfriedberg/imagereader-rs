@@ -599,6 +599,7 @@ dependencies = [
  "sha1",
  "sha2",
  "simd-adler32",
+ "tempfile",
  "test-log",
  "thiserror",
  "tokio",

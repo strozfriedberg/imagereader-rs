@@ -13,6 +13,7 @@ use std::{
     fmt::Debug,
     sync::Arc
 };
+use tempfile::TempDir;
 use tracing::trace;
 
 use crate::{
@@ -28,6 +29,7 @@ where
     chlen: usize,
     sources: Vec<Box<dyn BytesSource + Send>>,
     cache: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
+    cache_dir: TempDir
 }
 
 impl FoyerCache<DefaultHasher> {
@@ -37,9 +39,9 @@ impl FoyerCache<DefaultHasher> {
         disk_size: usize
     ) -> Result<Self, std::io::Error>
     {
-        let dir = "cache";
+        let cache_dir = tempfile::tempdir()?;
 
-        let device = FsDeviceBuilder::new(dir)
+        let device = FsDeviceBuilder::new(cache_dir.path())
             .with_capacity(disk_size)
             .build()
             .map_err(std::io::Error::other)?;
@@ -52,7 +54,7 @@ impl FoyerCache<DefaultHasher> {
             .await
             .map_err(std::io::Error::other)?;
 
-        Ok(Self::new(cache, chlen))
+        Ok(Self::new(cache, cache_dir, chlen))
     }
 }
 
@@ -62,13 +64,15 @@ where
 {
     pub fn new(
         cache: HybridCache<(usize, u64), Vec<u8>, S>,
+        cache_dir: TempDir,
         chlen: usize
     ) -> Self
     {
         Self {
             chlen,
             sources: vec![],
-            cache: Arc::new(cache)
+            cache: Arc::new(cache),
+            cache_dir
         }
     }
 }
