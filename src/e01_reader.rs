@@ -562,9 +562,8 @@ impl E01Reader {
                 .map_err(InitError::TokioRuntimeFailed)?
         );
 
-        let c = DummyCache::new();
+//        let c = DummyCache::new();
 
-/*
         let cache_chunk_size = 1024 * 1024;
         let cache_mem_size = 64 * 1024 * 1024;
         let cache_disk_size = 256 * 1024 * 1024;
@@ -576,14 +575,14 @@ impl E01Reader {
             )
         )
         .map_err(InitError::CacheSetupFailed)?;
-*/
+
         let cache = Arc::new(Mutex::new(c));
 
         // read the segment metadata
         let segs = sp_itr.map(|p| p.as_ref().to_string())
             .collect::<Vec<_>>()
-//            .into_iter()
-            .into_par_iter()
+            .into_iter()
+//            .into_par_iter()
             .enumerate()
             .map(|(idx, sp)| {
                 let io = make_bytes_reader(
@@ -716,8 +715,8 @@ impl E01Reader {
             offset += end_in_buf - beg_in_buf;
         }
 
-//        tasks.into_iter()
-        tasks.into_par_iter()
+        tasks.into_iter()
+//        tasks.into_par_iter()
             .try_for_each(|(chunk_index, chunk, mut src, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
                 worker.read(
                     chunk,
