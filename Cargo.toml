@@ -43,7 +43,7 @@ sha2 = "0.10"
 simd-adler32 = "0.3"
 tempfile = "3.23.0"
 thiserror = "2.0.12"
-tokio = { version = "1.47.1", features = ["io-util"] }
+tokio = { version = "1.47.1", features = ["io-util", "rt-multi-thread"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 url = "2.5.7"
