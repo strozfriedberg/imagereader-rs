@@ -565,7 +565,7 @@ impl E01Reader {
 //        let c = DummyCache::new();
 
         let cache_chunk_size = 1024 * 1024;
-        let cache_mem_size = 64 * 1024 * 1024;
+        let cache_mem_size = 1024;
         let cache_disk_size = 256 * 1024 * 1024;
         let c = runtime.block_on(
             FoyerCache::with_default_cache(
