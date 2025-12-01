@@ -613,7 +613,7 @@ impl E01Reader {
         let sector_size = meta.volume.bytes_per_sector as usize;
         let image_size = meta.volume.max_offset();
 
-        Ok(E01Reader {
+        Ok(Self {
             segments: meta.segments,
             chunks: meta.chunks,
             chunk_count,
