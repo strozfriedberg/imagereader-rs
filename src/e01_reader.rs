@@ -282,11 +282,9 @@ fn make_bytes_reader(
 
     let rs = Box::new(crs) as Box<dyn ReadSeek>;
 
-    Ok(
-        BytesReader::try_from(rs)
-            .map_err(OpenError::from)
-            .map_err(|e| e.with_path(p))?
-    )
+    BytesReader::try_from(rs)
+        .map_err(OpenError::from)
+        .map_err(|e| e.with_path(p))
 }
 
 struct E01Metadata {
