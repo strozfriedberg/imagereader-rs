@@ -38,7 +38,7 @@ fn checksum_reader(
     Ok(adler32::adler32(std::io::Cursor::new(
         &reader
             .read_bytes(len)
-            .map_err(IoError::ReadError)?
+            .map_err(IoError::Read)?
     ))?)
 }
 
@@ -154,7 +154,7 @@ fn read_table_entry(
     table_offset: u64
 ) -> Result<Chunk, LibError>
 {
-    let entry = io.read_u4le().map_err(IoError::ReadError)?;
+    let entry = io.read_u4le().map_err(IoError::Read)?;
 
     Ok(
         Chunk {
@@ -203,7 +203,7 @@ pub fn read_table(
 
     if !ignore_checksums {
         // table footer
-        let crc_stored = io.read_u4le().map_err(IoError::ReadError)?;
+        let crc_stored = io.read_u4le().map_err(IoError::Read)?;
 
         let crc = checksum_reader(
             &io_offsets,
@@ -317,7 +317,7 @@ impl Iterator for SectionIterator<'_> {
             if let Err(e) = self.io.seek(self.current_offset) {
                 return Some(Err(
                     LibError::IoError(
-                        IoError::SeekError(self.current_offset, e)
+                        IoError::Seek(self.current_offset, e)
                     )
                 ))
             }

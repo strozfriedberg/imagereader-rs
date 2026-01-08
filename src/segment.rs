@@ -76,9 +76,9 @@ impl SegmentFileHeader {
     pub fn new(io: &BytesReader) -> Result<Self, LibError> {
         let first_bytes = io
             .read_bytes(8)
-            .map_err(IoError::ReadError)?;
+            .map_err(IoError::Read)?;
 
-        io.seek(0).map_err(|e| IoError::SeekError(0, e))?;
+        io.seek(0).map_err(|e| IoError::Seek(0, e))?;
 
         // read file header
         match first_bytes.as_slice() {

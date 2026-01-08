@@ -95,7 +95,7 @@ impl From<KError> for OpenError {
     fn from(e: KError) -> Self {
         Self::IoError {
             path: "".into(), // set using with_path()
-            source: LibError::IoError(IoError::ReadError(e))
+            source: LibError::IoError(IoError::Read(e))
         }
     }
 }
@@ -536,7 +536,7 @@ impl E01Reader {
                 OpenError::IoError {
                     path: example_segment_path.as_ref().into(),
                     source: LibError::IoError(
-                        IoError::IoError(
+                        IoError::Io(
                             std::io::ErrorKind::NotFound.into()
                         )
                     )
