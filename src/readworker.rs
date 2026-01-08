@@ -113,6 +113,7 @@ impl ReadWorker {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn read_compressed<WS: WorkerSource>(
         &mut self,
         src: &mut WS,
@@ -134,6 +135,7 @@ impl ReadWorker {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn read_uncompressed<WS: WorkerSource>(
         &mut self,
         src: &mut WS,
@@ -167,6 +169,7 @@ impl ReadWorker {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn read_uncompressed_inner<WS: WorkerSource>(
         &mut self,
         src: &mut WS,
