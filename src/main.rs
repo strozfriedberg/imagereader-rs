@@ -72,10 +72,8 @@ fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
 }
 
 fn run(args: Args)-> Result<ExitCode, E01Error> {
-//    let mut e01_reader = E01Reader::open_glob(
-    let mut e01_reader = E01Reader::open(
-//        &args.input,
-        [&args.input],
+    let mut e01_reader = E01Reader::open_glob(
+        &args.input,
         &E01ReaderOptions {
             corrupt_section_policy: CorruptSectionPolicy::Error,
             corrupt_chunk_policy: if args.ignore_checksums {
