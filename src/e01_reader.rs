@@ -26,7 +26,7 @@ use crate::{
     readworker::ReadWorker,
     s3source::S3Source,
     sec_read::{Chunk, VolumeSection, Section, SectionIterator},
-    seg_path::{find_segment_paths, UnrecognizedExtension},
+    seg_path::{ExistsChecker, UnrecognizedExtension, validated_segment_paths},
     segment::SegmentFileHeader
 };
 
@@ -519,6 +519,23 @@ impl Debug for E01Reader {
     }
 }
 
+struct FileChecker;
+
+impl ExistsChecker for FileChecker {
+    fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
+        Path::new(path.as_ref()).is_file()
+    }
+}
+
+struct S3Checker;
+
+impl ExistsChecker for S3Checker {
+    fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
+// TODO
+        false
+    }
+}
+
 impl E01Reader {
 // TODO: glob S3 somehow
     pub fn open_glob<T: AsRef<str>>(
@@ -526,27 +543,12 @@ impl E01Reader {
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
-        let esp = Path::new(example_segment_path.as_ref());
-        if esp.exists() {
-            Self::open(
-                find_segment_paths(&esp)?
-// FIXME
-                    .map(|p| p.to_str().unwrap().to_string()),
-                options
-            )
-        }
-        else {
-            Err(
-                OpenError::IoError {
-                    path: example_segment_path.as_ref().into(),
-                    source: LibError::IoError(
-                        IoError::Io(
-                            std::io::ErrorKind::NotFound.into()
-                        )
-                    )
-                }
-            )
-        }
+        let mut checker = FileChecker;
+
+        Self::open(
+            validated_segment_paths(example_segment_path, checker)?,
+            options
+        )
     }
 
     pub fn open<T: IntoIterator<Item: AsRef<str>>>(
