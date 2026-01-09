@@ -268,7 +268,10 @@ fn make_bytes_reader(
 {
     debug!("opening {}", p);
 
-    let src = source_for(p, &runtime)?;
+    let url = path_or_url_to_url(p)
+        .ok_or(OpenError::BadPath(p.into()))?;
+
+    let src = source_for_url(&url, &runtime)?;
 
     let seg_len = src.end();
     cache.lock().unwrap().add_source(idx, src);
@@ -422,28 +425,31 @@ fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
     }
 }
 
-fn source_for<P: AsRef<str>>(
-    p: P,
+fn source_for_url(
+    url: &Url,
     runtime: &Runtime
 ) -> Result<Box<dyn BytesSource + Send>, OpenError>
 {
-    let p = p.as_ref();
-
-    let url = path_or_url_to_url(p)
-        .ok_or(OpenError::BadPath(p.into()))?;
-
     match url.scheme() {
         "file" => {
+            let p = if cfg!(windows) {
+                // Windows file URLs get a spare / before the drive letter,
+                // which we have to remove when using it as a path.
+                url.path().trim_start_matches('/')
+            }
+            else {
+                url.path()
+            };
+
             let len = std::fs::metadata(p)
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(p))?
                 .len();
-
             Ok(Box::new(FileSource { path: p.into(), len }))
         },
         "s3" => {
             let name = url.host_str()
-                .ok_or(OpenError::BadPath(p.into()))?;
+                .ok_or(OpenError::BadPath(url.to_string()))?;
 
             let bucket = *Bucket::new(
                 name,
@@ -452,14 +458,14 @@ fn source_for<P: AsRef<str>>(
             )
             .map_err(std::io::Error::other)
             .map_err(OpenError::from)
-            .map_err(|e| e.with_path(p))?;
+            .map_err(|e| e.with_path(url))?;
 
             let key = url.path();
 
             let (h, code) = runtime.block_on(bucket.head_object(key))
                 .map_err(std::io::Error::other)
                 .map_err(OpenError::from)
-                .map_err(|e| e.with_path(p))?;
+                .map_err(|e| e.with_path(url))?;
 
             assert_eq!(code, 200);
             let len = h.content_length.unwrap().try_into().unwrap();
@@ -467,7 +473,7 @@ fn source_for<P: AsRef<str>>(
 
             Ok(Box::new(S3Source::new(bucket, key.into(), len)))
         },
-        _ => Err(OpenError::UnsupportedScheme(p.into()))
+        _ => Err(OpenError::UnsupportedScheme(url.to_string()))
     }
 }
 
