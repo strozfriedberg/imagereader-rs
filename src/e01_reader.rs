@@ -559,8 +559,6 @@ impl E01Reader {
         // check that there are some segment files
         sp_itr.peek().ok_or(OpenError::NoSegmentFiles)?;
 
-        let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
-
         let runtime = Arc::new(
             tokio::runtime::Runtime::new()
                 .map_err(InitError::TokioRuntimeFailed)?
@@ -581,6 +579,8 @@ impl E01Reader {
         .map_err(InitError::CacheSetupFailed)?;
 
         let cache = Arc::new(Mutex::new(c));
+
+        let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
         // read the segment metadata
         let segs = sp_itr.map(|p| p.as_ref().to_string())
