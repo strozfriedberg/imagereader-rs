@@ -1,4 +1,5 @@
 use itertools::iproduct;
+use tracing::debug;
 
 #[allow(clippy::manual_is_ascii_check)]
 fn valid_segment_ext(ext: &str) -> bool {
@@ -93,6 +94,7 @@ where
                 // .e01, so the extensions can actually differ in case through
                 // the sequence...
                 let seg_path_uc = format!("{base_path}.{ext}");
+                debug!("checking {seg_path_uc}");
 
                 if checker.exists(&seg_path_uc) {
                     Some(seg_path_uc)
@@ -102,6 +104,7 @@ where
                         "{base_path}.{}",
                         &ext.to_ascii_lowercase()
                     );
+                    debug!("checking {seg_path_lc}");
                     checker.exists(&seg_path_lc).then_some(seg_path_lc)
                 }
             })

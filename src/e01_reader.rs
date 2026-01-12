@@ -527,28 +527,78 @@ impl ExistsChecker for FileChecker {
     }
 }
 
-struct S3Checker;
+struct S3Checker {
+    bucket: Bucket,
+    runtime: Arc<Runtime>
+}
+
+impl S3Checker {
+    fn new(
+        url: &Url,
+        runtime: Arc<Runtime>
+    ) -> Result<Self, OpenError> {
+        let name = url.host_str()
+            .ok_or(OpenError::BadPath(url.to_string()))?;
+
+        warn!("{}", name);
+
+        let bucket = *Bucket::new(
+            name,
+            Region::UsEast1,
+            Credentials::anonymous().unwrap()
+        )
+        .map_err(std::io::Error::other)
+        .map_err(OpenError::from)
+        .map_err(|e| e.with_path(url))?;
+
+        Ok(Self { bucket, runtime })
+    }
+}
 
 impl ExistsChecker for S3Checker {
     fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
-// TODO
-        false
+        Url::parse(path.as_ref())
+            .map(|url|
+                self.runtime.block_on(self.bucket.head_object(url.path()))
+                    .is_ok_and(|(_, code)| code == 200)
+            )
+            .unwrap_or(false)
     }
 }
 
 impl E01Reader {
-// TODO: glob S3 somehow
     pub fn open_glob<T: AsRef<str>>(
         example_segment_path: T,
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
-        let mut checker = FileChecker;
+        let url = path_or_url_to_url(&example_segment_path)
+            .ok_or(OpenError::BadPath(example_segment_path.as_ref().into()))?;
 
-        Self::open(
-            validated_segment_paths(example_segment_path, checker)?,
-            options
-        )
+        let runtime = Arc::new(
+            tokio::runtime::Runtime::new()
+                .map_err(InitError::TokioRuntimeFailed)?
+        );
+
+        match url.scheme() {
+            "file" => Self::open_impl(
+                validated_segment_paths(
+                    example_segment_path,
+                    FileChecker,
+                )?,
+                options,
+                runtime
+            ),
+            "s3" => Self::open_impl(
+                validated_segment_paths(
+                    example_segment_path,
+                    S3Checker::new(&url, runtime.clone())?
+                )?,
+                options,
+                runtime
+            ),
+            _ => Err(OpenError::UnsupportedScheme(url.to_string()))
+        }
     }
 
     pub fn open<T: IntoIterator<Item: AsRef<str>>>(
@@ -556,15 +606,24 @@ impl E01Reader {
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
-        let mut sp_itr = segment_paths.into_iter().peekable();
-
-        // check that there are some segment files
-        sp_itr.peek().ok_or(OpenError::NoSegmentFiles)?;
-
         let runtime = Arc::new(
             tokio::runtime::Runtime::new()
                 .map_err(InitError::TokioRuntimeFailed)?
         );
+
+        Self::open_impl(segment_paths, options, runtime)
+    }
+
+    fn open_impl<T: IntoIterator<Item: AsRef<str>>>(
+        segment_paths: T,
+        options: &E01ReaderOptions,
+        runtime: Arc<Runtime>
+    ) -> Result<Self, OpenError>
+    {
+        let mut sp_itr = segment_paths.into_iter().peekable();
+
+        // check that there are some segment files
+        sp_itr.peek().ok_or(OpenError::NoSegmentFiles)?;
 
 //        let c = DummyCache::new();
 
