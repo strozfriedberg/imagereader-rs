@@ -462,12 +462,11 @@ fn source_for_url(
 
             let key = url.path();
 
-            let (h, code) = runtime.block_on(bucket.head_object(key))
+            let (h, _) = runtime.block_on(bucket.head_object(key))
                 .map_err(std::io::Error::other)
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(url))?;
 
-            assert_eq!(code, 200);
             let len = h.content_length.unwrap().try_into().unwrap();
             debug!("content-length: {len}");
 
