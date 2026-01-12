@@ -540,8 +540,6 @@ impl S3Checker {
         let name = url.host_str()
             .ok_or(OpenError::BadPath(url.to_string()))?;
 
-        warn!("{}", name);
-
         let bucket = *Bucket::new(
             name,
             Region::UsEast1,
