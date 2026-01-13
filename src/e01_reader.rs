@@ -460,7 +460,9 @@ fn source_for_url(
             .map_err(OpenError::from)
             .map_err(|e| e.with_path(url))?;
 
-            let (h, _) = runtime.block_on(bucket.head_object(url.path()))
+            let key = url.path();
+
+            let (h, _) = runtime.block_on(bucket.head_object(key))
                 .map_err(std::io::Error::other)
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(url))?;
