@@ -137,12 +137,12 @@ where
             self.cache.clone()
         );
 
-        let fut = try_join_all((csbeg..raend)
+        let fut = try_join_all((csbeg..csend)
             .step_by(self.chlen)
             .map(getter)
         );
 
-        // request read-ahead chunks
+        // request read-ahead chunks in the background
         let getter = make_getter(
             self.chlen,
             end,
