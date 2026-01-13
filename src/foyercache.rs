@@ -85,9 +85,9 @@ where
 
 fn make_getter<S>(
     chlen: usize,
-    end: u64,
     idx: usize,
     source: &Box<dyn BytesSource + Send>,
+    end: u64,
     cache: Arc<HybridCache<(usize, u64), Vec<u8>, S>>
 ) -> impl FnMut(u64) -> HybridFetch<(usize, u64), Vec<u8>, S>
 where
@@ -131,9 +131,9 @@ where
         // request the chunks we need
         let getter = make_getter(
             self.chlen,
-            end,
             idx,
             source,
+            end,
             self.cache.clone()
         );
 
@@ -145,9 +145,9 @@ where
         // request read-ahead chunks in the background
         let getter = make_getter(
             self.chlen,
-            end,
             idx,
             source,
+            end,
             self.cache.clone()
         );
 
