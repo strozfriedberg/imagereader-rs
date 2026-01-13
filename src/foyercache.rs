@@ -5,7 +5,8 @@ use foyer::{
     DeviceBuilder,
     FsDeviceBuilder,
     HybridCache,
-    HybridCacheBuilder
+    HybridCacheBuilder,
+    HybridFetch
 };
 use foyer_common::code::HashBuilder;
 use futures::future::{TryFutureExt, try_join_all};
@@ -14,6 +15,7 @@ use std::{
     sync::Arc
 };
 use tempfile::TempDir;
+use tokio;
 use tracing::trace;
 
 use crate::{
@@ -29,14 +31,16 @@ where
     chlen: usize,
     sources: Vec<Box<dyn BytesSource + Send>>,
     cache: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
-    cache_dir: TempDir
+    cache_dir: TempDir,
+    readahead: usize
 }
 
 impl FoyerCache<DefaultHasher> {
     pub async fn with_default_cache(
         chlen: usize,
         mem_size: usize,
-        disk_size: usize
+        disk_size: usize,
+        readahead: usize
     ) -> Result<Self, std::io::Error>
     {
         let cache_dir = tempfile::tempdir()?;
@@ -54,7 +58,7 @@ impl FoyerCache<DefaultHasher> {
             .await
             .map_err(std::io::Error::other)?;
 
-        Ok(Self::new(cache, cache_dir, chlen))
+        Ok(Self::new(cache, cache_dir, chlen, readahead))
     }
 }
 
@@ -65,15 +69,37 @@ where
     pub fn new(
         cache: HybridCache<(usize, u64), Vec<u8>, S>,
         cache_dir: TempDir,
-        chlen: usize
+        chlen: usize,
+        readahead: usize
     ) -> Self
     {
         Self {
             chlen,
             sources: vec![],
             cache: Arc::new(cache),
-            cache_dir
+            cache_dir,
+            readahead
         }
+    }
+}
+
+fn make_getter<S>(
+    chlen: usize,
+    end: u64,
+    idx: usize,
+    source: &Box<dyn BytesSource + Send>,
+    cache: Arc<HybridCache<(usize, u64), Vec<u8>, S>>
+) -> impl FnMut(u64) -> HybridFetch<(usize, u64), Vec<u8>, S>
+where
+    S: HashBuilder + Debug
+{
+    move |choff: u64| {
+        let fetch = move ||
+            source.read(choff, (choff + chlen as u64).min(end))
+                .map_err(foyer::Error::other::<std::io::Error>);
+
+        trace!("fetching {idx} [{choff},{})", (choff + chlen as u64).min(end));
+        cache.fetch((idx, choff), fetch)
     }
 }
 
@@ -94,24 +120,42 @@ where
 
         let end = source.end();
 
-        let cache = self.cache.clone();
-
-        let chlen = self.chlen;
-
-        let getter = move |choff: u64| {
-            let fetch = move ||
-                source.read(choff, (choff + chlen as u64).min(end))
-                    .map_err(foyer::Error::other::<std::io::Error>);
-
-            trace!("fetching {idx} [{choff},{})", (choff + chlen as u64).min(end));
-            cache.fetch((idx, choff), fetch)
-        };
-
+        // cs = chunk source
         let csbeg = (off / self.chlen as u64) * self.chlen as u64;
         let csend = off + buf.len() as u64;
 
-        let fut = try_join_all((csbeg..csend).step_by(chlen).map(getter));
+        // ra = read-ahead
+        let rabeg = csend.div_ceil(self.chlen as u64);
+        let raend = (rabeg + (self.readahead * self.chlen) as u64).min(end);
 
+        // request the chunks we need
+        let getter = make_getter(
+            self.chlen,
+            end,
+            idx,
+            source,
+            self.cache.clone()
+        );
+
+        let fut = try_join_all((csbeg..raend)
+            .step_by(self.chlen)
+            .map(getter)
+        );
+
+        // request read-ahead chunks
+        let getter = make_getter(
+            self.chlen,
+            end,
+            idx,
+            source,
+            self.cache.clone()
+        );
+
+        let _ = (rabeg..raend).step_by(self.chlen)
+            .map(getter)
+            .map(tokio::spawn);
+
+        // wait for the chunks we need
         let chunks = fut.await.map_err(std::io::Error::other)?;
 
         let mut bbeg = 0;
