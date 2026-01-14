@@ -6,7 +6,7 @@ use foyer::{
     FsDeviceBuilder,
     HybridCache,
     HybridCacheBuilder,
-    HybridFetch
+    HybridGetOrFetch
 };
 use foyer_common::code::HashBuilder;
 use futures::future::{TryFutureExt, try_join_all};
@@ -89,17 +89,17 @@ fn make_getter<S>(
     source: &Box<dyn BytesSource + Send>,
     end: u64,
     cache: Arc<HybridCache<(usize, u64), Vec<u8>, S>>
-) -> impl FnMut(u64) -> HybridFetch<(usize, u64), Vec<u8>, S>
+) -> impl FnMut(u64) -> HybridGetOrFetch<(usize, u64), Vec<u8>, S>
 where
     S: HashBuilder + Debug
 {
     move |choff: u64| {
         let fetch = move ||
             source.read(choff, (choff + chlen as u64).min(end))
-                .map_err(foyer::Error::other::<std::io::Error>);
+                .map_err(foyer::Error::io_error);
 
         trace!("fetching {idx} [{choff},{})", (choff + chlen as u64).min(end));
-        cache.fetch((idx, choff), fetch)
+        cache.get_or_fetch(&(idx, choff), fetch)
     }
 }
 
