@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use foyer::{
-    BlockEngineBuilder,
+    BlockEngineConfig,
     DefaultHasher,
     DeviceBuilder,
     FsDeviceBuilder,
@@ -53,7 +53,7 @@ impl FoyerCache<DefaultHasher> {
         let cache = HybridCacheBuilder::new()
             .memory(mem_size)
             .storage()
-            .with_engine_config(BlockEngineBuilder::new(device))
+            .with_engine_config(BlockEngineConfig::new(device))
             .build()
             .await
             .map_err(std::io::Error::other)?;
