@@ -115,7 +115,7 @@ impl MultiHasher {
     }
 
     pub fn update(
-        &mut self,
+        &self,
         buf: Vec<u8>,
         len: usize
     ) -> Vec<u8>
