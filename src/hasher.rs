@@ -85,7 +85,8 @@ impl MultiHasher {
                 let (empty_tx, empty_rx) = mpsc::sync_channel::<Arc<Vec<u8>>>(1);
 
                 // prime the empty channel with a buffer
-                empty_tx.send(buf.clone()).unwrap();
+                empty_tx.send(buf.clone())
+                    .expect("channel cannot be closed");
 
                 (
                     htype,
