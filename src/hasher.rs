@@ -120,27 +120,34 @@ impl MultiHasher {
         len: usize
     ) -> Vec<u8>
     {
-        // send the full buffer to the hashers
-        {
-            let buf = Arc::new(buf);
-            self.handles
-                .iter()
-                .for_each(|(_, full_tx, _, _)| {
-                    full_tx.send((len, buf.clone()))
-                        .expect("worker cannot have disconnected");
-                });
+        if self.handles.is_empty() {
+            buf
         }
+        else {
+            // send the full buffer to the hashers
+            {
+                let buf = Arc::new(buf);
+                self.handles
+                    .iter()
+                    .for_each(|(_, full_tx, _, _)| {
+                        full_tx.send((len, buf.clone()))
+                            .expect("worker cannot have disconnected");
+                    });
+            }
 
-        // return the empty buffer to the caller
-        Arc::into_inner(
-            self.handles
-                .iter()
-                .map(|(_, _, empty_rx, _)| empty_rx.recv()
-                    .expect("worker cannot fail to return the buffer")
-                )
-                .reduce(|_, b| b)
-                .unwrap()
-        ).unwrap()
+            // return the empty buffer to the caller
+            Arc::into_inner(
+                self.handles
+                    .iter()
+                    .map(|(_, _, empty_rx, _)| empty_rx.recv()
+                        .expect("worker cannot fail to return the buffer")
+                    )
+                    // all returned buffers are the same, just take one
+                    .reduce(|_, b| b)
+                    .expect("handles is not empty")
+            )
+            .expect("we are the only owner of the buffer")
+        }
     }
 
     pub fn finalize(
