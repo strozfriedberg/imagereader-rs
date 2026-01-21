@@ -97,14 +97,14 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
         htypes.insert(HashType::SHA1);
     }
 
-    let mut hasher = MultiHasher::from(htypes);
+    let mut hasher = MultiHasher::new(htypes, vec![0; 1024 * 1024]);
 
     // read through the image
-    let mut buf: Vec<u8> = vec![0; 1048576];
+    let mut buf = vec![0; 1024 * 1024];
     let mut offset = 0;
     while offset < e01_reader.image_size {
         let read = e01_reader.read_at_offset(offset, &mut buf)?;
-        hasher.update(&buf[..read]);
+        buf = hasher.update(buf, read);
         offset += read;
     }
 

@@ -12,13 +12,15 @@ pub fn do_hash<RF>(
 where
     RF: FnMut(usize, &mut [u8]) -> usize
 {
-    let mut hasher = MultiHasher::from([
+    let htypes = [
         HashType::MD5,
         HashType::SHA1,
         HashType::SHA256
-    ]);
+    ];
 
-    let mut buf: Vec<u8> = vec![0; 1048576];
+    let mut hasher = MultiHasher::new(htypes, vec![0; 1024 * 1024]);
+
+    let mut buf: Vec<u8> = vec![0; 1024 * 1024];
     let mut offset = 0;
 
     while offset < image_size {
@@ -35,7 +37,7 @@ where
             break;
         }
 
-        hasher.update(&buf[..read]);
+        buf = hasher.update(buf, read);
 
         offset += read;
         trace!("hashed to {offset}");
