@@ -214,7 +214,7 @@ mod test {
             HashType::SHA256
         ];
 
-        let mut hasher = MultiHasher::new(htypes, vec![0; 0]);
+        let hasher = MultiHasher::new(htypes, vec![0; 0]);
 
         let buf = "something".as_bytes().to_vec();
         let len = buf.len();
@@ -238,7 +238,7 @@ mod test {
             HashType::SHA256
         ];
 
-        let mut hasher = MultiHasher::new(htypes, vec![0; 8]);
+        let hasher = MultiHasher::new(htypes, vec![0; 8]);
 
         let mut buf = Vec::with_capacity(8);
         buf.extend("some".as_bytes());

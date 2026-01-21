@@ -97,7 +97,7 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
         htypes.insert(HashType::SHA1);
     }
 
-    let mut hasher = MultiHasher::new(htypes, vec![0; 1024 * 1024]);
+    let hasher = MultiHasher::new(htypes, vec![0; 1024 * 1024]);
 
     // read through the image
     let mut buf = vec![0; 1024 * 1024];
