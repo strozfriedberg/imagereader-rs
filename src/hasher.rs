@@ -142,7 +142,7 @@ impl MultiHasher {
                     .map(|(_, _, empty_rx, _)| empty_rx.recv()
                         .expect("worker cannot fail to return the buffer")
                     )
-                    // all returned buffers are the same, just take one
+                    // leave one ref to buffer, drop the rest
                     .reduce(|_, b| b)
                     .expect("handles is not empty")
             )
