@@ -782,7 +782,8 @@ mod test {
             )
         });
 
-        assert_err_starts_with(err, c"Error reading bogus: ");
+        // error message differs between Linux and Windows
+        assert_err_contains(err, c"bogus");
         assert!(h.ptr.is_null());
     }
 
