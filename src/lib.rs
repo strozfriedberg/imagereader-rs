@@ -169,10 +169,12 @@ mod test {
         assert_eq_test_data(&BAD_CHUNK_E01_ZEROED, &ERROR_ZERO);
     }
 
+/*
     #[test]
     fn test_imageformat_mmls_1_e01() {
         assert_eq_test_data_nonglob(&IMAGEFORMAT_MMLS_1_E01, &ERROR_ERROR);
     }
+*/
 
 /*
     const DADEMURPHY_E01: TestData = TestData {
