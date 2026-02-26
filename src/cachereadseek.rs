@@ -36,7 +36,7 @@ impl Read for CacheReadSeek {
         buf: &mut [u8]
     ) -> Result<usize, std::io::Error>
     {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock().expect("poisoned");
         self.runtime.block_on(cache.read(self.idx, self.pos, buf))?;
 
         self.pos += buf.len() as u64;
@@ -50,7 +50,7 @@ impl Seek for CacheReadSeek {
         pos: SeekFrom
     ) -> Result<u64, std::io::Error>
     {
-        let end = self.cache.lock().unwrap().end(self.idx)?;
+        let end = self.cache.lock().expect("poisoned").end(self.idx)?;
 
         let (base, offset) = match pos {
             SeekFrom::Start(n) => (n, 0),
