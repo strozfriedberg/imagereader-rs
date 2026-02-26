@@ -619,21 +619,22 @@ impl E01Reader {
     {
         let mut sp_itr = segment_paths.into_iter().peekable();
 
-        // check that there are some segment files
-        sp_itr.peek().ok_or(OpenError::NoSegmentFiles)?;
-
 //        let c = DummyCache::new();
+
+        let cache_disk_size = match sp_itr.peek() {
+            Some(p) if p.as_ref().starts_with("s3://") => 256,
+            Some(_) => 0,
+            None => return Err(OpenError::NoSegmentFiles)
+        };
 
         let cache_chunk_size = 1024 * 1024;
         let cache_mem_size = 1024;
-//        let cache_disk_size = 256 * 1024 * 1024;
-        let cache_disk_size = 0;
         let c = runtime.block_on(
             FoyerCache::with_default_cache(
                 cache_chunk_size,
                 cache_mem_size,
                 cache_disk_size,
-                8
+                0
             )
         )
         .map_err(InitError::CacheSetupFailed)?;
