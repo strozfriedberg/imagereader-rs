@@ -1,9 +1,11 @@
+use bytesize::ByteSize;
 use clap::Parser;
 use std::{
     collections::HashSet,
     iter::FromIterator,
     ops::BitAndAssign,
-    process::ExitCode
+    process::ExitCode,
+    time::{Duration, Instant}
 };
 use tracing_subscriber::{
     EnvFilter,
@@ -71,6 +73,22 @@ fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
     )
 }
 
+fn display_progress(
+    offset: usize,
+    image_size: usize,
+    image_size_bs_disp: &bytesize::Display,
+    start: Instant 
+) {
+    let offset_bs = ByteSize::b(offset as u64);
+    eprintln!(
+        "{:.1}/{:.1} = {:.1}%, {:.1}MiB/s",
+        offset_bs.display().iec(),
+        image_size_bs_disp,
+        offset as f32 / image_size as f32 * 100.0,
+        offset_bs.as_mib() / start.elapsed().as_secs_f64()
+    );
+}
+
 fn run(args: Args)-> Result<ExitCode, E01Error> {
     let mut e01_reader = E01Reader::open_glob(
         &args.input,
@@ -102,11 +120,35 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
     // read through the image
     let mut buf = vec![0; 1024 * 1024];
     let mut offset = 0;
+
+    let image_size_bs_disp = ByteSize::b(e01_reader.image_size as u64)
+        .display()
+        .iec();
+
+    let mut prev_prog = Instant::now();
+    let start = prev_prog;
     while offset < e01_reader.image_size {
         let read = e01_reader.read_at_offset(offset, &mut buf)?;
         buf = hasher.update(buf, read);
         offset += read;
+
+        if prev_prog.elapsed() > Duration::from_secs(2) {
+            display_progress(
+                offset,
+                e01_reader.image_size,
+                &image_size_bs_disp,
+                start
+            ); 
+            prev_prog = Instant::now();
+        }
     }
+    
+    display_progress(
+        offset,
+        e01_reader.image_size,
+        &image_size_bs_disp,
+        start
+    );
 
     let hashes = hasher.finalize();
 
