@@ -114,7 +114,7 @@ pub struct E01Handle {
     pub chunk_count: usize,
     pub sector_count: usize,
     pub sector_size: usize,
-    pub image_size: usize,
+    pub image_size: u64,
     pub stored_md5: *const u8,
     pub stored_sha1: *const u8
 }
@@ -331,7 +331,7 @@ pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_read(
     handle: *mut E01Handle,
-    offset: usize,
+    offset: u64,
     buf: *mut c_char,
     buflen: usize,
     err: *mut *mut E01Error
@@ -1049,7 +1049,7 @@ mod test {
         let r = unsafe {
             e01_read(
                 h.ptr,
-                usize::MAX,
+                u64::MAX,
                 buf.as_mut_ptr(),
                 buf.len(),
                 &mut err

@@ -74,12 +74,12 @@ fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
 }
 
 fn display_progress(
-    offset: usize,
-    image_size: usize,
+    offset: u64,
+    image_size: u64,
     image_size_bs_disp: &bytesize::Display,
-    start: Instant 
+    start: Instant
 ) {
-    let offset_bs = ByteSize::b(offset as u64);
+    let offset_bs = ByteSize::b(offset);
     eprintln!(
         "{:.1}/{:.1} = {:.1}%, {:.1}MiB/s",
         offset_bs.display().iec(),
@@ -121,7 +121,7 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
     let mut buf = vec![0; 1024 * 1024];
     let mut offset = 0;
 
-    let image_size_bs_disp = ByteSize::b(e01_reader.image_size as u64)
+    let image_size_bs_disp = ByteSize::b(e01_reader.image_size)
         .display()
         .iec();
 
@@ -130,7 +130,7 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
     while offset < e01_reader.image_size {
         let read = e01_reader.read_at_offset(offset, &mut buf)?;
         buf = hasher.update(buf, read);
-        offset += read;
+        offset += read as u64;
 
         if prev_prog.elapsed() > Duration::from_secs(2) {
             display_progress(
@@ -138,11 +138,11 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
                 e01_reader.image_size,
                 &image_size_bs_disp,
                 start
-            ); 
+            );
             prev_prog = Instant::now();
         }
     }
-    
+
     display_progress(
         offset,
         e01_reader.image_size,

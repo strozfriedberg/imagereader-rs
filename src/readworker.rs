@@ -10,7 +10,7 @@ use crate::sec_read::Chunk;
 #[derive(Debug)]
 pub struct ReadWorker {
     chunk_size: usize,
-    image_end: usize,
+    image_end: u64,
     corrupt_chunk_policy: CorruptChunkPolicy,
     scratch: Vec<u8>,
     decoder: ZlibDecoder<Cursor<Vec<u8>>>
@@ -29,7 +29,7 @@ impl Clone for ReadWorker {
 impl ReadWorker {
     pub fn new(
         chunk_size: usize,
-        image_end: usize,
+        image_end: u64,
         corrupt_chunk_policy: CorruptChunkPolicy
     ) -> Self
     {
@@ -79,7 +79,7 @@ impl ReadWorker {
 
         let (out, use_scratch) = if buf.len() == self.chunk_size ||
             (buf.len() < self.chunk_size &&
-            chunk_index * self.chunk_size > self.image_end)
+            (chunk_index * self.chunk_size) as u64 > self.image_end)
         {
             // decompress directly into output buffer
             (&mut buf[..], false)

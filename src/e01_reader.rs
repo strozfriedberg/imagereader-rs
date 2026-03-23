@@ -119,8 +119,7 @@ impl OpenError {
 #[derive(Debug, thiserror::Error)]
 pub enum ReadErrorKind {
     #[error("Requested offset {0} is beyond end of image {1}")]
-//    OffsetBeyondEnd(u64, u64),
-    OffsetBeyondEnd(usize, usize),
+    OffsetBeyondEnd(u64, u64),
     #[error("{0}")]
     IoError(#[from] std::io::Error),
     #[error("Chunk {0} is {1} bytes long, must be at least 5 bytes long")]
@@ -484,7 +483,7 @@ pub struct E01Reader {
     pub chunk_count: usize,
     pub sector_size: usize,
     pub sector_count: usize,
-    pub image_size: usize,
+    pub image_size: u64,
 
     pub stored_md5: Option<[u8; 16]>,
     pub stored_sha1: Option<[u8; 20]>,
@@ -676,7 +675,7 @@ impl E01Reader {
         let chunk_size = meta.volume.chunk_size();
         let sector_count = meta.volume.total_sector_count as usize;
         let sector_size = meta.volume.bytes_per_sector as usize;
-        let image_size = meta.volume.max_offset();
+        let image_size = meta.volume.max_offset() as u64;
 
         Ok(Self {
             segments: meta.segments,
@@ -699,7 +698,7 @@ impl E01Reader {
 
     pub fn read_at_offset(
         &mut self,
-        mut offset: usize,
+        mut offset: u64,
         mut buf: &mut [u8]
     ) -> Result<usize, ReadError>
     {
@@ -710,17 +709,17 @@ impl E01Reader {
         }
 
         // limit the buffer to the image end
-        if offset + buf.len() > image_end {
-            buf = &mut buf[..(image_end - offset)];
+        if offset + buf.len() as u64 > image_end {
+            buf = &mut buf[..(image_end - offset) as usize];
         }
 
         let buf_beg = offset;
-        let buf_end = offset + buf.len();
+        let buf_end = offset + buf.len() as u64;
 
-        let chunk_size = self.chunk_size;
+        let chunk_size = self.chunk_size as u64;
 
-        let beg_chunk_index = buf_beg / chunk_size;
-        let end_chunk_index = buf_end / chunk_size + (buf_end % chunk_size).min(1);
+        let beg_chunk_index = (buf_beg / chunk_size) as usize;
+        let end_chunk_index = (buf_end / chunk_size + (buf_end % chunk_size).min(1)) as usize;
 
 // TODO: Number of workers should have some fixed/configured maximum,
 // should not scale with the number of chunks to be fetched.
@@ -728,7 +727,7 @@ impl E01Reader {
             self.workers.resize(
                 end_chunk_index - beg_chunk_index,
                 ReadWorker::new(
-                    chunk_size,
+                    self.chunk_size,
                     image_end,
                     self.corrupt_chunk_policy
                 )
@@ -740,21 +739,21 @@ impl E01Reader {
 
         while offset < buf_end {
             // get the next chunk
-            let chunk_index = offset / chunk_size;
+            let chunk_index = (offset / chunk_size) as usize;
 
             let chunk = &self.chunks[chunk_index];
             let seg = &self.segments[chunk.segment];
 
-            let chunk_beg = chunk_index * chunk_size;
+            let chunk_beg = chunk_index as u64 * chunk_size;
             let chunk_end = std::cmp::min(chunk_beg + chunk_size, image_end);
 
-            let beg_in_chunk = offset - chunk_beg;
-            let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
+            let beg_in_chunk = (offset - chunk_beg) as usize;
+            let end_in_chunk = (std::cmp::min(chunk_end, buf_end) - chunk_beg) as usize;
 
             let beg_in_buf = offset - buf_beg;
-            let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
+            let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk) as u64;
 
-            let (bleft, bright) = buf.split_at_mut(end_in_buf - beg_in_buf);
+            let (bleft, bright) = buf.split_at_mut((end_in_buf - beg_in_buf) as usize);
             buf = bright;
 
             let (wleft, wright) = w.split_at_mut(1);
@@ -795,7 +794,7 @@ impl E01Reader {
                 .map_err(|e| e.with_path(seg_path))
             })?;
 
-        Ok(offset - buf_beg)
+        Ok((offset - buf_beg) as usize)
     }
 }
 

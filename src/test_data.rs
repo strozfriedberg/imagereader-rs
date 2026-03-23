@@ -7,7 +7,7 @@ pub struct TestData<'a> {
     pub chunk_count: usize,
     pub sector_size: usize,
     pub sector_count: usize,
-    pub image_size: usize,
+    pub image_size: u64,
     pub stored_md5: Option<&'a str>,
     pub stored_sha1: Option<&'a str>,
     pub md5: Option<&'a str>,

@@ -6,11 +6,11 @@ use crate::hasher::{HashType, MultiHasher};
 
 pub fn do_hash<RF>(
     mut reader: RF,
-    image_size: usize,
+    image_size: u64,
     random_buf_size: bool
 ) -> HashMap<HashType, String>
 where
-    RF: FnMut(usize, &mut [u8]) -> usize
+    RF: FnMut(u64, &mut [u8]) -> usize
 {
     let htypes = [
         HashType::MD5,
@@ -39,7 +39,7 @@ where
 
         buf = hasher.update(buf, read);
 
-        offset += read;
+        offset += read as u64;
         trace!("hashed to {offset}");
     }
 
