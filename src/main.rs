@@ -155,6 +155,21 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
         println!("{} {}", HashType::SHA256, hex::encode(sha256));
     }
 
+    /*
+       There is some tool which computes only the MD5 but instead of storing
+       that in a hash section like it ought to, it incorreclty stores the real
+       MD5 and a zero SHA1 in a digest section. If the stored SHA1 is zero
+       and the computed SHA1 is also zero, that's either a real stored SHA1
+       or a cosmically improbable coincidence; but either way it's correct
+       so no problem. We warn when there's a likely spurious mismatch.
+    */
+    if sha1_check == Some(false) &&
+        let Some(stored_sha1) = e01_reader.stored_sha1 &&
+        stored_sha1 == [0; 20]
+    {
+        eprintln!("Stored SHA1 is zero; possibly not intended as a stored SHA1");
+    }
+
     // combine the results and report
     let check = [md5_check, sha1_check].into_iter()
         .flatten()
