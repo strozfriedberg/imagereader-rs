@@ -33,44 +33,30 @@ struct Args {
     ignore_checksums: bool
 }
 
-struct OptBool(Option<bool>);
-
-impl BitAndAssign for OptBool {
-    fn bitand_assign(&mut self, rhs: Self) {
-        match (self.0.as_mut(), rhs.0) {
-            (Some(l), Some(r)) => *l &= r,
-            (None, Some(_)) => *self = rhs,
-            _ => {}
-        };
-    }
-}
-
 fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
     htype: HashType,
     hash_act: Option<H1>,
     hash_exp: Option<H2>
-) -> OptBool
+) -> Option<bool>
 {
-    OptBool(
-        match hash_act {
-            Some(hash_act) => match hash_exp {
-                Some(hash_exp) if hash_act.as_ref() != hash_exp.as_ref() => {
-                    println!(
-                        "{} {} != {}",
-                        htype,
-                        hex::encode(hash_act),
-                        hex::encode(hash_exp)
-                    );
-                    Some(false)
-                },
-                _ => {
-                    println!("{} {} ok", htype, hex::encode(hash_act));
-                    Some(true)
-                }
+    match hash_act {
+        Some(hash_act) => match hash_exp {
+            Some(hash_exp) if hash_act.as_ref() != hash_exp.as_ref() => {
+                println!(
+                    "{} {} != {}",
+                    htype,
+                    hex::encode(hash_act),
+                    hex::encode(hash_exp)
+                );
+                Some(false)
+            },
+            _ => {
+                println!("{} {} ok", htype, hex::encode(hash_act));
+                Some(true)
             }
-            None => None
         }
-    )
+        None => None
+    }
 }
 
 fn display_progress(
@@ -153,13 +139,13 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
     let hashes = hasher.finalize();
 
     // verify and output hashes
-    let mut checked = check_hash(
+    let md5_check = check_hash(
         HashType::MD5,
         hashes.get(&HashType::MD5),
         e01_reader.stored_md5
     );
 
-    checked &= check_hash(
+    let sha1_check = check_hash(
         HashType::SHA1,
         hashes.get(&HashType::SHA1),
         e01_reader.stored_sha1
@@ -169,8 +155,13 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
         println!("{} {}", HashType::SHA256, hex::encode(sha256));
     }
 
+    // combine the results and report
+    let check = [md5_check, sha1_check].into_iter()
+        .flatten()
+        .reduce(|l, r| l && r);
+
     Ok(
-        match checked.0 {
+        match check {
             Some(false) => {
                 println!("Hash verification: FAILURE");
                 ExitCode::FAILURE
