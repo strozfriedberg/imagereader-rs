@@ -2,11 +2,15 @@ use digest::{Digest, DynDigest};
 use md5::Md5;
 use sha1::Sha1;
 use sha2::Sha256;
-
 use std::{
     collections::HashMap,
     fmt,
-    str::FromStr
+    str::FromStr,
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, SyncSender}
+    },
+    thread::JoinHandle
 };
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -17,15 +21,12 @@ pub enum HashType {
 }
 
 impl HashType {
-    pub fn hasher(self) -> (Self, Box<dyn DynDigest>) {
-        (
-            self,
-            match self {
-                HashType::MD5 => Box::new(Md5::new()),
-                HashType::SHA1 => Box::new(Sha1::new()),
-                HashType::SHA256 => Box::new(Sha256::new())
-            }
-        )
+    pub fn hasher(self) -> Box<dyn DynDigest> {
+        match self {
+            HashType::MD5 => Box::new(Md5::new()),
+            HashType::SHA1 => Box::new(Sha1::new()),
+            HashType::SHA256 => Box::new(Sha256::new())
+        }
     }
 }
 
@@ -57,43 +58,114 @@ impl FromStr for HashType {
 }
 
 pub struct MultiHasher {
-    hashers: HashMap<HashType, Box<dyn DynDigest>>
+    handles: Vec<(
+        HashType,
+        SyncSender<(usize, Arc<Vec<u8>>)>,
+        Receiver<Arc<Vec<u8>>>,
+        JoinHandle<Box<[u8]>>
+    )>
 }
 
 impl MultiHasher {
-    pub fn new<T: IntoIterator<Item = (HashType, Box<dyn DynDigest>)>>(hashers: T) -> Self
+
+    pub fn new<T>(
+        htypes: T,
+        buf: Vec<u8>
+    ) -> Self
     where
-        HashMap<HashType, Box<dyn DynDigest>>: From<T>
+        T: IntoIterator<Item = HashType>
     {
-        Self { hashers: hashers.into() }
+        let buf = Arc::new(buf);
+
+        // create a worker thread and hasher for each hash type
+        let handles = htypes
+            .into_iter()
+            .map(|htype| {
+                let (full_tx, full_rx) = mpsc::sync_channel::<(usize, Arc<Vec<u8>>)>(1);
+                let (empty_tx, empty_rx) = mpsc::sync_channel::<Arc<Vec<u8>>>(1);
+
+                // prime the empty channel with a buffer
+                empty_tx.send(buf.clone())
+                    .expect("channel cannot be closed");
+
+                (
+                    htype,
+                    full_tx,
+                    empty_rx,
+                    std::thread::spawn(move || {
+                        let mut h = htype.hasher();
+
+                        // hash until the full channel is closed
+                        while let Ok((r, buf)) = full_rx.recv() {
+                            h.update(&buf[..r]);
+                            // return the buffer via the empty channel
+                            if empty_tx.send(buf).is_err() {
+                                break;
+                            }
+                        }
+
+                        // done, return the hash
+                        h.finalize()
+                    })
+                )
+            })
+            .collect::<Vec<_>>();
+
+        Self { handles }
     }
 
     pub fn update(
-        &mut self,
-        buf: &[u8]
-    )
+        &self,
+        buf: Vec<u8>,
+        len: usize
+    ) -> Vec<u8>
     {
-        self.hashers.values_mut().for_each(|h| h.update(buf));
+        if self.handles.is_empty() {
+            buf
+        }
+        else {
+            // send the full buffer to the hashers
+            {
+                let buf = Arc::new(buf);
+                self.handles
+                    .iter()
+                    .for_each(|(_, full_tx, _, _)| {
+                        full_tx.send((len, buf.clone()))
+                            .expect("worker cannot have disconnected");
+                    });
+            }
+
+            // return the empty buffer to the caller
+            Arc::into_inner(
+                self.handles
+                    .iter()
+                    .map(|(_, _, empty_rx, _)| empty_rx.recv()
+                        .expect("worker cannot fail to return the buffer")
+                    )
+                    // leave one ref to buffer, drop the rest
+                    .reduce(|_, b| b)
+                    .expect("handles is not empty")
+            )
+            .expect("we are the only owner of the buffer")
+        }
     }
 
     pub fn finalize(
         self
     ) -> HashMap<HashType, Box<[u8]>>
     {
-        self.hashers
+        self.handles
             .into_iter()
-            .map(|(k, v)| (k, v.finalize()))
-            .collect()
-    }
-}
-
-impl<T: IntoIterator<Item = HashType>> From<T> for MultiHasher {
-    fn from(htypes: T) -> Self {
-        Self {
-            hashers: HashMap::from_iter(
-                htypes.into_iter().map(HashType::hasher)
-            )
-        }
+            // drop the channels to let the workers progress
+            .map(|(t, _, _, h)| (t, h))
+            // wait for the workers to finish
+            .map(|(t, h)| (
+                t,
+                h.join()
+                    // propagate thread panics
+                    .unwrap_or_else(|e| std::panic::resume_unwind(e))
+            ))
+            .collect::<HashMap<_, _>>()
     }
 }
 
@@ -117,11 +189,13 @@ mod test {
 
     #[test]
     fn test_hash_nothing() {
-        let hasher = MultiHasher::from([
+        let htypes = [
             HashType::MD5,
             HashType::SHA1,
             HashType::SHA256
-        ]);
+        ];
+
+        let hasher = MultiHasher::new(htypes, vec![0; 0]);
 
         let exp = HashMap::from([
             md5("d41d8cd98f00b204e9800998ecf8427e"),
@@ -134,13 +208,18 @@ mod test {
 
     #[test]
     fn test_hash_something() {
-        let mut hasher = MultiHasher::from([
+        let htypes = [
             HashType::MD5,
             HashType::SHA1,
             HashType::SHA256
-        ]);
+        ];
 
-        hasher.update("something".as_bytes());
+        let hasher = MultiHasher::new(htypes, vec![0; 0]);
+
+        let buf = "something".as_bytes().to_vec();
+        let len = buf.len();
+
+        hasher.update(buf, len);
 
         let exp = HashMap::from([
             md5("437b930db84b8079c2dd804a71936b5f"),
@@ -153,14 +232,25 @@ mod test {
 
     #[test]
     fn test_hash_some_thing() {
-        let mut hasher = MultiHasher::from([
+        let htypes = [
             HashType::MD5,
             HashType::SHA1,
-            HashType::SHA256,
-        ]);
+            HashType::SHA256
+        ];
 
-        hasher.update("some".as_bytes());
-        hasher.update("thing".as_bytes());
+        let hasher = MultiHasher::new(htypes, vec![0; 8]);
+
+        let mut buf = Vec::with_capacity(8);
+        buf.extend("some".as_bytes());
+        let len = buf.len();
+
+        buf = hasher.update(buf, len);
+
+        buf.clear();
+        buf.extend("thing".as_bytes());
+        let len = buf.len();
+
+        hasher.update(buf, len);
 
         let exp = HashMap::from([
             md5("437b930db84b8079c2dd804a71936b5f"),
@@ -170,6 +260,4 @@ mod test {
 
         assert_eq!(hasher.finalize(), exp);
     }
-
-
 }

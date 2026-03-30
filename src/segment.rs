@@ -63,22 +63,27 @@ fn try_ewf_file_header_v2(
     }
 }
 
+// EWF, EWF-E01, EWF-S01
+const EWF_SIGNATURE: &[u8] = &[0x45, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00];
+
+const EWF_L01_SIGNATURE: &[u8] = &[0x4c, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00];
+
+const EVF2_SIGNATURE: &[u8] = &[0x45, 0x56, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00];
+
+const LEF2_SIGNATURE: &[u8] = &[0x4c, 0x45, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00];
+
 impl SegmentFileHeader {
     pub fn new(io: &BytesReader) -> Result<Self, LibError> {
         let first_bytes = io
             .read_bytes(8)
-            .map_err(IoError::ReadError)?;
+            .map_err(IoError::Read)?;
 
-        io.seek(0).map_err(|e| IoError::SeekError(0, e))?;
+        io.seek(0).map_err(|e| IoError::Seek(0, e))?;
 
         // read file header
         match first_bytes.as_slice() {
-            [0x45, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00] | // EWF, EWF-E01, EWF-S01
-            [0x4c, 0x56, 0x46, 0x09, 0x0d, 0x0a, 0xff, 0x00] // EWF-L01
-                => try_ewf_file_header_v1(io),
-            [0x45, 0x56, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] | // EVF2
-            [0x4c, 0x45, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00] // LEF2
-                => try_ewf_file_header_v2(io),
+            EWF_SIGNATURE | EWF_L01_SIGNATURE => try_ewf_file_header_v1(io),
+            EVF2_SIGNATURE | LEF2_SIGNATURE => try_ewf_file_header_v2(io),
             _ => Err(LibError::InvalidSegmentFileHeader)
         }
     }

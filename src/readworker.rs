@@ -1,16 +1,16 @@
 use flate2::read::ZlibDecoder;
 use simd_adler32::read::adler32;
 use std::io::{Cursor, Read};
-use tracing::error;
+use tracing::{debug, error};
 
-use crate::bytessource::BytesSource;
+use crate::workersource::WorkerSource;
 use crate::e01_reader::{CorruptChunkPolicy, ReadErrorKind};
 use crate::sec_read::Chunk;
 
 #[derive(Debug)]
 pub struct ReadWorker {
     chunk_size: usize,
-    image_end: usize,
+    image_end: u64,
     corrupt_chunk_policy: CorruptChunkPolicy,
     scratch: Vec<u8>,
     decoder: ZlibDecoder<Cursor<Vec<u8>>>
@@ -29,7 +29,7 @@ impl Clone for ReadWorker {
 impl ReadWorker {
     pub fn new(
         chunk_size: usize,
-        image_end: usize,
+        image_end: u64,
         corrupt_chunk_policy: CorruptChunkPolicy
     ) -> Self
     {
@@ -42,9 +42,9 @@ impl ReadWorker {
         }
     }
 
-    fn read_compressed_read<BS: BytesSource>(
+    fn read_compressed_read<WS: WorkerSource>(
         &mut self,
-        src: &mut BS,
+        src: &mut WS,
         chunk_off: u64,
         chunk_len: usize
     ) -> Result<(), ReadErrorKind>
@@ -67,7 +67,7 @@ impl ReadWorker {
     fn read_compressed_decompress(
         &mut self,
         chunk_index: usize,
-        chunk_len: usize,
+        _chunk_len: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize
@@ -77,20 +77,20 @@ impl ReadWorker {
         // one; decompress directly into the buffer if there is sufficient
         // space.
 
-        let (mut out, use_scratch) = if buf.len() == self.chunk_size ||
+        let (out, use_scratch) = if buf.len() == self.chunk_size ||
             (buf.len() < self.chunk_size &&
-            chunk_index * self.chunk_size > self.image_end)
+            (chunk_index * self.chunk_size) as u64 > self.image_end)
         {
             // decompress directly into output buffer
             (&mut buf[..], false)
         }
         else {
             // decompress into scratch buffer
-            (&mut self.scratch[..], true)
+            (&mut self.scratch[..buf.len()], true)
         };
 
         // compressed chunks are either ok or unrecoverable
-        if let Err(e) = self.decoder.read_exact(&mut out) {
+        if let Err(e) = self.decoder.read_exact(out) {
             error!("decompression failed for chunk {}: {}", chunk_index, e);
             match self.corrupt_chunk_policy {
                 CorruptChunkPolicy::Error => return Err(
@@ -113,9 +113,10 @@ impl ReadWorker {
         Ok(())
     }
 
-    fn read_compressed<BS: BytesSource>(
+    #[allow(clippy::too_many_arguments)]
+    fn read_compressed<WS: WorkerSource>(
         &mut self,
-        src: &mut BS,
+        src: &mut WS,
         chunk_index: usize,
         chunk_off: u64,
         chunk_len: usize,
@@ -134,9 +135,10 @@ impl ReadWorker {
         )
     }
 
-    fn read_uncompressed<BS: BytesSource>(
+    #[allow(clippy::too_many_arguments)]
+    fn read_uncompressed<WS: WorkerSource>(
         &mut self,
-        src: &mut BS,
+        src: &mut WS,
         chunk_index: usize,
         chunk_off: u64,
         chunk_len: usize,
@@ -167,9 +169,10 @@ impl ReadWorker {
         Ok(())
     }
 
-    fn read_uncompressed_inner<BS: BytesSource>(
+    #[allow(clippy::too_many_arguments)]
+    fn read_uncompressed_inner<WS: WorkerSource>(
         &mut self,
-        src: &mut BS,
+        src: &mut WS,
         chunk_index: usize,
         chunk_off: u64,
         buf: &mut [u8],
@@ -223,10 +226,10 @@ impl ReadWorker {
         Ok(())
     }
 
-    pub fn read<BS: BytesSource>(
+    pub fn read<WS: WorkerSource>(
         &mut self,
         chunk: &Chunk,
-        src: &mut BS,
+        src: &mut WS,
         chunk_index: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
@@ -235,6 +238,8 @@ impl ReadWorker {
     {
         let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
         let chunk_off = chunk.data_offset;
+
+        debug!("reading chunk {chunk_index} [{beg_in_chunk},{end_in_chunk})");
 
         // read the data into the buffer
         if chunk.compressed {

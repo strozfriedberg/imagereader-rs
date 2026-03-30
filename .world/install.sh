@@ -8,6 +8,7 @@ if [[ $Target == 'windows' && $Architecture == '32' ]]; then
 fi
 
 if [[ $Target == 'windows'  ]]; then
+  # --meson-paths ensures we produce libe01.dll.a instead of e01.dll.a
   RUST_OPTS="--target x86_64-pc-windows-gnu --meson-paths"
 fi
 

@@ -20,6 +20,5 @@ if [ "$Target" = 'windows' ]; then
 ) 9>/tmp/.rustup.lock
 fi
 
-# force cargo install to respect cargo-c's lock file so that updates in its dependencies don't affect us
 # pin version until we update to a newer Rust toolchain
 cargo install cargo-c@0.10.16+cargo-0.91.0 --locked

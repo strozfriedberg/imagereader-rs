@@ -1,12 +1,14 @@
+use bytesize::ByteSize;
 use clap::Parser;
 use std::{
     collections::HashSet,
     iter::FromIterator,
     ops::BitAndAssign,
-    process::ExitCode
+    process::ExitCode,
+    time::{Duration, Instant}
 };
 use tracing_subscriber::{
-    filter::LevelFilter,
+    EnvFilter,
     layer::SubscriberExt,
     util::SubscriberInitExt
 };
@@ -31,44 +33,46 @@ struct Args {
     ignore_checksums: bool
 }
 
-struct OptBool(Option<bool>);
-
-impl BitAndAssign for OptBool {
-    fn bitand_assign(&mut self, rhs: Self) {
-        match (self.0.as_mut(), rhs.0) {
-            (Some(l), Some(r)) => *l &= r,
-            (None, Some(_)) => *self = rhs,
-            _ => {}
-        };
-    }
-}
-
 fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
     htype: HashType,
     hash_act: Option<H1>,
     hash_exp: Option<H2>
-) -> OptBool
+) -> Option<bool>
 {
-    OptBool(
-        match hash_act {
-            Some(hash_act) => match hash_exp {
-                Some(hash_exp) if hash_act.as_ref() != hash_exp.as_ref() => {
-                    println!(
-                        "{} {} != {}",
-                        htype,
-                        hex::encode(hash_act),
-                        hex::encode(hash_exp)
-                    );
-                    Some(false)
-                },
-                _ => {
-                    println!("{} {} ok", htype, hex::encode(hash_act));
-                    Some(true)
-                }
+    match hash_act {
+        Some(hash_act) => match hash_exp {
+            Some(hash_exp) if hash_act.as_ref() != hash_exp.as_ref() => {
+                println!(
+                    "{} {} != {}",
+                    htype,
+                    hex::encode(hash_act),
+                    hex::encode(hash_exp)
+                );
+                Some(false)
+            },
+            _ => {
+                println!("{} {} ok", htype, hex::encode(hash_act));
+                Some(true)
             }
-            None => None
         }
-    )
+        None => None
+    }
+}
+
+fn display_progress(
+    offset: u64,
+    image_size: u64,
+    image_size_bs_disp: &bytesize::Display,
+    start: Instant
+) {
+    let offset_bs = ByteSize::b(offset);
+    eprintln!(
+        "{:.1}/{:.1} = {:.1}%, {:.1}MiB/s",
+        offset_bs.display().iec(),
+        image_size_bs_disp,
+        offset as f32 / image_size as f32 * 100.0,
+        offset_bs.as_mib() / start.elapsed().as_secs_f64()
+    );
 }
 
 fn run(args: Args)-> Result<ExitCode, E01Error> {
@@ -97,27 +101,51 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
         htypes.insert(HashType::SHA1);
     }
 
-    let mut hasher = MultiHasher::from(htypes);
+    let hasher = MultiHasher::new(htypes, vec![0; 1024 * 1024]);
 
     // read through the image
-    let mut buf: Vec<u8> = vec![0; 1048576];
+    let mut buf = vec![0; 1024 * 1024];
     let mut offset = 0;
+
+    let image_size_bs_disp = ByteSize::b(e01_reader.image_size)
+        .display()
+        .iec();
+
+    let mut prev_prog = Instant::now();
+    let start = prev_prog;
     while offset < e01_reader.image_size {
         let read = e01_reader.read_at_offset(offset, &mut buf)?;
-        hasher.update(&buf[..read]);
-        offset += read;
+        buf = hasher.update(buf, read);
+        offset += read as u64;
+
+        if prev_prog.elapsed() > Duration::from_secs(2) {
+            display_progress(
+                offset,
+                e01_reader.image_size,
+                &image_size_bs_disp,
+                start
+            );
+            prev_prog = Instant::now();
+        }
     }
+
+    display_progress(
+        offset,
+        e01_reader.image_size,
+        &image_size_bs_disp,
+        start
+    );
 
     let hashes = hasher.finalize();
 
     // verify and output hashes
-    let mut checked = check_hash(
+    let md5_check = check_hash(
         HashType::MD5,
         hashes.get(&HashType::MD5),
         e01_reader.stored_md5
     );
 
-    checked &= check_hash(
+    let sha1_check = check_hash(
         HashType::SHA1,
         hashes.get(&HashType::SHA1),
         e01_reader.stored_sha1
@@ -127,8 +155,28 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
         println!("{} {}", HashType::SHA256, hex::encode(sha256));
     }
 
+    /*
+       There is some tool which computes only the MD5 but instead of storing
+       that in a hash section like it ought to, it incorreclty stores the real
+       MD5 and a zero SHA1 in a digest section. If the stored SHA1 is zero
+       and the computed SHA1 is also zero, that's either a real stored SHA1
+       or a cosmically improbable coincidence; but either way it's correct
+       so no problem. We warn when there's a likely spurious mismatch.
+    */
+    if sha1_check == Some(false) &&
+        let Some(stored_sha1) = e01_reader.stored_sha1 &&
+        stored_sha1 == [0; 20]
+    {
+        eprintln!("Stored SHA1 is zero; possibly not intended as a stored SHA1");
+    }
+
+    // combine the results and report
+    let check = [md5_check, sha1_check].into_iter()
+        .flatten()
+        .reduce(|l, r| l && r);
+
     Ok(
-        match checked.0 {
+        match check {
             Some(false) => {
                 println!("Hash verification: FAILURE");
                 ExitCode::FAILURE
@@ -153,13 +201,23 @@ fn main() -> ExitCode {
         .with_line_number(false)
         .with_thread_ids(false)
         .with_thread_names(false)
-        .with_target(false)
+//        .with_target(false)
         .with_writer(std::io::stderr);
 
     tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| {
+                [
+                    // log at info by default
+                    "info",
+                    // foyer is noisy below warn level
+                    "foyer=warn",
+                    "foyer_memory=warn",
+                    "foyer_storage=warn"
+                ].join(",").into()
+            })
+        )
         .with(stderr_layer)
-        .with(LevelFilter::INFO)
-//        .with(LevelFilter::DEBUG)
         .init();
 
     let args = Args::parse();

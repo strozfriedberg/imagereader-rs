@@ -1,19 +1,42 @@
-use std::{
-    fs::File,
-    path::{Path, PathBuf}
+use kaitai::{BytesReader, KError, ReadSeek};
+use rayon::prelude::*;
+use s3::{
+    bucket::Bucket,
+    creds::Credentials,
+    region::Region
 };
-use tracing::{debug, debug_span, warn};
+use std::{
+    fmt::Debug,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex}
+};
+use tokio::runtime::Runtime;
+use tracing::{debug, debug_span, trace, warn};
+use url::{self, Url};
 
-extern crate kaitai;
+use crate::{
+    bytessource::BytesSource,
+    cache::Cache,
+    cachereadseek::CacheReadSeek,
+    cacheworkersource::CacheWorkerSource,
+    dummycache::DummyCache,
+    error::{IoError, LibError},
+    foyercache::FoyerCache,
+    filesource::FileSource,
+    readworker::ReadWorker,
+    s3source::S3Source,
+    sec_read::{Chunk, VolumeSection, Section, SectionIterator},
+    seg_path::{ExistsChecker, UnrecognizedExtension, validated_segment_paths},
+    segment::SegmentFileHeader
+};
 
-use kaitai::{BytesReader, KError};
-
-use crate::error::{IoError, LibError};
-use crate::filesource::FileSource;
-use crate::readworker::ReadWorker;
-use crate::sec_read::{Chunk, VolumeSection, Section, SectionIterator};
-use crate::seg_path::{find_segment_paths, UnrecognizedExtension};
-use crate::segment::SegmentFileHeader;
+#[derive(Debug, thiserror::Error)]
+pub enum InitError {
+    #[error("Failed to start tokio Runtime: {0}")]
+    TokioRuntimeFailed(std::io::Error),
+    #[error("{0}")]
+    CacheSetupFailed(std::io::Error)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
@@ -29,15 +52,27 @@ pub enum OpenError {
     TooFewChunks(usize, usize),
     #[error("Error reading {path}: {source}")]
     IoError {
-        path: PathBuf,
+        path: String,
         #[source]
         source: LibError
     },
     #[error("Bad data in {path}: {source}")]
     BadData {
-        path: PathBuf,
+        path: String,
         #[source]
         source: LibError
+    },
+    #[error("Malformed path or URL: {0}")]
+    BadPath(String),
+    #[error("Unsupported URL scheme: {0}")]
+    UnsupportedScheme(String),
+    #[error("{0}")]
+    InitializationFailed(#[from] InitError)
+}
+
+impl From<std::io::Error> for OpenError {
+    fn from(e: std::io::Error) -> Self {
+        OpenError::from(LibError::from(IoError::from(e)))
     }
 }
 
@@ -60,13 +95,13 @@ impl From<KError> for OpenError {
     fn from(e: KError) -> Self {
         Self::IoError {
             path: "".into(), // set using with_path()
-            source: LibError::IoError(IoError::ReadError(e))
+            source: LibError::IoError(IoError::Read(e))
         }
     }
 }
 
 impl OpenError {
-    fn with_path<T: AsRef<Path>>(self, path: T) -> Self {
+    fn with_path<T: AsRef<str>>(self, path: T) -> Self {
         match self {
             Self::IoError { source, .. } => Self::IoError {
                 path: path.as_ref().into(),
@@ -84,8 +119,7 @@ impl OpenError {
 #[derive(Debug, thiserror::Error)]
 pub enum ReadErrorKind {
     #[error("Requested offset {0} is beyond end of image {1}")]
-//    OffsetBeyondEnd(u64, u64),
-    OffsetBeyondEnd(usize, usize),
+    OffsetBeyondEnd(u64, u64),
     #[error("{0}")]
     IoError(#[from] std::io::Error),
     #[error("Chunk {0} is {1} bytes long, must be at least 5 bytes long")]
@@ -136,10 +170,11 @@ pub enum E01Error {
 
 #[derive(Debug)]
 struct Segment {
-    pub path: PathBuf
+    pub path: String
 }
 
 struct SegmentComponents {
+    path: String,
     volume: Option<VolumeSection>,
     md5: Option<[u8; 16]>,
     sha1: Option<[u8; 20]>,
@@ -147,14 +182,16 @@ struct SegmentComponents {
     done: bool
 }
 
-fn read_segment<T: AsRef<Path>>(
+fn read_segment<T: AsRef<str>>(
     segment_path: T,
     segment_index: usize,
     io: &BytesReader,
     ignore_checksums: bool
 ) -> Result<SegmentComponents, OpenError>
 {
-    let header = SegmentFileHeader::new(io)
+    debug!("reading sections {}", segment_path.as_ref());
+
+    let _header = SegmentFileHeader::new(io)
         .map_err(OpenError::from)
         .map_err(|e| e.with_path(&segment_path))?;
 
@@ -173,10 +210,13 @@ fn read_segment<T: AsRef<Path>>(
     let mut sections = SectionIterator::new(io, ignore_checksums);
 
     for section in sections.by_ref() {
-        match section
+        let section = section
             .map_err(OpenError::from)
-            .map_err(|e| e.with_path(&segment_path))?
-        {
+            .map_err(|e| e.with_path(&segment_path))?;
+
+        debug!("found section {section:?}");
+
+        match section {
             Section::Volume(v) => volume = Some(v),
             Section::Table(t) => {
                 if !t.is_empty() {
@@ -208,11 +248,142 @@ fn read_segment<T: AsRef<Path>>(
 
     Ok(
         SegmentComponents {
+            path: segment_path.as_ref().into(),
             volume,
             md5,
             sha1,
             chunks,
             done
+        }
+    )
+}
+
+fn make_bytes_reader(
+    p: &str,
+    idx: usize,
+    cache: Arc<Mutex<dyn Cache + Send>>,
+    runtime: Arc<Runtime>
+) -> Result<BytesReader, OpenError>
+{
+    debug!("opening {}", p);
+
+    let url = path_or_url_to_url(p)
+        .ok_or(OpenError::BadPath(p.into()))?;
+
+    let src = source_for_url(&url, &runtime)?;
+
+    let seg_len = src.end();
+    cache.lock().unwrap().add_source(idx, src);
+
+    let crs = CacheReadSeek::new(
+        cache,
+        runtime,
+        idx,
+        seg_len
+    );
+
+    let rs = Box::new(crs) as Box<dyn ReadSeek>;
+
+    BytesReader::try_from(rs)
+        .map_err(OpenError::from)
+        .map_err(|e| e.with_path(p))
+}
+
+struct E01Metadata {
+    volume: VolumeSection,
+    md5: Option<[u8; 16]>,
+    sha1: Option<[u8; 20]>,
+    segments: Vec<Segment>,
+    segment_paths: Vec<PathBuf>,
+    chunks: Vec<Chunk>
+}
+
+fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
+    segs: S,
+    ignore_checksums: bool
+) -> Result<E01Metadata, OpenError>
+{
+    let mut volume = None;
+    let mut stored_md5 = None;
+    let mut stored_sha1 = None;
+
+    let mut segments = vec![];
+    let mut segment_paths = vec![];
+    let mut chunks = vec![];
+
+    let mut done = false;
+
+    for seg in segs {
+        debug!("handling {}", seg.path);
+
+        // take the volume section if it's the first one
+        match (seg.volume, &volume) {
+            // we have no volume section, and saw one
+            (Some(sv), None) => {
+                // we can size the chunks vec now
+                let unread_chunks = (sv.chunk_count as usize)
+                    .saturating_sub(chunks.len());
+                chunks.reserve_exact(unread_chunks);
+                volume = Some(sv);
+            },
+            // we have a volume section, and didn't see a new one
+            (None, Some(_)) => {},
+            // we have no volume section, and saw none;
+            // this can happen only on the first segment
+            (None, None) =>
+                return Err(OpenError::MissingVolumeSection((&seg.path).into())),
+            // we have a volume section and saw another one!
+            (Some(_), Some(_)) =>
+                warn!("duplicate volume section")
+        }
+
+        // take the stored MD5 if it's the first one
+        match (seg.md5, &stored_md5) {
+            (Some(h), None) => stored_md5 = Some(h),
+            (Some(new), Some(old)) if new != *old =>
+                warn!("duplicate stored MD5s disagree"),
+            _ => {}
+        }
+
+        // take the stored SHA1 if it's the first one
+        match (seg.sha1, &stored_sha1) {
+            (Some(h), None) => stored_sha1 = Some(h),
+            (Some(new), Some(old)) if new != *old =>
+                warn!("duplicate stored SHA1s disagree"),
+            _ => {}
+        }
+
+        // record the chunks
+        chunks.extend(seg.chunks);
+
+        // record the segment
+        segment_paths.push((&seg.path).into());
+        segments.push(Segment { path: seg.path });
+
+        if seg.done {
+            if done {
+                warn!("more segments after finding done section");
+            }
+            else {
+                done = true;
+            }
+        }
+    }
+
+    if !done {
+        warn!("read all segments without finding done section");
+    }
+
+    let volume = volume.expect("volume section must have been found");
+
+    Ok(
+        E01Metadata {
+            volume,
+            md5: stored_md5,
+            sha1: stored_sha1,
+            segments,
+            segment_paths,
+            chunks
         }
     )
 }
@@ -238,16 +409,81 @@ pub struct E01ReaderOptions {
     pub corrupt_chunk_policy: CorruptChunkPolicy
 }
 
-#[derive(Debug)]
+fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
+    match Url::parse(p.as_ref()) {
+        // might be a path; make it absolute and reparse
+        Err(url::ParseError::RelativeUrlWithoutBase) => Path::new(p.as_ref())
+            .canonicalize()
+            .map(Url::from_file_path)
+            .map_err(|_| ())
+// FIXME: use flatten after Rust 1.89
+//            .flatten()
+            .and_then(|r| r)
+            .ok(),
+        r => r.ok()
+    }
+}
+
+fn source_for_url(
+    url: &Url,
+    runtime: &Runtime
+) -> Result<Box<dyn BytesSource + Send>, OpenError>
+{
+    match url.scheme() {
+        "file" => {
+            let p = if cfg!(windows) {
+                // Windows file URLs get a spare / before the drive letter,
+                // which we have to remove when using it as a path.
+                url.path().trim_start_matches('/')
+            }
+            else {
+                url.path()
+            };
+
+            let len = std::fs::metadata(p)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(p))?
+                .len();
+            Ok(Box::new(FileSource { path: p.into(), len }))
+        },
+        "s3" => {
+            let name = url.host_str()
+                .ok_or(OpenError::BadPath(url.to_string()))?;
+
+            let bucket = *Bucket::new(
+                name,
+                Region::UsEast1,
+                Credentials::anonymous().unwrap()
+            )
+            .map_err(std::io::Error::other)
+            .map_err(OpenError::from)
+            .map_err(|e| e.with_path(url))?;
+
+            let key = url.path();
+
+            let (h, _) = runtime.block_on(bucket.head_object(key))
+                .map_err(std::io::Error::other)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(url))?;
+
+            let len = h.content_length.unwrap().try_into().unwrap();
+            debug!("content-length: {len}");
+
+            Ok(Box::new(S3Source::new(bucket, key.into(), len)))
+        },
+        _ => Err(OpenError::UnsupportedScheme(url.to_string()))
+    }
+}
+
 pub struct E01Reader {
     segments: Vec<Segment>,
     chunks: Vec<Chunk>,
 
     pub chunk_size: usize,
     pub chunk_count: usize,
-    pub sector_count: usize,
     pub sector_size: usize,
-    pub image_size: usize,
+    pub sector_count: usize,
+    pub image_size: u64,
 
     pub stored_md5: Option<[u8; 16]>,
     pub stored_sha1: Option<[u8; 20]>,
@@ -257,138 +493,177 @@ pub struct E01Reader {
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy,
 
-    workers: Vec<ReadWorker>
+    workers: Vec<ReadWorker>,
+    cache: Arc<Mutex<dyn Cache + Send>>,
+    runtime: Arc<Runtime>
+}
+
+impl Debug for E01Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("E01Reader")
+            .field("segments", &self.segments)
+            .field("chunks", &self.chunks)
+            .field("chunk_size", &self.chunk_size)
+            .field("chunk_count", &self.chunk_count)
+            .field("sector_size", &self.sector_size)
+            .field("sector_count", &self.sector_count)
+            .field("image_size", &self.image_size)
+            .field("stored_md5", &self.stored_md5)
+            .field("stored_sha1", &self.stored_sha1)
+            .field("segment_paths", &self.segment_paths)
+            .field("corrupt_section_policy", &self.corrupt_section_policy)
+            .field("corrupt_chunk_policy", &self.corrupt_chunk_policy)
+            .finish()
+    }
+}
+
+struct FileChecker;
+
+impl ExistsChecker for FileChecker {
+    fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
+        Path::new(path.as_ref()).is_file()
+    }
+}
+
+struct S3Checker {
+    bucket: Bucket,
+    runtime: Arc<Runtime>
+}
+
+impl S3Checker {
+    fn new(
+        url: &Url,
+        runtime: Arc<Runtime>
+    ) -> Result<Self, OpenError> {
+        let name = url.host_str()
+            .ok_or(OpenError::BadPath(url.to_string()))?;
+
+        let bucket = *Bucket::new(
+            name,
+            Region::UsEast1,
+            Credentials::anonymous().unwrap()
+        )
+        .map_err(std::io::Error::other)
+        .map_err(OpenError::from)
+        .map_err(|e| e.with_path(url))?;
+
+        Ok(Self { bucket, runtime })
+    }
+}
+
+impl ExistsChecker for S3Checker {
+    fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
+        Url::parse(path.as_ref())
+            .map(|url|
+                self.runtime.block_on(self.bucket.head_object(url.path()))
+                    .is_ok_and(|(_, code)| code == 200)
+            )
+            .unwrap_or(false)
+    }
 }
 
 impl E01Reader {
-    pub fn open_glob<T: AsRef<Path>>(
+    pub fn open_glob<T: AsRef<str>>(
         example_segment_path: T,
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
-        if example_segment_path.as_ref().exists() {
-            Self::open(
-                find_segment_paths(&example_segment_path)?,
-                options
-            )
-        }
-        else {
-            Err(
-                OpenError::IoError {
-                    path: example_segment_path.as_ref().into(),
-                    source: LibError::IoError(
-                        IoError::IoError(
-                            std::io::ErrorKind::NotFound.into()
-                        )
-                    )
-                }
-            )
+        let url = path_or_url_to_url(&example_segment_path)
+            .ok_or(OpenError::BadPath(example_segment_path.as_ref().into()))?;
+
+        let runtime = Arc::new(
+            tokio::runtime::Runtime::new()
+                .map_err(InitError::TokioRuntimeFailed)?
+        );
+
+        match url.scheme() {
+            "file" => Self::open_impl(
+                validated_segment_paths(
+                    example_segment_path,
+                    FileChecker,
+                )?,
+                options,
+                runtime
+            ),
+            "s3" => Self::open_impl(
+                validated_segment_paths(
+                    example_segment_path,
+                    S3Checker::new(&url, runtime.clone())?
+                )?,
+                options,
+                runtime
+            ),
+            _ => Err(OpenError::UnsupportedScheme(url.to_string()))
         }
     }
 
-    pub fn open<T: IntoIterator<Item: AsRef<Path>>>(
+    pub fn open<T: IntoIterator<Item: AsRef<str>>>(
         segment_paths: T,
         options: &E01ReaderOptions
     ) -> Result<Self, OpenError>
     {
+        let runtime = Arc::new(
+            tokio::runtime::Runtime::new()
+                .map_err(InitError::TokioRuntimeFailed)?
+        );
+
+        Self::open_impl(segment_paths, options, runtime)
+    }
+
+    fn open_impl<T: IntoIterator<Item: AsRef<str>>>(
+        segment_paths: T,
+        options: &E01ReaderOptions,
+        runtime: Arc<Runtime>
+    ) -> Result<Self, OpenError>
+    {
         let mut sp_itr = segment_paths.into_iter().peekable();
 
-        // check that there are some segment files
-        sp_itr.peek().ok_or(OpenError::NoSegmentFiles)?;
+//        let c = DummyCache::new();
 
-        let mut volume = None;
-        let mut stored_md5 = None;
-        let mut stored_sha1 = None;
+        let cache_disk_size = match sp_itr.peek() {
+            Some(p) if p.as_ref().starts_with("s3://") => 256,
+            Some(_) => 0,
+            None => return Err(OpenError::NoSegmentFiles)
+        };
 
-        let mut segments = vec![];
-        let mut segment_paths = vec![];
-        let mut chunks = vec![];
+        let cache_chunk_size = 1024 * 1024;
+        let cache_mem_size = 1024;
+        let c = runtime.block_on(
+            FoyerCache::with_default_cache(
+                cache_chunk_size,
+                cache_mem_size,
+                cache_disk_size,
+                0
+            )
+        )
+        .map_err(InitError::CacheSetupFailed)?;
 
-        let mut done = false;
+        let cache = Arc::new(Mutex::new(c));
 
         let ignore_checksums = options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
 
-        // read segments
-        for sp in sp_itr.by_ref() {
-            let sp = sp.as_ref();
+        // read the segment metadata
+        let segs = sp_itr.map(|p| p.as_ref().to_string())
+            .collect::<Vec<_>>()
+//            .into_iter()
+            .into_par_iter()
+            .enumerate()
+            .map(|(idx, sp)| {
+                let io = make_bytes_reader(
+                    &sp,
+                    idx,
+                    cache.clone(),
+                    runtime.clone()
+                )?;
+                read_segment(sp, idx, &io, ignore_checksums)
+            })
+            .collect::<Result<Vec<SegmentComponents>, _>>()?;
 
-            let _span = debug_span!("", segment_path = ?sp).entered();
-            debug!("opening {}", sp.display());
+        // process segment metadata
+        let meta = process_segments(segs, ignore_checksums)?;
 
-            let io = BytesReader::open(sp)
-                .map_err(OpenError::from)
-                .map_err(|e| e.with_path(sp))?;
-
-            debug!("reading sections {}", sp.display());
-
-            let seg = read_segment(sp, segments.len(), &io, ignore_checksums)?;
-
-            // take the volume section if it's the first one
-            match (seg.volume, &volume) {
-                // we have no volume section, and saw one
-                (Some(sv), None) => {
-                    // we can size the chunks vec now
-                    let unread_chunks = (sv.chunk_count as usize)
-                        .saturating_sub(chunks.len());
-                    chunks.reserve_exact(unread_chunks);
-                    volume = Some(sv);
-                },
-                // we have a volume section, and didn't see a new one
-                (None, Some(_)) => {},
-                // we have no volume section, and saw none;
-                // this can happen only on the first segment
-                (None, None) =>
-                    return Err(OpenError::MissingVolumeSection(sp.into())),
-                // we have a volume section and saw another one!
-                (Some(_), Some(_)) =>
-                    warn!("duplicate volume section")
-            }
-
-            // take the stored MD5 if it's the first one
-            match (seg.md5, &stored_md5) {
-                (Some(h), None) => stored_md5 = Some(h),
-                (Some(new), Some(old)) if new != *old =>
-                    warn!("duplicate stored MD5s disagree"),
-                _ => {}
-            }
-
-            // take the stored SHA1 if it's the first one
-            match (seg.sha1, &stored_sha1) {
-                (Some(h), None) => stored_sha1 = Some(h),
-                (Some(new), Some(old)) if new != *old =>
-                    warn!("duplicate stored SHA1s disagree"),
-                _ => {}
-            }
-
-            // record the chunks
-            chunks.extend(seg.chunks);
-
-            // record the segment
-            segments.push(Segment {
-                path: sp.into()
-            });
-
-            segment_paths.push(sp.into());
-
-            if seg.done {
-                done = true;
-                break;
-            }
-        }
-
-        if done {
-            if sp_itr.next().is_some() {
-                warn!("more segments after finding done section");
-            }
-        }
-        else {
-            warn!("read all segments without finding done section");
-        }
-
-        let volume = volume.expect("volume section must have been found");
-
-        let exp_chunk_count = volume.chunk_count as usize;
-        let chunk_count = chunks.len();
+        let exp_chunk_count = meta.volume.chunk_count as usize;
+        let chunk_count = meta.chunks.len();
 
         if chunk_count > exp_chunk_count {
             return Err(OpenError::TooManyChunks(chunk_count, exp_chunk_count));
@@ -397,54 +672,54 @@ impl E01Reader {
             return Err(OpenError::TooFewChunks(chunk_count, exp_chunk_count));
         }
 
-        let chunk_size = volume.chunk_size();
-        let sector_count = volume.total_sector_count as usize;
-        let sector_size = volume.bytes_per_sector as usize;
-        let image_size = volume.max_offset();
+        let chunk_size = meta.volume.chunk_size();
+        let sector_count = meta.volume.total_sector_count as usize;
+        let sector_size = meta.volume.bytes_per_sector as usize;
+        let image_size = meta.volume.max_offset() as u64;
 
-        Ok(E01Reader {
-            segments,
-            chunks,
+        Ok(Self {
+            segments: meta.segments,
+            chunks: meta.chunks,
             chunk_count,
             chunk_size,
             sector_count,
             sector_size,
             image_size,
-            stored_md5,
-            stored_sha1,
-            segment_paths,
+            stored_md5: meta.md5,
+            stored_sha1: meta.sha1,
+            segment_paths: meta.segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
-            workers: vec![]
+            workers: vec![],
+            cache,
+            runtime
         })
     }
 
     pub fn read_at_offset(
         &mut self,
-        mut offset: usize,
+        mut offset: u64,
         mut buf: &mut [u8]
     ) -> Result<usize, ReadError>
     {
-//        use rayon::prelude::*;
-
         // don't start reading past the end
         let image_end = self.image_size;
         if offset > image_end {
             return Err(ReadErrorKind::OffsetBeyondEnd(offset, image_end))?;
         }
 
-        // clamp the buffer to the end
-        if offset + buf.len() > image_end {
-            buf = &mut buf[..(image_end - offset)];
+        // limit the buffer to the image end
+        if offset + buf.len() as u64 > image_end {
+            buf = &mut buf[..(image_end - offset) as usize];
         }
 
         let buf_beg = offset;
-        let buf_end = offset + buf.len();
+        let buf_end = offset + buf.len() as u64;
 
-        let chunk_size = self.chunk_size;
+        let chunk_size = self.chunk_size as u64;
 
-        let beg_chunk_index = buf_beg / chunk_size;
-        let end_chunk_index = buf_end / chunk_size + (buf_end % chunk_size).min(1);
+        let beg_chunk_index = (buf_beg / chunk_size) as usize;
+        let end_chunk_index = (buf_end / chunk_size + (buf_end % chunk_size).min(1)) as usize;
 
 // TODO: Number of workers should have some fixed/configured maximum,
 // should not scale with the number of chunks to be fetched.
@@ -452,7 +727,7 @@ impl E01Reader {
             self.workers.resize(
                 end_chunk_index - beg_chunk_index,
                 ReadWorker::new(
-                    chunk_size,
+                    self.chunk_size,
                     image_end,
                     self.corrupt_chunk_policy
                 )
@@ -464,35 +739,36 @@ impl E01Reader {
 
         while offset < buf_end {
             // get the next chunk
-            let chunk_index = offset / chunk_size;
+            let chunk_index = (offset / chunk_size) as usize;
 
             let chunk = &self.chunks[chunk_index];
             let seg = &self.segments[chunk.segment];
 
-            let chunk_beg = chunk_index * chunk_size;
+            let chunk_beg = chunk_index as u64 * chunk_size;
             let chunk_end = std::cmp::min(chunk_beg + chunk_size, image_end);
 
-            let beg_in_chunk = offset - chunk_beg;
-            let end_in_chunk = std::cmp::min(chunk_end, buf_end) - chunk_beg;
+            let beg_in_chunk = (offset - chunk_beg) as usize;
+            let end_in_chunk = (std::cmp::min(chunk_end, buf_end) - chunk_beg) as usize;
 
             let beg_in_buf = offset - buf_beg;
-            let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk);
+            let end_in_buf = beg_in_buf + (end_in_chunk - beg_in_chunk) as u64;
 
-            let (bleft, bright) = buf.split_at_mut(end_in_buf - beg_in_buf);
+            let (bleft, bright) = buf.split_at_mut((end_in_buf - beg_in_buf) as usize);
             buf = bright;
 
             let (wleft, wright) = w.split_at_mut(1);
             w = wright;
 
-            let handle = FileSource::new(
-                File::open(&seg.path)
-                    .map_err(ReadErrorKind::IoError)?
-            );
+            let src = CacheWorkerSource {
+                cache: self.cache.clone(),
+                runtime: self.runtime.clone(),
+                idx: chunk.segment
+            };
 
             tasks.push((
                 chunk_index,
                 chunk,
-                handle,
+                src,
                 bleft,
                 beg_in_chunk,
                 end_in_chunk,
@@ -503,12 +779,12 @@ impl E01Reader {
             offset += end_in_buf - beg_in_buf;
         }
 
-        tasks.into_iter()
-//        tasks.into_par_iter()
-            .try_for_each(|(chunk_index, chunk, mut handle, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
+//        tasks.into_iter()
+        tasks.into_par_iter()
+            .try_for_each(|(chunk_index, chunk, mut src, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
                 worker.read(
                     chunk,
-                    &mut handle,
+                    &mut src,
                     chunk_index,
                     sbuf,
                     beg_in_chunk,
@@ -518,13 +794,10 @@ impl E01Reader {
                 .map_err(|e| e.with_path(seg_path))
             })?;
 
-        Ok(offset - buf_beg)
+        Ok((offset - buf_beg) as usize)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
-
 }

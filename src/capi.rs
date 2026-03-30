@@ -114,7 +114,7 @@ pub struct E01Handle {
     pub chunk_count: usize,
     pub sector_count: usize,
     pub sector_size: usize,
-    pub image_size: usize,
+    pub image_size: u64,
     pub stored_md5: *const u8,
     pub stored_sha1: *const u8
 }
@@ -331,7 +331,7 @@ pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_read(
     handle: *mut E01Handle,
-    offset: usize,
+    offset: u64,
     buf: *mut c_char,
     buflen: usize,
     err: *mut *mut E01Error
@@ -415,9 +415,8 @@ mod test {
         let msg_b = message.to_bytes();
         let pre_b = prefix.to_bytes();
 
-        assert_eq!(
-            &msg_b[..pre_b.len()],
-            pre_b,
+        assert!(
+            msg_b.starts_with(pre_b),
             "{message:?} does not start with {prefix:?}"
         );
     }
@@ -685,7 +684,7 @@ mod test {
             )
         });
 
-        assert_err_starts_with(err, c"Error reading bogus: ");
+        assert_err_starts_with(err, c"Malformed path or URL: ");
         assert!(h.ptr.is_null());
     }
 
@@ -783,7 +782,8 @@ mod test {
             )
         });
 
-        assert_err_starts_with(err, c"Error reading bogus: ");
+        // error message differs between Linux and Windows
+        assert_err_contains(err, c"bogus");
         assert!(h.ptr.is_null());
     }
 
@@ -1049,7 +1049,7 @@ mod test {
         let r = unsafe {
             e01_read(
                 h.ptr,
-                usize::MAX,
+                u64::MAX,
                 buf.as_mut_ptr(),
                 buf.len(),
                 &mut err

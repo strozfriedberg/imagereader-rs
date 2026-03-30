@@ -3,11 +3,11 @@ use kaitai::KError;
 #[derive(Debug, thiserror::Error)]
 pub enum IoError {
     #[error("{0}")]
-    IoError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
     #[error("{0:?}")]
-    ReadError(KError),
+    Read(KError),
     #[error("Seek to {0} failed: {1:?}")]
-    SeekError(usize, KError)
+    Seek(usize, KError)
 }
 
 #[derive(Debug, thiserror::Error)]
