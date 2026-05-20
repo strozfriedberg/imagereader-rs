@@ -3,9 +3,9 @@ use simd_adler32::read::adler32;
 use std::io::{Cursor, Read};
 use tracing::{debug, error};
 
-use crate::workersource::WorkerSource;
 use crate::e01_reader::{CorruptChunkPolicy, ReadErrorKind};
 use crate::sec_read::Chunk;
+use crate::workersource::WorkerSource;
 
 #[derive(Debug)]
 pub struct ReadWorker {
@@ -13,16 +13,12 @@ pub struct ReadWorker {
     image_end: u64,
     corrupt_chunk_policy: CorruptChunkPolicy,
     scratch: Vec<u8>,
-    decoder: ZlibDecoder<Cursor<Vec<u8>>>
+    decoder: ZlibDecoder<Cursor<Vec<u8>>>,
 }
 
 impl Clone for ReadWorker {
     fn clone(&self) -> Self {
-        Self::new(
-            self.chunk_size,
-            self.image_end,
-            self.corrupt_chunk_policy
-        )
+        Self::new(self.chunk_size, self.image_end, self.corrupt_chunk_policy)
     }
 }
 
@@ -30,15 +26,14 @@ impl ReadWorker {
     pub fn new(
         chunk_size: usize,
         image_end: u64,
-        corrupt_chunk_policy: CorruptChunkPolicy
-    ) -> Self
-    {
+        corrupt_chunk_policy: CorruptChunkPolicy,
+    ) -> Self {
         Self {
             chunk_size,
             image_end,
             corrupt_chunk_policy,
             scratch: vec![0; chunk_size],
-            decoder: ZlibDecoder::new(Cursor::new(vec![0; chunk_size + 4]))
+            decoder: ZlibDecoder::new(Cursor::new(vec![0; chunk_size + 4])),
         }
     }
 
@@ -46,16 +41,16 @@ impl ReadWorker {
         &mut self,
         src: &mut WS,
         chunk_off: u64,
-        chunk_len: usize
-    ) -> Result<(), ReadErrorKind>
-    {
+        chunk_len: usize,
+    ) -> Result<(), ReadErrorKind> {
         // take the buffer from the decoder
         let cur = self.decoder.reset(Cursor::new(vec![0; 0]));
         let mut v = cur.into_inner();
         let raw_data = &mut v[..chunk_len];
 
         // do the read
-        let r = src.read(chunk_off, raw_data)
+        let r = src
+            .read(chunk_off, raw_data)
             .map_err(ReadErrorKind::IoError);
 
         // give the buffer back to the decoder
@@ -70,21 +65,19 @@ impl ReadWorker {
         _chunk_len: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
-        end_in_chunk: usize
-    ) -> Result<(), ReadErrorKind>
-    {
+        end_in_chunk: usize,
+    ) -> Result<(), ReadErrorKind> {
         // Every chunk contains the same amount of data except for the last
         // one; decompress directly into the buffer if there is sufficient
         // space.
 
-        let (out, use_scratch) = if buf.len() == self.chunk_size ||
-            (buf.len() < self.chunk_size &&
-            (chunk_index * self.chunk_size) as u64 > self.image_end)
+        let (out, use_scratch) = if buf.len() == self.chunk_size
+            || (buf.len() < self.chunk_size
+                && (chunk_index * self.chunk_size) as u64 > self.image_end)
         {
             // decompress directly into output buffer
             (&mut buf[..], false)
-        }
-        else {
+        } else {
             // decompress into scratch buffer
             (&mut self.scratch[..buf.len()], true)
         };
@@ -93,11 +86,10 @@ impl ReadWorker {
         if let Err(e) = self.decoder.read_exact(out) {
             error!("decompression failed for chunk {}: {}", chunk_index, e);
             match self.corrupt_chunk_policy {
-                CorruptChunkPolicy::Error => return Err(
-                    ReadErrorKind::DecompressionFailed(chunk_index, e)
-                ),
-                CorruptChunkPolicy::Zero |
-                CorruptChunkPolicy::RawIfPossible => {
+                CorruptChunkPolicy::Error => {
+                    return Err(ReadErrorKind::DecompressionFailed(chunk_index, e));
+                }
+                CorruptChunkPolicy::Zero | CorruptChunkPolicy::RawIfPossible => {
                     // zero out corrupt chunk
                     out.fill(0);
                 }
@@ -122,17 +114,10 @@ impl ReadWorker {
         chunk_len: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
-        end_in_chunk: usize
-    ) -> Result<(), ReadErrorKind>
-    {
+        end_in_chunk: usize,
+    ) -> Result<(), ReadErrorKind> {
         self.read_compressed_read(src, chunk_off, chunk_len)?;
-        self.read_compressed_decompress(
-            chunk_index,
-            chunk_len,
-            buf,
-            beg_in_chunk,
-            end_in_chunk
-        )
+        self.read_compressed_decompress(chunk_index, chunk_len, buf, beg_in_chunk, end_in_chunk)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -144,9 +129,8 @@ impl ReadWorker {
         chunk_len: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
-        end_in_chunk: usize
-    ) -> Result<(), ReadErrorKind>
-    {
+        end_in_chunk: usize,
+    ) -> Result<(), ReadErrorKind> {
         // take the buffer from the decoder
         let cur = self.decoder.reset(Cursor::new(vec![0; 0]));
         let mut v = cur.into_inner();
@@ -160,7 +144,7 @@ impl ReadWorker {
             buf,
             beg_in_chunk,
             end_in_chunk,
-            raw_data
+            raw_data,
         )?;
 
         // give the buffer back to the decoder
@@ -178,9 +162,8 @@ impl ReadWorker {
         buf: &mut [u8],
         beg_in_chunk: usize,
         end_in_chunk: usize,
-        raw_data: &mut [u8]
-    ) -> Result<(), ReadErrorKind>
-    {
+        raw_data: &mut [u8],
+    ) -> Result<(), ReadErrorKind> {
         src.read(chunk_off, raw_data)
             .map_err(ReadErrorKind::IoError)?;
 
@@ -193,7 +176,7 @@ impl ReadWorker {
         let crc_stored = u32::from_le_bytes(
             raw_data[raw_data_len - 4..]
                 .try_into()
-                .expect("slice of last 4 bytes not 4 bytes long, wtf")
+                .expect("slice of last 4 bytes not 4 bytes long, wtf"),
         );
 
         // trim stored checksum from data
@@ -201,20 +184,19 @@ impl ReadWorker {
 
         // checksum the data
         let mut reader = Cursor::new(&out);
-        let crc = adler32(&mut reader)
-            .map_err(ReadErrorKind::IoError)?;
+        let crc = adler32(&mut reader).map_err(ReadErrorKind::IoError)?;
 
         // deal with checksum mismatch
         if crc != crc_stored {
             error!("checksum mismatch reading chunk {}", chunk_index);
             match self.corrupt_chunk_policy {
-                CorruptChunkPolicy::Error => return Err(
-                    ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc)
-                ),
+                CorruptChunkPolicy::Error => {
+                    return Err(ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc));
+                }
                 CorruptChunkPolicy::Zero => {
                     // zero out corrupt chunk
                     out.fill(0);
-                },
+                }
                 CorruptChunkPolicy::RawIfPossible => {
                     // let's gooooooooo!
                 }
@@ -233,9 +215,8 @@ impl ReadWorker {
         chunk_index: usize,
         buf: &mut [u8],
         beg_in_chunk: usize,
-        end_in_chunk: usize
-    ) -> Result<(), ReadErrorKind>
-    {
+        end_in_chunk: usize,
+    ) -> Result<(), ReadErrorKind> {
         let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
         let chunk_off = chunk.data_offset;
 
@@ -250,10 +231,9 @@ impl ReadWorker {
                 chunk_len,
                 buf,
                 beg_in_chunk,
-                end_in_chunk
+                end_in_chunk,
             )
-        }
-        else {
+        } else {
             self.read_uncompressed(
                 src,
                 chunk_index,
@@ -261,7 +241,7 @@ impl ReadWorker {
                 chunk_len,
                 buf,
                 beg_in_chunk,
-                end_in_chunk
+                end_in_chunk,
             )
         }
     }

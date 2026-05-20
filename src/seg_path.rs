@@ -14,24 +14,23 @@ fn valid_segment_ext(ext: &str) -> bool {
             '1'..='9' => matches!(ext.next().unwrap_or('!'), '0'..='9'),
             // AA - ZZ
             'A'..='Z' => matches!(ext.next().unwrap_or('!'), 'A'..='Z'),
-            _ => false
+            _ => false,
         },
-        _ => false
+        _ => false,
     }) && ext.next().is_none() // we had three characters
 }
 
 // Prototype segment paths are used as the starting point for path globbing.
 // They must have valid segment extensions and also start with E, L, or S.
 fn valid_proto_segment_ext(ext: &str) -> bool {
-    valid_segment_ext(ext) &&
-    ['E', 'L', 'S'].contains(
-        &ext
-            .chars()
-            .next()
-            .as_ref()
-            .map(char::to_ascii_uppercase)
-            .unwrap_or('!')
-    )
+    valid_segment_ext(ext)
+        && ['E', 'L', 'S'].contains(
+            &ext.chars()
+                .next()
+                .as_ref()
+                .map(char::to_ascii_uppercase)
+                .unwrap_or('!'),
+        )
 }
 
 fn segment_ext_iter(start: char) -> impl Iterator<Item = String> {
@@ -40,8 +39,7 @@ fn segment_ext_iter(start: char) -> impl Iterator<Item = String> {
         .map(move |n| format!("{}{:02}", start, n))
         // xAA - ZZZ
         .chain(
-            iproduct!(start..='Z', 'A'..='Z', 'A'..='Z')
-                .map(|t| format!("{}{}{}", t.0, t.1, t.2))
+            iproduct!(start..='Z', 'A'..='Z', 'A'..='Z').map(|t| format!("{}{}{}", t.0, t.1, t.2)),
         )
 }
 
@@ -49,10 +47,7 @@ fn segment_ext_iter(start: char) -> impl Iterator<Item = String> {
 #[error("File {0} has an unrecognized extension")]
 pub struct UnrecognizedExtension(pub String);
 
-fn validate_proto_extension<T: AsRef<str>>(
-    path: T,
-    ) -> Result<String, UnrecognizedExtension>
-{
+fn validate_proto_extension<T: AsRef<str>>(path: T) -> Result<String, UnrecognizedExtension> {
     path.as_ref()
         .to_ascii_uppercase()
         .rsplit_once('.')
@@ -67,11 +62,11 @@ pub trait ExistsChecker {
 
 pub fn validated_segment_paths<T, C>(
     example_segment_path: T,
-    mut checker: C
+    mut checker: C,
 ) -> Result<impl IntoIterator<Item: AsRef<str>>, UnrecognizedExtension>
 where
     T: AsRef<str>,
-    C: ExistsChecker
+    C: ExistsChecker,
 {
     let proto_path = example_segment_path.as_ref();
 
@@ -79,7 +74,9 @@ where
     let proto_ext = validate_proto_extension(proto_path)?;
 
     // Get first char of extension; probably cannot fail
-    let ext_start = proto_ext.chars().next()
+    let ext_start = proto_ext
+        .chars()
+        .next()
         .ok_or(UnrecognizedExtension(proto_path.into()))?;
 
     let base_path = proto_path
@@ -87,28 +84,21 @@ where
         .map(|(base, _)| base.to_owned())
         .ok_or(UnrecognizedExtension(proto_path.into()))?;
 
-    Ok(
-        segment_ext_iter(ext_start)
-            .map_while(move |ext| {
-                // Hilariously, EnCase will create .E02 etc. if you start with
-                // .e01, so the extensions can actually differ in case through
-                // the sequence...
-                let seg_path_uc = format!("{base_path}.{ext}");
-                debug!("checking {seg_path_uc}");
+    Ok(segment_ext_iter(ext_start).map_while(move |ext| {
+        // Hilariously, EnCase will create .E02 etc. if you start with
+        // .e01, so the extensions can actually differ in case through
+        // the sequence...
+        let seg_path_uc = format!("{base_path}.{ext}");
+        debug!("checking {seg_path_uc}");
 
-                if checker.exists(&seg_path_uc) {
-                    Some(seg_path_uc)
-                }
-                else {
-                    let seg_path_lc = format!(
-                        "{base_path}.{}",
-                        &ext.to_ascii_lowercase()
-                    );
-                    debug!("checking {seg_path_lc}");
-                    checker.exists(&seg_path_lc).then_some(seg_path_lc)
-                }
-            })
-    )
+        if checker.exists(&seg_path_uc) {
+            Some(seg_path_uc)
+        } else {
+            let seg_path_lc = format!("{base_path}.{}", &ext.to_ascii_lowercase());
+            debug!("checking {seg_path_lc}");
+            checker.exists(&seg_path_lc).then_some(seg_path_lc)
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -118,16 +108,7 @@ mod test {
     #[test]
     fn valid_segment_ext_ok() {
         let good = [
-            "E01",
-            "L01",
-            "S01",
-            "E99",
-            "EAA",
-            "EZZ",
-            "EZZ",
-            "FAA",
-            "YYZ",
-            "ZZZ"
+            "E01", "L01", "S01", "E99", "EAA", "EZZ", "EZZ", "FAA", "YYZ", "ZZZ",
         ];
 
         for ext in good {
@@ -138,17 +119,7 @@ mod test {
 
     #[test]
     fn valid_segment_ext_bad() {
-        let bad = [
-            "",
-            "E",
-            "E0",
-            "E00",
-            "E0A",
-            "EA0",
-            "AbC",
-            "gtfo",
-            "💩"
-        ];
+        let bad = ["", "E", "E0", "E00", "E0A", "EA0", "AbC", "gtfo", "💩"];
 
         for ext in bad {
             assert!(!valid_segment_ext(ext));
@@ -158,15 +129,7 @@ mod test {
     #[test]
     fn valid_proto_segment_ext_ok() {
         // prototype segment extensions must start with E, L, or S
-        let good = [
-            "E01",
-            "L01",
-            "S01",
-            "E99",
-            "EAA",
-            "EZZ",
-            "EZZ"
-        ];
+        let good = ["E01", "L01", "S01", "E99", "EAA", "EZZ", "EZZ"];
 
         for ext in good {
             assert!(valid_proto_segment_ext(ext));
@@ -177,17 +140,7 @@ mod test {
     #[test]
     fn valid_proto_segment_ext_bad() {
         let bad = [
-            "FAA",
-            "ZZZ",
-            "",
-            "E",
-            "E0",
-            "E00",
-            "E0A",
-            "EA0",
-            "AbC",
-            "gtfo",
-            "💩"
+            "FAA", "ZZZ", "", "E", "E0", "E00", "E0A", "EA0", "AbC", "gtfo", "💩",
         ];
 
         for ext in bad {
@@ -197,38 +150,17 @@ mod test {
 
     #[test]
     fn validate_proto_extension_ok() {
-         let good = [
-            "E01",
-            "L01",
-            "S01",
-            "E99",
-            "EAA",
-            "EZZ",
-            "EZZ"
-        ];
+        let good = ["E01", "L01", "S01", "E99", "EAA", "EZZ", "EZZ"];
 
         for ext in good {
-            assert_eq!(
-                validate_proto_extension(format!("img.{ext}")).unwrap(),
-                ext
-            );
+            assert_eq!(validate_proto_extension(format!("img.{ext}")).unwrap(), ext);
         }
     }
 
     #[test]
     fn validate_proto_extension_bad() {
         let bad = [
-            "FAA",
-            "ZZZ",
-            "",
-            "E",
-            "E0",
-            "E00",
-            "E0A",
-            "EA0",
-            "AbC",
-            "gtfo",
-            "💩"
+            "FAA", "ZZZ", "", "E", "E0", "E00", "E0A", "EA0", "AbC", "gtfo", "💩",
         ];
 
         for ext in bad {
@@ -261,61 +193,61 @@ mod test {
         assert_eq!(i.next(), None);
     }
 
-/*
-    #[test]
-    fn validate_segment_path_ok() {
-        let good = [
-            ("a/img.E01", "E01", SeqChecker::new([true, false])),
-            ("a/img.E02", "E02", SeqChecker::new([true, false])),
-            ("a/img.e02", "E02", SeqChecker::new([false, true])),
-            ("a/b.c.E01", "E01", SeqChecker::new([true, false]))
-        ];
+    /*
+        #[test]
+        fn validate_segment_path_ok() {
+            let good = [
+                ("a/img.E01", "E01", SeqChecker::new([true, false])),
+                ("a/img.E02", "E02", SeqChecker::new([true, false])),
+                ("a/img.e02", "E02", SeqChecker::new([false, true])),
+                ("a/b.c.E01", "E01", SeqChecker::new([true, false]))
+            ];
 
-        for (p, exp_ext, mut ch) in good {
-            assert_eq!(
-                validate_segment_path(p.clone(), exp_ext, &mut ch).unwrap(),
-                p
-            );
+            for (p, exp_ext, mut ch) in good {
+                assert_eq!(
+                    validate_segment_path(p.clone(), exp_ext, &mut ch).unwrap(),
+                    p
+                );
+            }
+         }
+
+        #[test]
+        fn find_segment_paths_impl_ok() {
+            let cases = [
+                ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
+                ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
+                ("a/i.e01", vec!["a/i.e01", "a/i.E02"], SeqChecker::new([false, true, true])),
+                ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, true])),
+                ("a/i.j.e02", vec!["a/i.j.E01", "a/i.j.e02"], SeqChecker::new([true, false, true]))
+            ];
+
+            for (proto, exp_paths, ch) in cases {
+                // Iterator doesn't impl Debug, so we need to map it
+                // to something that does for the failure case
+                let act_paths = find_segment_paths_impl(proto, ch)
+                    .map(Iterator::collect::<Vec<_>>);
+
+                assert_eq!(act_paths.unwrap(), exp_paths);
+            }
         }
-     }
 
-    #[test]
-    fn find_segment_paths_impl_ok() {
-        let cases = [
-            ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
-            ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
-            ("a/i.e01", vec!["a/i.e01", "a/i.E02"], SeqChecker::new([false, true, true])),
-            ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, true])),
-            ("a/i.j.e02", vec!["a/i.j.E01", "a/i.j.e02"], SeqChecker::new([true, false, true]))
-        ];
+        #[test]
+        fn find_segment_paths_impl_err() {
+            let cases = [
+                ("", TrueChecker, UnrecognizedExtension("".into())),
+                ("a/i", TrueChecker, UnrecognizedExtension("a/i".into())),
+                ("a/i.", TrueChecker, UnrecognizedExtension("a/i.".into())),
+                ("a/i.E00", TrueChecker, UnrecognizedExtension("a/i.E00".into())),
+            ];
 
-        for (proto, exp_paths, ch) in cases {
-            // Iterator doesn't impl Debug, so we need to map it
-            // to something that does for the failure case
-            let act_paths = find_segment_paths_impl(proto, ch)
-                .map(Iterator::collect::<Vec<_>>);
+            for (proto, ch, err) in cases {
+                // Iterator doesn't impl Debug, so we need to map it
+                // to something that does for the failure case
+                let act_paths = find_segment_paths_impl(proto, ch)
+                    .map(Iterator::collect::<Vec<_>>);
 
-            assert_eq!(act_paths.unwrap(), exp_paths);
+                assert_eq!(act_paths.unwrap_err(), err);
+            }
         }
-    }
-
-    #[test]
-    fn find_segment_paths_impl_err() {
-        let cases = [
-            ("", TrueChecker, UnrecognizedExtension("".into())),
-            ("a/i", TrueChecker, UnrecognizedExtension("a/i".into())),
-            ("a/i.", TrueChecker, UnrecognizedExtension("a/i.".into())),
-            ("a/i.E00", TrueChecker, UnrecognizedExtension("a/i.E00".into())),
-        ];
-
-        for (proto, ch, err) in cases {
-            // Iterator doesn't impl Debug, so we need to map it
-            // to something that does for the failure case
-            let act_paths = find_segment_paths_impl(proto, ch)
-                .map(Iterator::collect::<Vec<_>>);
-
-            assert_eq!(act_paths.unwrap_err(), err);
-        }
-    }
-*/
+    */
 }

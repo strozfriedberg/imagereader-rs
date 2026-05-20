@@ -7,16 +7,12 @@ use crate::hasher::{HashType, MultiHasher};
 pub fn do_hash<RF>(
     mut reader: RF,
     image_size: u64,
-    random_buf_size: bool
+    random_buf_size: bool,
 ) -> HashMap<HashType, String>
 where
-    RF: FnMut(u64, &mut [u8]) -> usize
+    RF: FnMut(u64, &mut [u8]) -> usize,
 {
-    let htypes = [
-        HashType::MD5,
-        HashType::SHA1,
-        HashType::SHA256
-    ];
+    let htypes = [HashType::MD5, HashType::SHA1, HashType::SHA256];
 
     let hasher = MultiHasher::new(htypes, vec![0; 1024 * 1024]);
 
@@ -26,8 +22,7 @@ where
     while offset < image_size {
         let buf_size = if random_buf_size {
             rand::rng().random_range(0..buf.len())
-        }
-        else {
+        } else {
             buf.len()
         };
 
@@ -43,7 +38,8 @@ where
         trace!("hashed to {offset}");
     }
 
-    hasher.finalize()
+    hasher
+        .finalize()
         .into_iter()
         .map(|(k, v)| (k, hex::encode(v)))
         .collect()

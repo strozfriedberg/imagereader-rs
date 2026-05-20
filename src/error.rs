@@ -7,7 +7,7 @@ pub enum IoError {
     #[error("{0:?}")]
     Read(KError),
     #[error("Seek to {0} failed: {1:?}")]
-    Seek(usize, KError)
+    Seek(usize, KError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -23,5 +23,5 @@ pub enum LibError {
     #[error("Unknown compression method value: {0}")]
     UnknownCompressionMethod(u16),
     #[error("Invalid segment file header")]
-    InvalidSegmentFileHeader
+    InvalidSegmentFileHeader,
 }

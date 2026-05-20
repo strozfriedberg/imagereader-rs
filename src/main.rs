@@ -5,17 +5,13 @@ use std::{
     iter::FromIterator,
     ops::BitAndAssign,
     process::ExitCode,
-    time::{Duration, Instant}
+    time::{Duration, Instant},
 };
-use tracing_subscriber::{
-    EnvFilter,
-    layer::SubscriberExt,
-    util::SubscriberInitExt
-};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use e01::{
     e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Error, E01Reader, E01ReaderOptions},
-    hasher::{HashType, MultiHasher}
+    hasher::{HashType, MultiHasher},
 };
 
 #[derive(Parser)]
@@ -30,15 +26,14 @@ struct Args {
 
     /// Ignore all checksums during read, default value is false
     #[arg(short, long, default_value = "false")]
-    ignore_checksums: bool
+    ignore_checksums: bool,
 }
 
 fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
     htype: HashType,
     hash_act: Option<H1>,
-    hash_exp: Option<H2>
-) -> Option<bool>
-{
+    hash_exp: Option<H2>,
+) -> Option<bool> {
     match hash_act {
         Some(hash_act) => match hash_exp {
             Some(hash_exp) if hash_act.as_ref() != hash_exp.as_ref() => {
@@ -49,13 +44,13 @@ fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
                     hex::encode(hash_exp)
                 );
                 Some(false)
-            },
+            }
             _ => {
                 println!("{} {} ok", htype, hex::encode(hash_act));
                 Some(true)
             }
-        }
-        None => None
+        },
+        None => None,
     }
 }
 
@@ -63,7 +58,7 @@ fn display_progress(
     offset: u64,
     image_size: u64,
     image_size_bs_disp: &bytesize::Display,
-    start: Instant
+    start: Instant,
 ) {
     let offset_bs = ByteSize::b(offset);
     eprintln!(
@@ -75,18 +70,17 @@ fn display_progress(
     );
 }
 
-fn run(args: Args)-> Result<ExitCode, E01Error> {
+fn run(args: Args) -> Result<ExitCode, E01Error> {
     let mut e01_reader = E01Reader::open_glob(
         &args.input,
         &E01ReaderOptions {
             corrupt_section_policy: CorruptSectionPolicy::Error,
             corrupt_chunk_policy: if args.ignore_checksums {
                 CorruptChunkPolicy::Zero
-            }
-            else {
+            } else {
                 CorruptChunkPolicy::Error
-            }
-        }
+            },
+        },
     )?;
 
     let mut htypes: HashSet<HashType> = HashSet::from_iter(args.extra_hashes);
@@ -107,9 +101,7 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
     let mut buf = vec![0; 1024 * 1024];
     let mut offset = 0;
 
-    let image_size_bs_disp = ByteSize::b(e01_reader.image_size)
-        .display()
-        .iec();
+    let image_size_bs_disp = ByteSize::b(e01_reader.image_size).display().iec();
 
     let mut prev_prog = Instant::now();
     let start = prev_prog;
@@ -119,22 +111,12 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
         offset += read as u64;
 
         if prev_prog.elapsed() > Duration::from_secs(2) {
-            display_progress(
-                offset,
-                e01_reader.image_size,
-                &image_size_bs_disp,
-                start
-            );
+            display_progress(offset, e01_reader.image_size, &image_size_bs_disp, start);
             prev_prog = Instant::now();
         }
     }
 
-    display_progress(
-        offset,
-        e01_reader.image_size,
-        &image_size_bs_disp,
-        start
-    );
+    display_progress(offset, e01_reader.image_size, &image_size_bs_disp, start);
 
     let hashes = hasher.finalize();
 
@@ -142,13 +124,13 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
     let md5_check = check_hash(
         HashType::MD5,
         hashes.get(&HashType::MD5),
-        e01_reader.stored_md5
+        e01_reader.stored_md5,
     );
 
     let sha1_check = check_hash(
         HashType::SHA1,
         hashes.get(&HashType::SHA1),
-        e01_reader.stored_sha1
+        e01_reader.stored_sha1,
     );
 
     if let Some(sha256) = hashes.get(&HashType::SHA256) {
@@ -163,60 +145,59 @@ fn run(args: Args)-> Result<ExitCode, E01Error> {
        or a cosmically improbable coincidence; but either way it's correct
        so no problem. We warn when there's a likely spurious mismatch.
     */
-    if sha1_check == Some(false) &&
-        let Some(stored_sha1) = e01_reader.stored_sha1 &&
-        stored_sha1 == [0; 20]
+    if sha1_check == Some(false)
+        && let Some(stored_sha1) = e01_reader.stored_sha1
+        && stored_sha1 == [0; 20]
     {
         eprintln!("Stored SHA1 is zero; possibly not intended as a stored SHA1");
     }
 
     // combine the results and report
-    let check = [md5_check, sha1_check].into_iter()
+    let check = [md5_check, sha1_check]
+        .into_iter()
         .flatten()
         .reduce(|l, r| l && r);
 
-    Ok(
-        match check {
-            Some(false) => {
-                println!("Hash verification: FAILURE");
-                ExitCode::FAILURE
-            },
-            None => {
-                println!("No hash verification performed");
-                ExitCode::SUCCESS
-            },
-            Some(true) => {
-                println!("Hash verification: SUCCESS");
-                ExitCode::SUCCESS
-            }
+    Ok(match check {
+        Some(false) => {
+            println!("Hash verification: FAILURE");
+            ExitCode::FAILURE
         }
-    )
+        None => {
+            println!("No hash verification performed");
+            ExitCode::SUCCESS
+        }
+        Some(true) => {
+            println!("Hash verification: SUCCESS");
+            ExitCode::SUCCESS
+        }
+    })
 }
 
 fn main() -> ExitCode {
     let stderr_layer = tracing_subscriber::fmt::layer()
-//        .with_current_span(true)
+        //        .with_current_span(true)
         .without_time()
         .with_file(false)
         .with_line_number(false)
         .with_thread_ids(false)
         .with_thread_names(false)
-//        .with_target(false)
+        //        .with_target(false)
         .with_writer(std::io::stderr);
 
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| {
-                [
-                    // log at info by default
-                    "info",
-                    // foyer is noisy below warn level
-                    "foyer=warn",
-                    "foyer_memory=warn",
-                    "foyer_storage=warn"
-                ].join(",").into()
-            })
-        )
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            [
+                // log at info by default
+                "info",
+                // foyer is noisy below warn level
+                "foyer=warn",
+                "foyer_memory=warn",
+                "foyer_storage=warn",
+            ]
+            .join(",")
+            .into()
+        }))
         .with(stderr_layer)
         .init();
 

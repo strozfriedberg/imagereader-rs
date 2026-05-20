@@ -1,22 +1,15 @@
 use std::{
-    ffi::{
-        CStr,
-        CString,
-        c_char
-    },
+    ffi::{CStr, CString, c_char},
     mem::ManuallyDrop,
     path::Path,
-    slice
+    slice,
 };
 
-use crate::e01_reader::{
-    self,
-    E01Reader
-};
+use crate::e01_reader::{self, E01Reader};
 
 #[repr(C)]
 pub struct E01Error {
-    message: *mut c_char
+    message: *mut c_char,
 }
 
 impl Drop for E01Error {
@@ -32,22 +25,26 @@ impl Drop for E01Error {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_free_error(err: *mut E01Error) {
     if !err.is_null() {
-        unsafe { drop(Box::from_raw(err)); }
+        unsafe {
+            drop(Box::from_raw(err));
+        }
     }
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub enum CorruptSectionPolicy {
-  CSP_ERROR,
-  CSP_DAMN_THE_TORPEDOES
+    CSP_ERROR,
+    CSP_DAMN_THE_TORPEDOES,
 }
 
 impl From<CorruptSectionPolicy> for e01_reader::CorruptSectionPolicy {
     fn from(policy: CorruptSectionPolicy) -> e01_reader::CorruptSectionPolicy {
         match policy {
             CorruptSectionPolicy::CSP_ERROR => e01_reader::CorruptSectionPolicy::Error,
-            CorruptSectionPolicy::CSP_DAMN_THE_TORPEDOES => e01_reader::CorruptSectionPolicy::DamnTheTorpedoes
+            CorruptSectionPolicy::CSP_DAMN_THE_TORPEDOES => {
+                e01_reader::CorruptSectionPolicy::DamnTheTorpedoes
+            }
         }
     }
 }
@@ -55,9 +52,9 @@ impl From<CorruptSectionPolicy> for e01_reader::CorruptSectionPolicy {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub enum CorruptChunkPolicy {
-  CCP_ERROR,
-  CCP_ZERO,
-  CCP_RAW_IF_POSSIBLE
+    CCP_ERROR,
+    CCP_ZERO,
+    CCP_RAW_IF_POSSIBLE,
 }
 
 impl From<CorruptChunkPolicy> for e01_reader::CorruptChunkPolicy {
@@ -65,7 +62,9 @@ impl From<CorruptChunkPolicy> for e01_reader::CorruptChunkPolicy {
         match policy {
             CorruptChunkPolicy::CCP_ERROR => e01_reader::CorruptChunkPolicy::Error,
             CorruptChunkPolicy::CCP_ZERO => e01_reader::CorruptChunkPolicy::Zero,
-            CorruptChunkPolicy::CCP_RAW_IF_POSSIBLE => e01_reader::CorruptChunkPolicy::RawIfPossible
+            CorruptChunkPolicy::CCP_RAW_IF_POSSIBLE => {
+                e01_reader::CorruptChunkPolicy::RawIfPossible
+            }
         }
     }
 }
@@ -73,15 +72,15 @@ impl From<CorruptChunkPolicy> for e01_reader::CorruptChunkPolicy {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct E01ReaderOptions {
-  corrupt_section_policy: CorruptSectionPolicy,
-  corrupt_chunk_policy: CorruptChunkPolicy
+    corrupt_section_policy: CorruptSectionPolicy,
+    corrupt_chunk_policy: CorruptChunkPolicy,
 }
 
 impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
     fn from(options: E01ReaderOptions) -> e01_reader::E01ReaderOptions {
         e01_reader::E01ReaderOptions {
             corrupt_section_policy: options.corrupt_section_policy.into(),
-            corrupt_chunk_policy: options.corrupt_chunk_policy.into()
+            corrupt_chunk_policy: options.corrupt_chunk_policy.into(),
         }
     }
 }
@@ -101,7 +100,9 @@ fn fill_error<E: ToString>(e: E, err: *mut *mut E01Error) {
             )
             .into_raw();
 
-        unsafe { *err = Box::into_raw(Box::new(E01Error { message })); }
+        unsafe {
+            *err = Box::into_raw(Box::new(E01Error { message }));
+        }
     }
 }
 
@@ -116,7 +117,7 @@ pub struct E01Handle {
     pub sector_size: usize,
     pub image_size: u64,
     pub stored_md5: *const u8,
-    pub stored_sha1: *const u8
+    pub stored_sha1: *const u8,
 }
 
 unsafe fn free_c_str_array(ptr: *mut *mut c_char, len: usize) {
@@ -131,18 +132,19 @@ unsafe fn free_c_str_array(ptr: *mut *mut c_char, len: usize) {
 fn paths_to_cstring_vec<'a, P, T>(paths: T) -> Result<Vec<CString>, String>
 where
     P: AsRef<Path> + 'a,
-    T: IntoIterator<Item = &'a P>
+    T: IntoIterator<Item = &'a P>,
 {
-    paths.into_iter()
+    paths
+        .into_iter()
         .enumerate()
-        .map(|(i, p)|
+        .map(|(i, p)| {
             p.as_ref()
                 .to_str()
                 .ok_or_else(|| format!("path {i} is not UTF-8"))
-                .and_then(|s| CString::new(s)
-                    .map_err(|_| format!("path {i} contains an internal null"))
-                )
-        )
+                .and_then(|s| {
+                    CString::new(s).map_err(|_| format!("path {i} contains an internal null"))
+                })
+        })
         .collect::<Result<Vec<_>, _>>()
 }
 
@@ -164,7 +166,8 @@ impl E01Handle {
 
         // convert CStrings into *const c_char, which must be freed by
         // calling e01_close on the handle
-        let mut segment_paths = segment_paths.into_iter()
+        let mut segment_paths = segment_paths
+            .into_iter()
             .map(|sp| sp.into_raw() as *const c_char)
             .collect::<Vec<_>>();
 
@@ -173,20 +176,18 @@ impl E01Handle {
 
         let segment_paths = ManuallyDrop::new(segment_paths).as_ptr();
 
-        Ok(
-            Self {
-                segment_paths,
-                segment_paths_count: reader.segment_paths.len(),
-                chunk_size: reader.chunk_size,
-                chunk_count: reader.chunk_count,
-                sector_count: reader.sector_count,
-                sector_size: reader.sector_size,
-                image_size: reader.image_size,
-                stored_md5: opt_array_to_ptr(reader.stored_md5),
-                stored_sha1: opt_array_to_ptr(reader.stored_sha1),
-                reader: Box::into_raw(Box::new(reader))
-            }
-        )
+        Ok(Self {
+            segment_paths,
+            segment_paths_count: reader.segment_paths.len(),
+            chunk_size: reader.chunk_size,
+            chunk_count: reader.chunk_count,
+            sector_count: reader.sector_count,
+            sector_size: reader.sector_size,
+            image_size: reader.image_size,
+            stored_md5: opt_array_to_ptr(reader.stored_md5),
+            stored_sha1: opt_array_to_ptr(reader.stored_sha1),
+            reader: Box::into_raw(Box::new(reader)),
+        })
     }
 }
 
@@ -195,20 +196,16 @@ impl Drop for E01Handle {
         unsafe {
             free_c_str_array(
                 self.segment_paths as *mut *mut c_char,
-                self.segment_paths_count
+                self.segment_paths_count,
             );
         }
 
         if !self.stored_md5.is_null() {
-            drop(unsafe {
-                Vec::from_raw_parts(self.stored_md5 as *mut u8, 16, 16)
-            });
+            drop(unsafe { Vec::from_raw_parts(self.stored_md5 as *mut u8, 16, 16) });
         }
 
         if !self.stored_sha1.is_null() {
-            drop(unsafe {
-                Vec::from_raw_parts(self.stored_sha1 as *mut u8, 20, 20)
-            });
+            drop(unsafe { Vec::from_raw_parts(self.stored_sha1 as *mut u8, 20, 20) });
         }
 
         drop(unsafe { Box::from_raw(self.reader) });
@@ -220,26 +217,25 @@ pub unsafe extern "C" fn e01_open(
     segment_paths: *const *const c_char,
     segment_paths_count: usize,
     options: *const E01ReaderOptions,
-    err: *mut *mut E01Error
-) -> *mut E01Handle
-{
+    err: *mut *mut E01Error,
+) -> *mut E01Handle {
     // convert options
     if options.is_null() {
-       fill_error("options is null", err);
-       return std::ptr::null_mut();
+        fill_error("options is null", err);
+        return std::ptr::null_mut();
     }
 
     let options = unsafe { (*options).into() };
 
     // convert paths
     if segment_paths.is_null() {
-       fill_error("segment_paths is null", err);
-       return std::ptr::null_mut();
+        fill_error("segment_paths is null", err);
+        return std::ptr::null_mut();
     }
 
     if segment_paths_count == 0 {
-       fill_error("segment_paths_count is zero", err);
-       return std::ptr::null_mut();
+        fill_error("segment_paths_count is zero", err);
+        return std::ptr::null_mut();
     }
 
     let sl = unsafe { slice::from_raw_parts(segment_paths, segment_paths_count) };
@@ -281,21 +277,20 @@ pub unsafe extern "C" fn e01_open(
 pub unsafe extern "C" fn e01_open_glob(
     example_segment_path: *const c_char,
     options: *const E01ReaderOptions,
-    err: *mut *mut E01Error
-) -> *mut E01Handle
-{
+    err: *mut *mut E01Error,
+) -> *mut E01Handle {
     // convert options
     if options.is_null() {
-       fill_error("options is null", err);
-       return std::ptr::null_mut();
+        fill_error("options is null", err);
+        return std::ptr::null_mut();
     }
 
     let options = unsafe { (*options).into() };
 
     // convert path
     if example_segment_path.is_null() {
-       fill_error("example_segment_path is null", err);
-       return std::ptr::null_mut();
+        fill_error("example_segment_path is null", err);
+        return std::ptr::null_mut();
     }
 
     let p = unsafe { CStr::from_ptr(example_segment_path) };
@@ -334,41 +329,40 @@ pub unsafe extern "C" fn e01_read(
     offset: u64,
     buf: *mut c_char,
     buflen: usize,
-    err: *mut *mut E01Error
-) -> usize
-{
+    err: *mut *mut E01Error,
+) -> usize {
     if handle.is_null() {
-       fill_error("handle is null", err);
-       return 0;
+        fill_error("handle is null", err);
+        return 0;
     }
 
     if buf.is_null() {
-       fill_error("buf is null", err);
-       return 0;
+        fill_error("buf is null", err);
+        return 0;
     }
 
     let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-    unsafe { &mut *(*handle).reader }.read_at_offset(offset, buf)
-        .unwrap_or_else(|e| { fill_error(e, err); 0 })
+    unsafe { &mut *(*handle).reader }
+        .read_at_offset(offset, buf)
+        .unwrap_or_else(|e| {
+            fill_error(e, err);
+            0
+        })
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
 
-    use crate::{
-        hasher::HashType,
-        test_data::*,
-        test_helper::do_hash
-    };
+    use crate::{hasher::HashType, test_data::*, test_helper::do_hash};
 
     const ERROR_OPTS: E01ReaderOptions = E01ReaderOptions {
         corrupt_section_policy: CorruptSectionPolicy::CSP_ERROR,
-        corrupt_chunk_policy: CorruptChunkPolicy::CCP_ERROR
+        corrupt_chunk_policy: CorruptChunkPolicy::CCP_ERROR,
     };
 
     struct Holder<T> {
-        ptr: *mut T
+        ptr: *mut T,
     }
 
     impl<T> Holder<T> {
@@ -397,10 +391,7 @@ mod test {
         let err = unsafe { Box::from_raw(err) };
 
         assert!(!err.message.is_null());
-        assert_eq!(
-            unsafe { CStr::from_ptr(&*err.message) },
-            message
-        );
+        assert_eq!(unsafe { CStr::from_ptr(&*err.message) }, message);
     }
 
     #[track_caller]
@@ -450,9 +441,7 @@ mod test {
     fn ptr_to_opt_hash<const N: usize>(ptr: *const u8) -> Option<String> {
         match ptr.is_null() {
             true => None,
-            false => Some(hex::encode(unsafe {
-                slice::from_raw_parts(ptr, N)
-            }))
+            false => Some(hex::encode(unsafe { slice::from_raw_parts(ptr, N) })),
         }
     }
 
@@ -460,14 +449,10 @@ mod test {
     fn assert_eq_test_data(h: *mut E01Handle, exp: &TestData) {
         let handle = unsafe { &*h };
 
-        let sl = unsafe {
-            slice::from_raw_parts(
-                handle.segment_paths,
-                handle.segment_paths_count
-            )
-        };
+        let sl = unsafe { slice::from_raw_parts(handle.segment_paths, handle.segment_paths_count) };
 
-        let segment_paths = sl.iter()
+        let segment_paths = sl
+            .iter()
             .map(|p| unsafe { CStr::from_ptr(*p) })
             .map(|p| p.to_str())
             .collect::<Result<Vec<_>, _>>()
@@ -485,7 +470,7 @@ mod test {
                         offset,
                         buf.as_mut_ptr() as *mut c_char,
                         buf.len(),
-                        &mut err
+                        &mut err,
                     )
                 };
 
@@ -493,7 +478,7 @@ mod test {
                 read
             },
             handle.image_size,
-            false
+            false,
         );
 
         let act = TestData {
@@ -507,7 +492,7 @@ mod test {
             stored_sha1: stored_sha1.as_deref(),
             md5: hashes.get(&HashType::MD5).map(String::as_str),
             sha1: hashes.get(&HashType::SHA1).map(String::as_str),
-            sha256: hashes.get(&HashType::SHA256).map(String::as_str)
+            sha256: hashes.get(&HashType::SHA256).map(String::as_str),
         };
 
         assert_eq!(&act, exp);
@@ -515,14 +500,10 @@ mod test {
 
     #[track_caller]
     fn assert_eq_test_data_no_hashing(handle: &E01Handle, exp: &TestData) {
-        let sl = unsafe {
-            slice::from_raw_parts(
-                handle.segment_paths,
-                handle.segment_paths_count
-            )
-        };
+        let sl = unsafe { slice::from_raw_parts(handle.segment_paths, handle.segment_paths_count) };
 
-        let segment_paths = sl.iter()
+        let segment_paths = sl
+            .iter()
             .map(|p| unsafe { CStr::from_ptr(*p) })
             .map(|p| p.to_str())
             .collect::<Result<Vec<_>, _>>()
@@ -542,7 +523,7 @@ mod test {
             stored_sha1: stored_sha1.as_deref(),
             md5: exp.md5,
             sha1: exp.sha1,
-            sha256: exp.sha256
+            sha256: exp.sha256,
         };
 
         assert_eq!(&act, exp);
@@ -552,14 +533,8 @@ mod test {
     fn test_e01_open_null_paths_null_err() {
         let options = &ERROR_OPTS;
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                std::ptr::null(),
-                1,
-                options,
-                std::ptr::null_mut()
-            )
-        });
+        let h =
+            Holder::new(unsafe { e01_open(std::ptr::null(), 1, options, std::ptr::null_mut()) });
 
         assert!(h.ptr.is_null());
     }
@@ -573,7 +548,7 @@ mod test {
                 paths.as_ptr(),
                 paths.len(),
                 std::ptr::null(),
-                std::ptr::null_mut()
+                std::ptr::null_mut(),
             )
         });
 
@@ -585,14 +560,7 @@ mod test {
         let paths = [c"whatever".as_ptr()];
         let options = &ERROR_OPTS;
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                0,
-                options,
-                std::ptr::null_mut()
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(paths.as_ptr(), 0, options, std::ptr::null_mut()) });
 
         assert!(h.ptr.is_null());
     }
@@ -603,12 +571,7 @@ mod test {
         let options = &ERROR_OPTS;
 
         let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                std::ptr::null_mut()
-            )
+            e01_open(paths.as_ptr(), paths.len(), options, std::ptr::null_mut())
         });
 
         assert!(h.ptr.is_null());
@@ -619,14 +582,7 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                std::ptr::null(),
-                1,
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(std::ptr::null(), 1, options, &mut err) });
 
         assert_err(err, c"segment_paths is null");
         assert!(h.ptr.is_null());
@@ -638,12 +594,7 @@ mod test {
         let mut err = std::ptr::null_mut();
 
         let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                std::ptr::null(),
-                &mut err
-            )
+            e01_open(paths.as_ptr(), paths.len(), std::ptr::null(), &mut err)
         });
 
         assert_err(err, c"options is null");
@@ -656,14 +607,7 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                0,
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(paths.as_ptr(), 0, options, &mut err) });
 
         assert_err(err, c"segment_paths_count is zero");
         assert!(h.ptr.is_null());
@@ -675,14 +619,7 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(paths.as_ptr(), paths.len(), options, &mut err) });
 
         assert_err_starts_with(err, c"Malformed path or URL: ");
         assert!(h.ptr.is_null());
@@ -692,13 +629,8 @@ mod test {
     fn test_e01_open_glob_null_path_null_err() {
         let options = &ERROR_OPTS;
 
-        let h = Holder::new(unsafe {
-            e01_open_glob(
-                std::ptr::null(),
-                options,
-                std::ptr::null_mut()
-            )
-        });
+        let h =
+            Holder::new(unsafe { e01_open_glob(std::ptr::null(), options, std::ptr::null_mut()) });
 
         assert!(h.ptr.is_null());
     }
@@ -707,13 +639,7 @@ mod test {
     fn test_e01_open_glob_null_options_null_err() {
         let path = c"whatever".as_ptr();
 
-        let h = Holder::new(unsafe {
-            e01_open_glob(
-                path,
-                std::ptr::null(),
-                std::ptr::null_mut()
-            )
-        });
+        let h = Holder::new(unsafe { e01_open_glob(path, std::ptr::null(), std::ptr::null_mut()) });
 
         assert!(h.ptr.is_null());
     }
@@ -723,13 +649,7 @@ mod test {
         let path = c"bogus".as_ptr();
         let options = &ERROR_OPTS;
 
-        let h = Holder::new(unsafe {
-            e01_open_glob(
-                path,
-                options,
-                std::ptr::null_mut()
-            )
-        });
+        let h = Holder::new(unsafe { e01_open_glob(path, options, std::ptr::null_mut()) });
 
         assert!(h.ptr.is_null());
     }
@@ -739,13 +659,7 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open_glob(
-                std::ptr::null(),
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open_glob(std::ptr::null(), options, &mut err) });
 
         assert_err(err, c"example_segment_path is null");
         assert!(h.ptr.is_null());
@@ -756,13 +670,7 @@ mod test {
         let path = c"whatever".as_ptr();
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open_glob(
-                path,
-                std::ptr::null(),
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open_glob(path, std::ptr::null(), &mut err) });
 
         assert_err(err, c"options is null");
         assert!(h.ptr.is_null());
@@ -774,13 +682,7 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open_glob(
-                path,
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open_glob(path, options, &mut err) });
 
         // error message differs between Linux and Windows
         assert_err_contains(err, c"bogus");
@@ -797,14 +699,7 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(paths.as_ptr(), paths.len(), options, &mut err) });
 
         assert_err_null(err);
         assert!(!h.ptr.is_null());
@@ -813,7 +708,9 @@ mod test {
         assert_eq_test_data_no_hashing(&handle, &IMAGE_E01);
 
         let handle = Box::into_raw(handle);
-        unsafe { e01_close(handle); }
+        unsafe {
+            e01_close(handle);
+        }
     }
 
     #[test]
@@ -826,12 +723,7 @@ mod test {
         let options = &ERROR_OPTS;
 
         let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                std::ptr::null_mut()
-            )
+            e01_open(paths.as_ptr(), paths.len(), options, std::ptr::null_mut())
         });
 
         assert!(!h.ptr.is_null());
@@ -840,33 +732,22 @@ mod test {
         assert_eq_test_data_no_hashing(&handle, &IMAGE_E01);
 
         let handle = Box::into_raw(handle);
-        unsafe { e01_close(handle); }
+        unsafe {
+            e01_close(handle);
+        }
     }
 
     #[test]
     fn test_e01_open_two_segments() {
         #[cfg(unix)]
-        let paths = [
-            c"data/mimage.E01".as_ptr(),
-            c"data/mimage.E02".as_ptr()
-        ];
+        let paths = [c"data/mimage.E01".as_ptr(), c"data/mimage.E02".as_ptr()];
         #[cfg(windows)]
-        let paths = [
-            c"data\\mimage.E01".as_ptr(),
-            c"data\\mimage.E02".as_ptr()
-        ];
+        let paths = [c"data\\mimage.E01".as_ptr(), c"data\\mimage.E02".as_ptr()];
 
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(paths.as_ptr(), paths.len(), options, &mut err) });
 
         assert_err_null(err);
         assert!(!h.ptr.is_null());
@@ -875,31 +756,22 @@ mod test {
         assert_eq_test_data_no_hashing(&handle, &MIMAGE_E01);
 
         let handle = Box::into_raw(handle);
-        unsafe { e01_close(handle); }
+        unsafe {
+            e01_close(handle);
+        }
     }
 
     #[test]
     fn test_e01_open_two_segments_null_err() {
         #[cfg(unix)]
-        let paths = [
-            c"data/mimage.E01".as_ptr(),
-            c"data/mimage.E02".as_ptr()
-        ];
+        let paths = [c"data/mimage.E01".as_ptr(), c"data/mimage.E02".as_ptr()];
         #[cfg(windows)]
-        let paths = [
-            c"data\\mimage.E01".as_ptr(),
-            c"data\\mimage.E02".as_ptr()
-        ];
+        let paths = [c"data\\mimage.E01".as_ptr(), c"data\\mimage.E02".as_ptr()];
 
         let options = &ERROR_OPTS;
 
         let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                std::ptr::null_mut()
-            )
+            e01_open(paths.as_ptr(), paths.len(), options, std::ptr::null_mut())
         });
 
         assert!(!h.ptr.is_null());
@@ -908,7 +780,9 @@ mod test {
         assert_eq_test_data_no_hashing(&handle, &MIMAGE_E01);
 
         let handle = Box::into_raw(handle);
-        unsafe { e01_close(handle); }
+        unsafe {
+            e01_close(handle);
+        }
     }
 
     #[test]
@@ -927,7 +801,7 @@ mod test {
                 0,
                 buf.as_mut_ptr(),
                 buf.len(),
-                std::ptr::null_mut()
+                std::ptr::null_mut(),
             )
         };
 
@@ -944,25 +818,12 @@ mod test {
         let options = &ERROR_OPTS;
 
         let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                std::ptr::null_mut()
-            )
+            e01_open(paths.as_ptr(), paths.len(), options, std::ptr::null_mut())
         });
 
         assert!(!h.ptr.is_null());
 
-        let r = unsafe {
-            e01_read(
-                h.ptr,
-                0,
-                std::ptr::null_mut(),
-                1,
-                std::ptr::null_mut()
-            )
-        };
+        let r = unsafe { e01_read(h.ptr, 0, std::ptr::null_mut(), 1, std::ptr::null_mut()) };
 
         assert_eq!(r, 0);
     }
@@ -978,7 +839,7 @@ mod test {
                 0,
                 buf.as_mut_ptr(),
                 buf.len(),
-                &mut err
+                &mut err,
             )
         };
 
@@ -996,27 +857,12 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(paths.as_ptr(), paths.len(), options, &mut err) });
 
         assert_err_null(err);
         assert!(!h.ptr.is_null());
 
-        let r = unsafe {
-            e01_read(
-                h.ptr,
-                0,
-                std::ptr::null_mut(),
-                1,
-                &mut err
-            )
-        };
+        let r = unsafe { e01_read(h.ptr, 0, std::ptr::null_mut(), 1, &mut err) };
 
         assert_err(err, c"buf is null");
         assert_eq!(r, 0);
@@ -1032,33 +878,18 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(paths.as_ptr(), paths.len(), options, &mut err) });
 
         assert_err_null(err);
         assert!(!h.ptr.is_null());
 
         let mut buf: [c_char; 1] = [0];
 
-        let r = unsafe {
-            e01_read(
-                h.ptr,
-                u64::MAX,
-                buf.as_mut_ptr(),
-                buf.len(),
-                &mut err
-            )
-        };
+        let r = unsafe { e01_read(h.ptr, u64::MAX, buf.as_mut_ptr(), buf.len(), &mut err) };
 
         assert_err_starts_with(
             err,
-            c"Requested offset 18446744073709551615 is beyond end of image"
+            c"Requested offset 18446744073709551615 is beyond end of image",
         );
         assert_eq!(r, 0);
     }
@@ -1073,29 +904,14 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(paths.as_ptr(), paths.len(), options, &mut err) });
 
         assert_err_null(err);
         assert!(!h.ptr.is_null());
 
         let mut buf: [c_char; 1] = [0];
 
-        let r = unsafe {
-            e01_read(
-                h.ptr,
-                0,
-                buf.as_mut_ptr(),
-                buf.len(),
-                &mut err
-            )
-        };
+        let r = unsafe { e01_read(h.ptr, 0, buf.as_mut_ptr(), buf.len(), &mut err) };
 
         let handle = h.into_box();
 
@@ -1113,14 +929,7 @@ mod test {
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
 
-        let h = Holder::new(unsafe {
-            e01_open(
-                paths.as_ptr(),
-                paths.len(),
-                options,
-                &mut err
-            )
-        });
+        let h = Holder::new(unsafe { e01_open(paths.as_ptr(), paths.len(), options, &mut err) });
 
         assert_err_null(err);
         assert!(!h.ptr.is_null());
@@ -1129,6 +938,8 @@ mod test {
         assert_eq_test_data(&mut *handle, &IMAGE_E01);
 
         let handle = Box::into_raw(handle);
-        unsafe { e01_close(handle); }
+        unsafe {
+            e01_close(handle);
+        }
     }
 }

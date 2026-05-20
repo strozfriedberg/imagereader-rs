@@ -1,6 +1,6 @@
+use crate::error::{IoError, LibError};
 use crate::generated::ewf_file_header_v1::EwfFileHeaderV1;
 use crate::generated::ewf_file_header_v2::EwfFileHeaderV2;
-use crate::error::{IoError, LibError};
 
 use kaitai::{BytesReader, KStream, KStruct};
 use std::convert::TryFrom;
@@ -20,7 +20,7 @@ impl TryFrom<u16> for CompressionMethod {
             x if x == Self::None as u16 => Ok(Self::None),
             x if x == Self::Deflate as u16 => Ok(Self::Deflate),
             x if x == Self::Bzip as u16 => Ok(Self::Bzip),
-            _ => Err(LibError::UnknownCompressionMethod(v))
+            _ => Err(LibError::UnknownCompressionMethod(v)),
         }
     }
 }
@@ -33,10 +33,7 @@ pub struct SegmentFileHeader {
     segment_number: u16,
 }
 
-fn try_ewf_file_header_v1(
-    io: &BytesReader
-) -> Result<SegmentFileHeader, LibError>
-{
+fn try_ewf_file_header_v1(io: &BytesReader) -> Result<SegmentFileHeader, LibError> {
     match EwfFileHeaderV1::read_into::<_, EwfFileHeaderV1>(io, None, None) {
         Ok(h) => Ok(SegmentFileHeader {
             major_version: 1,
@@ -44,14 +41,11 @@ fn try_ewf_file_header_v1(
             compr_method: CompressionMethod::Deflate,
             segment_number: *h.segment_number(),
         }),
-        Err(e) => Err(LibError::DeserializationFailed("EwfFileHeaderV1", e))
+        Err(e) => Err(LibError::DeserializationFailed("EwfFileHeaderV1", e)),
     }
 }
 
-fn try_ewf_file_header_v2(
-    io: &BytesReader
-) -> Result<SegmentFileHeader, LibError>
-{
+fn try_ewf_file_header_v2(io: &BytesReader) -> Result<SegmentFileHeader, LibError> {
     match EwfFileHeaderV2::read_into::<_, EwfFileHeaderV2>(io, None, None) {
         Ok(h) => Ok(SegmentFileHeader {
             major_version: *h.major_version(),
@@ -59,7 +53,7 @@ fn try_ewf_file_header_v2(
             compr_method: (*h.compression_method()).try_into()?,
             segment_number: *h.segment_number(),
         }),
-        Err(e) => Err(LibError::DeserializationFailed("EwfFileHeaderV2", e))
+        Err(e) => Err(LibError::DeserializationFailed("EwfFileHeaderV2", e)),
     }
 }
 
@@ -74,9 +68,7 @@ const LEF2_SIGNATURE: &[u8] = &[0x4c, 0x45, 0x46, 0x32, 0x0d, 0x0a, 0x81, 0x00];
 
 impl SegmentFileHeader {
     pub fn new(io: &BytesReader) -> Result<Self, LibError> {
-        let first_bytes = io
-            .read_bytes(8)
-            .map_err(IoError::Read)?;
+        let first_bytes = io.read_bytes(8).map_err(IoError::Read)?;
 
         io.seek(0).map_err(|e| IoError::Seek(0, e))?;
 
@@ -84,7 +76,7 @@ impl SegmentFileHeader {
         match first_bytes.as_slice() {
             EWF_SIGNATURE | EWF_L01_SIGNATURE => try_ewf_file_header_v1(io),
             EVF2_SIGNATURE | LEF2_SIGNATURE => try_ewf_file_header_v2(io),
-            _ => Err(LibError::InvalidSegmentFileHeader)
+            _ => Err(LibError::InvalidSegmentFileHeader),
         }
     }
 }

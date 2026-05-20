@@ -8,16 +8,16 @@ use std::{
     str::FromStr,
     sync::{
         Arc,
-        mpsc::{self, Receiver, SyncSender}
+        mpsc::{self, Receiver, SyncSender},
     },
-    thread::JoinHandle
+    thread::JoinHandle,
 };
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum HashType {
     MD5,
     SHA1,
-    SHA256
+    SHA256,
 }
 
 impl HashType {
@@ -25,7 +25,7 @@ impl HashType {
         match self {
             HashType::MD5 => Box::new(Md5::new()),
             HashType::SHA1 => Box::new(Sha1::new()),
-            HashType::SHA256 => Box::new(Sha256::new())
+            HashType::SHA256 => Box::new(Sha256::new()),
         }
     }
 }
@@ -35,7 +35,7 @@ impl fmt::Display for HashType {
         match self {
             HashType::MD5 => write!(f, "MD5"),
             HashType::SHA1 => write!(f, "SHA1"),
-            HashType::SHA256 => write!(f, "SHA256")
+            HashType::SHA256 => write!(f, "SHA256"),
         }
     }
 }
@@ -52,7 +52,7 @@ impl FromStr for HashType {
             "MD5" => Ok(HashType::MD5),
             "SHA1" => Ok(HashType::SHA1),
             "SHA256" => Ok(HashType::SHA256),
-            _ => Err(HashTypeError)
+            _ => Err(HashTypeError),
         }
     }
 }
@@ -62,18 +62,14 @@ pub struct MultiHasher {
         HashType,
         SyncSender<(usize, Arc<Vec<u8>>)>,
         Receiver<Arc<Vec<u8>>>,
-        JoinHandle<Box<[u8]>>
-    )>
+        JoinHandle<Box<[u8]>>,
+    )>,
 }
 
 impl MultiHasher {
-
-    pub fn new<T>(
-        htypes: T,
-        buf: Vec<u8>
-    ) -> Self
+    pub fn new<T>(htypes: T, buf: Vec<u8>) -> Self
     where
-        T: IntoIterator<Item = HashType>
+        T: IntoIterator<Item = HashType>,
     {
         let buf = Arc::new(buf);
 
@@ -85,7 +81,8 @@ impl MultiHasher {
                 let (empty_tx, empty_rx) = mpsc::sync_channel::<Arc<Vec<u8>>>(1);
 
                 // prime the empty channel with a buffer
-                empty_tx.send(buf.clone())
+                empty_tx
+                    .send(buf.clone())
                     .expect("channel cannot be closed");
 
                 (
@@ -106,7 +103,7 @@ impl MultiHasher {
 
                         // done, return the hash
                         h.finalize()
-                    })
+                    }),
                 )
             })
             .collect::<Vec<_>>();
@@ -114,57 +111,51 @@ impl MultiHasher {
         Self { handles }
     }
 
-    pub fn update(
-        &self,
-        buf: Vec<u8>,
-        len: usize
-    ) -> Vec<u8>
-    {
+    pub fn update(&self, buf: Vec<u8>, len: usize) -> Vec<u8> {
         if self.handles.is_empty() {
             buf
-        }
-        else {
+        } else {
             // send the full buffer to the hashers
             {
                 let buf = Arc::new(buf);
-                self.handles
-                    .iter()
-                    .for_each(|(_, full_tx, _, _)| {
-                        full_tx.send((len, buf.clone()))
-                            .expect("worker cannot have disconnected");
-                    });
+                self.handles.iter().for_each(|(_, full_tx, _, _)| {
+                    full_tx
+                        .send((len, buf.clone()))
+                        .expect("worker cannot have disconnected");
+                });
             }
 
             // return the empty buffer to the caller
             Arc::into_inner(
                 self.handles
                     .iter()
-                    .map(|(_, _, empty_rx, _)| empty_rx.recv()
-                        .expect("worker cannot fail to return the buffer")
-                    )
+                    .map(|(_, _, empty_rx, _)| {
+                        empty_rx
+                            .recv()
+                            .expect("worker cannot fail to return the buffer")
+                    })
                     // leave one ref to buffer, drop the rest
                     .reduce(|_, b| b)
-                    .expect("handles is not empty")
+                    .expect("handles is not empty"),
             )
             .expect("we are the only owner of the buffer")
         }
     }
 
-    pub fn finalize(
-        self
-    ) -> HashMap<HashType, Box<[u8]>>
-    {
+    pub fn finalize(self) -> HashMap<HashType, Box<[u8]>> {
         self.handles
             .into_iter()
             // drop the channels to let the workers progress
             .map(|(t, _, _, h)| (t, h))
             // wait for the workers to finish
-            .map(|(t, h)| (
-                t,
-                h.join()
-                    // propagate thread panics
-                    .unwrap_or_else(|e| std::panic::resume_unwind(e))
-            ))
+            .map(|(t, h)| {
+                (
+                    t,
+                    h.join()
+                        // propagate thread panics
+                        .unwrap_or_else(|e| std::panic::resume_unwind(e)),
+                )
+            })
             .collect::<HashMap<_, _>>()
     }
 }
@@ -176,11 +167,11 @@ mod test {
     use hex::{self, FromHex};
 
     fn md5(s: &str) -> (HashType, Box<[u8]>) {
-       (HashType::MD5, <[u8; 16]>::from_hex(s).unwrap().into())
+        (HashType::MD5, <[u8; 16]>::from_hex(s).unwrap().into())
     }
 
     fn sha1(s: &str) -> (HashType, Box<[u8]>) {
-       (HashType::SHA1, <[u8; 20]>::from_hex(s).unwrap().into())
+        (HashType::SHA1, <[u8; 20]>::from_hex(s).unwrap().into())
     }
 
     fn sha256(s: &str) -> (HashType, Box<[u8]>) {
@@ -189,18 +180,14 @@ mod test {
 
     #[test]
     fn test_hash_nothing() {
-        let htypes = [
-            HashType::MD5,
-            HashType::SHA1,
-            HashType::SHA256
-        ];
+        let htypes = [HashType::MD5, HashType::SHA1, HashType::SHA256];
 
         let hasher = MultiHasher::new(htypes, vec![0; 0]);
 
         let exp = HashMap::from([
             md5("d41d8cd98f00b204e9800998ecf8427e"),
             sha1("da39a3ee5e6b4b0d3255bfef95601890afd80709"),
-            sha256("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+            sha256("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
         ]);
 
         assert_eq!(hasher.finalize(), exp);
@@ -208,11 +195,7 @@ mod test {
 
     #[test]
     fn test_hash_something() {
-        let htypes = [
-            HashType::MD5,
-            HashType::SHA1,
-            HashType::SHA256
-        ];
+        let htypes = [HashType::MD5, HashType::SHA1, HashType::SHA256];
 
         let hasher = MultiHasher::new(htypes, vec![0; 0]);
 
@@ -224,7 +207,7 @@ mod test {
         let exp = HashMap::from([
             md5("437b930db84b8079c2dd804a71936b5f"),
             sha1("1af17e73721dbe0c40011b82ed4bb1a7dbe3ce29"),
-            sha256("3fc9b689459d738f8c88a3a48aa9e33542016b7a4052e001aaa536fca74813cb")
+            sha256("3fc9b689459d738f8c88a3a48aa9e33542016b7a4052e001aaa536fca74813cb"),
         ]);
 
         assert_eq!(hasher.finalize(), exp);
@@ -232,11 +215,7 @@ mod test {
 
     #[test]
     fn test_hash_some_thing() {
-        let htypes = [
-            HashType::MD5,
-            HashType::SHA1,
-            HashType::SHA256
-        ];
+        let htypes = [HashType::MD5, HashType::SHA1, HashType::SHA256];
 
         let hasher = MultiHasher::new(htypes, vec![0; 8]);
 
@@ -255,7 +234,7 @@ mod test {
         let exp = HashMap::from([
             md5("437b930db84b8079c2dd804a71936b5f"),
             sha1("1af17e73721dbe0c40011b82ed4bb1a7dbe3ce29"),
-            sha256("3fc9b689459d738f8c88a3a48aa9e33542016b7a4052e001aaa536fca74813cb")
+            sha256("3fc9b689459d738f8c88a3a48aa9e33542016b7a4052e001aaa536fca74813cb"),
         ]);
 
         assert_eq!(hasher.finalize(), exp);
