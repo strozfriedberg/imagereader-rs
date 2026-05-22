@@ -12,7 +12,6 @@ pub struct ReadWorker {
     chunk_size: usize,
     image_end: u64,
     corrupt_chunk_policy: CorruptChunkPolicy,
-    scratch: Vec<u8>,
     decoder: ZlibDecoder<Cursor<Vec<u8>>>,
 }
 
@@ -32,7 +31,6 @@ impl ReadWorker {
             chunk_size,
             image_end,
             corrupt_chunk_policy,
-            scratch: vec![0; chunk_size],
             decoder: ZlibDecoder::new(Cursor::new(vec![0; chunk_size + 4])),
         }
     }
@@ -59,30 +57,11 @@ impl ReadWorker {
         r
     }
 
-    fn read_compressed_decompress(
+    fn read_compressed_decompress_full(
         &mut self,
         chunk_index: usize,
-        _chunk_len: usize,
-        buf: &mut [u8],
-        beg_in_chunk: usize,
-        end_in_chunk: usize,
+        out: &mut [u8],
     ) -> Result<(), ReadErrorKind> {
-        // Every chunk contains the same amount of data except for the last
-        // one; decompress directly into the buffer if there is sufficient
-        // space.
-
-        let (out, use_scratch) = if buf.len() == self.chunk_size
-            || (buf.len() < self.chunk_size
-                && (chunk_index * self.chunk_size) as u64 > self.image_end)
-        {
-            // decompress directly into output buffer
-            (&mut buf[..], false)
-        } else {
-            // decompress into scratch buffer
-            (&mut self.scratch[..buf.len()], true)
-        };
-
-        // compressed chunks are either ok or unrecoverable
         if let Err(e) = self.decoder.read_exact(out) {
             error!("decompression failed for chunk {}: {}", chunk_index, e);
             match self.corrupt_chunk_policy {
@@ -94,12 +73,6 @@ impl ReadWorker {
                     out.fill(0);
                 }
             }
-        }
-
-        // copy requested portion of scratch into user buffer
-        if use_scratch {
-            let out = &self.scratch[..];
-            buf.copy_from_slice(&out[beg_in_chunk..end_in_chunk]);
         }
 
         Ok(())
@@ -116,8 +89,16 @@ impl ReadWorker {
         beg_in_chunk: usize,
         end_in_chunk: usize,
     ) -> Result<(), ReadErrorKind> {
+        let chunk_beg = chunk_index as u64 * self.chunk_size as u64;
+        let decoded_len = (self.image_end - chunk_beg).min(self.chunk_size as u64) as usize;
+        let mut decoded = vec![0; decoded_len];
+
         self.read_compressed_read(src, chunk_off, chunk_len)?;
-        self.read_compressed_decompress(chunk_index, chunk_len, buf, beg_in_chunk, end_in_chunk)
+        self.read_compressed_decompress_full(chunk_index, &mut decoded)?;
+
+        buf.copy_from_slice(&decoded[beg_in_chunk..end_in_chunk]);
+
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -222,7 +203,6 @@ impl ReadWorker {
 
         debug!("reading chunk {chunk_index} [{beg_in_chunk},{end_in_chunk})");
 
-        // read the data into the buffer
         if chunk.compressed {
             self.read_compressed(
                 src,
@@ -244,5 +224,57 @@ impl ReadWorker {
                 end_in_chunk,
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workersource::WorkerSource;
+    use flate2::{Compression, write::ZlibEncoder};
+    use std::io::Write;
+
+    struct VecSource {
+        data: Vec<u8>,
+    }
+
+    impl WorkerSource for VecSource {
+        fn read(&mut self, off: u64, buf: &mut [u8]) -> Result<(), std::io::Error> {
+            let off = off as usize;
+            buf.copy_from_slice(&self.data[off..off + buf.len()]);
+            Ok(())
+        }
+    }
+
+    fn compressed_chunk(data: &[u8]) -> Vec<u8> {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn compressed_partial_read_returns_requested_offset() {
+        let chunk_size = 32768;
+        let data = (0..chunk_size)
+            .map(|i| ((i / 251) ^ i) as u8)
+            .collect::<Vec<_>>();
+        let compressed = compressed_chunk(&data);
+        let chunk = Chunk {
+            segment: 0,
+            data_offset: 0,
+            end_offset: compressed.len() as u64,
+            compressed: true,
+        };
+        let mut src = VecSource {
+            data: compressed,
+        };
+        let mut worker = ReadWorker::new(chunk_size, chunk_size as u64, CorruptChunkPolicy::Error);
+        let mut out = vec![0; 4096];
+
+        worker
+            .read(&chunk, &mut src, 0, &mut out, 4096, 8192)
+            .unwrap();
+
+        assert_eq!(&out, &data[4096..8192]);
     }
 }
