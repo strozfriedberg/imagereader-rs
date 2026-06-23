@@ -2,7 +2,7 @@ use futures::future::{BoxFuture, FutureExt};
 use std::io::SeekFrom;
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncSeekExt}
+    io::{AsyncReadExt, AsyncSeekExt},
 };
 use tracing::trace;
 
@@ -11,16 +11,11 @@ use crate::bytessource::BytesSource;
 #[derive(Clone, Debug)]
 pub struct FileSource {
     pub path: String,
-    pub len: u64
+    pub len: u64,
 }
 
 impl BytesSource for FileSource {
-    fn read(
-        &self,
-        beg: u64,
-        end: u64
-    ) -> BoxFuture<'static, Result<Vec<u8>, std::io::Error>>
-    {
+    fn read(&self, beg: u64, end: u64) -> BoxFuture<'static, Result<Vec<u8>, std::io::Error>> {
         let p = self.path.clone();
 
         async move {
@@ -30,7 +25,8 @@ impl BytesSource for FileSource {
             r.read_exact(&mut buf[..]).await?;
             trace!("read [{beg},{end}) from File");
             Ok(buf)
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn end(&self) -> u64 {

@@ -1,14 +1,10 @@
-use s3::{
-    bucket::Bucket,
-    creds::Credentials,
-    region::Region
-};
+use s3::{bucket::Bucket, creds::Credentials, region::Region};
 use std::{
     collections::BTreeMap,
     fmt::Debug,
     io::{self, Seek, SeekFrom},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex}
+    sync::{Arc, Mutex},
 };
 use tokio::runtime::Runtime;
 use tracing::debug;
@@ -21,14 +17,14 @@ use crate::{
     descriptor::{extract_parent_fn_hint, read_descriptor_file, read_descriptor_internal},
     dummycache::DummyCache,
     errors::{DescriptorError, InitError, OpenError, OpenErrorKind},
-    extents::{Extent, read_extents},
     extent_description::extract_extent_descriptions,
-    foyercache::FoyerCache,
+    extents::{Extent, read_extents},
     filesource::FileSource,
-    header::{check_signature, FileType, Vmdk4Header},
+    foyercache::FoyerCache,
+    header::{FileType, Vmdk4Header, check_signature},
     s3source::S3Source,
     spans::{insert_span, remove_span},
-    storage::ExtentStorage
+    storage::ExtentStorage,
 };
 
 const SECTOR_SIZE: u64 = 512;
@@ -40,7 +36,7 @@ pub struct VmdkReader {
     spans: Vec<(u64, (u64, usize))>,
     extents: Vec<Extent>,
     cache: Arc<Mutex<dyn Cache + Send>>,
-    runtime: Arc<Runtime>
+    runtime: Arc<Runtime>,
 }
 
 impl Debug for VmdkReader {
@@ -60,7 +56,7 @@ pub enum ReadError {
     #[error("Offset {0} not found")]
     OffsetNotFound(u64),
     #[error("{0}")]
-    IoError(#[from] io::Error)
+    IoError(#[from] io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -68,7 +64,7 @@ pub enum VmdkError {
     #[error("{0}")]
     OpenError(#[from] OpenError),
     #[error("{0}")]
-    ReadError(#[from] ReadError)
+    ReadError(#[from] ReadError),
 }
 
 fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
@@ -78,27 +74,25 @@ fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
             .canonicalize()
             .map(Url::from_file_path)
             .map_err(|_| ())
-// FIXME: use flatten after Rust 1.89
-//            .flatten()
+            // FIXME: use flatten after Rust 1.89
+            //            .flatten()
             .and_then(|r| r)
             .ok(),
-        r => r.ok()
+        r => r.ok(),
     }
 }
 
 pub fn source_for_url(
     url: &Url,
-    runtime: &Runtime
-) -> Result<Box<dyn BytesSource + Send>, OpenError>
-{
+    runtime: &Runtime,
+) -> Result<Box<dyn BytesSource + Send>, OpenError> {
     match url.scheme() {
         "file" => {
             let p = if cfg!(windows) {
                 // Windows file URLs get a spare / before the drive letter,
                 // which we have to remove when using it as a path.
                 url.path().trim_start_matches('/')
-            }
-            else {
+            } else {
                 url.path()
             };
 
@@ -106,24 +100,25 @@ pub fn source_for_url(
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(p))?
                 .len();
-            Ok(Box::new(FileSource { path: p.into(), len }))
-        },
+            Ok(Box::new(FileSource {
+                path: p.into(),
+                len,
+            }))
+        }
         "s3" => {
-            let name = url.host_str()
+            let name = url
+                .host_str()
                 .ok_or(OpenErrorKind::BadPath(url.to_string()))?;
 
-            let bucket = *Bucket::new(
-                name,
-                Region::UsEast1,
-                Credentials::anonymous().unwrap()
-            )
-            .map_err(std::io::Error::other)
-            .map_err(OpenError::from)
-            .map_err(|e| e.with_path(url))?;
+            let bucket = *Bucket::new(name, Region::UsEast1, Credentials::anonymous().unwrap())
+                .map_err(std::io::Error::other)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(url))?;
 
             let key = url.path();
 
-            let (h, code) = runtime.block_on(bucket.head_object(key))
+            let (h, code) = runtime
+                .block_on(bucket.head_object(key))
                 .map_err(std::io::Error::other)
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(url))?;
@@ -133,8 +128,8 @@ pub fn source_for_url(
             debug!("content-length: {len}");
 
             Ok(Box::new(S3Source::new(bucket, key.into(), len)))
-        },
-        _ => Err(OpenErrorKind::UnsupportedScheme(url.to_string()).into())
+        }
+        _ => Err(OpenErrorKind::UnsupportedScheme(url.to_string()).into()),
     }
 }
 
@@ -142,20 +137,14 @@ fn handle_image(
     current_url: &Url,
     mut idx: usize,
     cache: Arc<Mutex<dyn Cache + Send>>,
-    runtime: Arc<Runtime>
-) -> Result<(Vec<Extent>, Option<Url>), OpenError>
-{
+    runtime: Arc<Runtime>,
+) -> Result<(Vec<Extent>, Option<Url>), OpenError> {
     let src = source_for_url(current_url, &runtime)?;
     let seg_len = src.end();
 
     cache.lock().expect("poisoned").add_source(idx, src);
 
-    let mut crs = CacheReadSeek::new(
-        cache.clone(),
-        runtime.clone(),
-        idx,
-        seg_len
-    );
+    let mut crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, seg_len);
 
     idx += 1;
 
@@ -176,18 +165,17 @@ fn handle_image(
 
             if h.desc_offset > 0 {
                 read_descriptor_internal(&mut crs, h.desc_offset)?
-            }
-            else {
+            } else {
                 "".into()
             }
-        },
+        }
         // this is a descriptor file
         None => {
             crs.seek(SeekFrom::Start(0))?;
             read_descriptor_file(&mut crs)?
-        },
+        }
         // this is bogus
-        _ => return Err(DescriptorError::ParseExtentDescriptionError.into())
+        _ => return Err(DescriptorError::ParseExtentDescriptionError.into()),
     };
 
     // get the extent descriptions
@@ -203,48 +191,42 @@ fn handle_image(
         is_bin_and_singular,
         cache.clone(),
         runtime.clone(),
-        idx
+        idx,
     )?;
 
     // find the parent image, if any
     let parent_url = extract_parent_fn_hint(&descriptor)
-        .map(|p| current_url.join(&p)
-            .map_err(|_| OpenErrorKind::BadPath(p))
-        )
+        .map(|p| current_url.join(&p).map_err(|_| OpenErrorKind::BadPath(p)))
         .transpose()?;
 
     Ok((extents, parent_url))
 }
 
 impl VmdkReader {
-    pub fn open<T: AsRef<str>>(
-        image_path: T
-    ) -> Result<Self, OpenError>
-    {
+    pub fn open<T: AsRef<str>>(image_path: T) -> Result<Self, OpenError> {
         let mut current_url = path_or_url_to_url(&image_path)
             .ok_or(OpenErrorKind::BadPath(image_path.as_ref().into()))?;
 
         let runtime = Arc::new(
             tokio::runtime::Runtime::new()
                 .map_err(InitError::TokioRuntimeFailed)
-                .map_err(OpenErrorKind::from)?
+                .map_err(OpenErrorKind::from)?,
         );
 
-//        let c = DummyCache::new();
+        //        let c = DummyCache::new();
 
         let cache_chunk_size = 1024 * 1024;
         let cache_mem_size = 256;
         let cache_disk_size = if current_url.scheme() == "s3" { 256 } else { 0 };
-        let c = runtime.block_on(
-            FoyerCache::with_default_cache(
+        let c = runtime
+            .block_on(FoyerCache::with_default_cache(
                 cache_chunk_size,
                 cache_mem_size,
                 cache_disk_size,
-                0
-            )
-        )
-        .map_err(InitError::CacheSetupFailed)
-        .map_err(OpenErrorKind::from)?;
+                0,
+            ))
+            .map_err(InitError::CacheSetupFailed)
+            .map_err(OpenErrorKind::from)?;
 
         let cache = Arc::new(Mutex::new(c));
 
@@ -255,30 +237,24 @@ impl VmdkReader {
         let mut image_size = None;
 
         let image_size = 'img_loop: loop {
-            let (img_extents, parent_url) = handle_image(
-                &current_url,
-                idx,
-                cache.clone(),
-                runtime.clone()
-            )?;
+            let (img_extents, parent_url) =
+                handle_image(&current_url, idx, cache.clone(), runtime.clone())?;
 
             idx += 1;
 
             // size for all images must match
-            let size = img_extents.iter()
-                .fold(0, |acc, i| acc + i.sectors) * SECTOR_SIZE;
+            let size = img_extents.iter().fold(0, |acc, i| acc + i.sectors) * SECTOR_SIZE;
 
             if image_size.is_none() {
                 image_size = Some(size);
                 let sec_end = size.div_ceil(SECTOR_SIZE);
                 uncovered.insert(0, sec_end);
-            }
-            else if let Some(s) = image_size && s != size {
+            } else if let Some(s) = image_size
+                && s != size
+            {
                 return Err(OpenError {
                     path: current_url.as_ref().into(),
-                    kind: OpenErrorKind::BadParentExtentDescriptorSize(
-                        s, size
-                    )
+                    kind: OpenErrorKind::BadParentExtentDescriptorSize(s, size),
                 });
             }
 
@@ -302,7 +278,9 @@ impl VmdkReader {
             }
 
             // keep going if we are not at the end of the image chain
-            let Some(parent_url) = parent_url else { break 'img_loop size; };
+            let Some(parent_url) = parent_url else {
+                break 'img_loop size;
+            };
             current_url = parent_url;
         };
 
@@ -313,7 +291,7 @@ impl VmdkReader {
             let ex = Extent {
                 start_sector: lb,
                 sectors: ub - lb,
-                storage: ExtentStorage::Zero
+                storage: ExtentStorage::Zero,
             };
 
             insert_span(lb, ub, extents.len(), &mut spans);
@@ -322,7 +300,8 @@ impl VmdkReader {
         }
 
         // spans are in bytes from here onward
-        let spans = spans.into_iter()
+        let spans = spans
+            .into_iter()
             .map(|(lb, (ub, i))| (lb * SECTOR_SIZE, (ub * SECTOR_SIZE, i)))
             .collect::<Vec<_>>();
 
@@ -332,16 +311,15 @@ impl VmdkReader {
             spans,
             extents,
             cache,
-            runtime
+            runtime,
         })
     }
 
     pub fn read_at_offset(
         &mut self,
         mut offset: u64,
-        mut buf: &mut [u8]
-    ) -> Result<usize, ReadError>
-    {
+        mut buf: &mut [u8],
+    ) -> Result<usize, ReadError> {
         let beg = offset;
 
         // don't start reading past the end
@@ -362,7 +340,7 @@ impl VmdkReader {
             // 0 is impossible as an insertion point because
             // there must be a span staring at 0
             Err(0) => unreachable!(),
-            Err(i) => i - 1
+            Err(i) => i - 1,
         };
 
         while offset < end {
@@ -387,5 +365,4 @@ impl VmdkReader {
 }
 
 #[cfg(test)]
-mod test {
-}
+mod test {}

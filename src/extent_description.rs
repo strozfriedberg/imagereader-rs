@@ -4,7 +4,7 @@ use std::str::FromStr;
 pub enum AccessMode {
     NoAccess,
     RdOnly,
-    Rw
+    Rw,
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -20,7 +20,7 @@ impl FromStr for AccessMode {
             "NOACCESS" => Ok(Self::NoAccess),
             "RDONLY" => Ok(Self::RdOnly),
             "RW" => Ok(Self::Rw),
-            _ => Err(ParseAccessModeError)
+            _ => Err(ParseAccessModeError),
         }
     }
 }
@@ -34,7 +34,7 @@ pub enum ExtentKind {
     VmfsSparse,
     VmfsRdm,
     VmfsRaw,
-    Zero
+    Zero,
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -55,7 +55,7 @@ impl FromStr for ExtentKind {
             "VMFSRDM" => Ok(Self::VmfsRdm),
             "VMFSSPARSE" => Ok(Self::VmfsSparse),
             "ZERO" => Ok(Self::Zero),
-            _ => Err(ParseExtentKindError)
+            _ => Err(ParseExtentKindError),
         }
     }
 }
@@ -66,7 +66,7 @@ struct ExtentDescriptionLine {
     sectors: u64,
     kind: ExtentKind,
     filename: Option<String>,
-    offset: Option<u64>
+    offset: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -81,31 +81,38 @@ impl FromStr for ExtentDescriptionLine {
         let s = s.trim();
 
         // read the access mode
-        let (tok, s) = s.trim_start().split_once(' ')
+        let (tok, s) = s
+            .trim_start()
+            .split_once(' ')
             .ok_or(ParseExtentDescriptionError)?;
-        let access_mode = tok.parse::<AccessMode>()
+        let access_mode = tok
+            .parse::<AccessMode>()
             .or(Err(ParseExtentDescriptionError))?;
 
         // read the sector count
-        let (tok, s) = s.trim_start().split_once(' ')
+        let (tok, s) = s
+            .trim_start()
+            .split_once(' ')
             .ok_or(ParseExtentDescriptionError)?;
-        let sectors = tok.parse::<u64>()
-            .or(Err(ParseExtentDescriptionError))?;
+        let sectors = tok.parse::<u64>().or(Err(ParseExtentDescriptionError))?;
 
         // read the extent kind
-        let (tok, s) = s.trim_start().split_once(' ')
+        let (tok, s) = s
+            .trim_start()
+            .split_once(' ')
             .ok_or(ParseExtentDescriptionError)?;
-        let kind = tok.parse::<ExtentKind>()
+        let kind = tok
+            .parse::<ExtentKind>()
             .or(Err(ParseExtentDescriptionError))?;
 
         // read the optional filename and offset
         let s = s.trim_start();
         let (filename, offset) = if s.is_empty() {
             (None, None)
-        }
-        else {
+        } else {
             // read the filename
-            let (tok, s) = s.strip_prefix('"')
+            let (tok, s) = s
+                .strip_prefix('"')
                 .ok_or(ParseExtentDescriptionError)?
                 .rsplit_once('"')
                 .ok_or(ParseExtentDescriptionError)?;
@@ -115,50 +122,32 @@ impl FromStr for ExtentDescriptionLine {
             let s = s.trim_start();
             let offset = match s.is_empty() {
                 true => None,
-                false => Some(s.parse::<u64>()
-                    .or(Err(ParseExtentDescriptionError))?)
+                false => Some(s.parse::<u64>().or(Err(ParseExtentDescriptionError))?),
             };
 
             (filename, offset)
         };
 
-        Ok(
-            ExtentDescriptionLine {
-                access_mode,
-                sectors,
-                kind,
-                filename,
-                offset
-            }
-        )
+        Ok(ExtentDescriptionLine {
+            access_mode,
+            sectors,
+            kind,
+            filename,
+            offset,
+        })
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ExtentDescriptionInner {
-    Flat {
-        filename: String,
-        offset: u64
-    },
-    SeSparse {
-        filename: String
-    },
-    Sparse {
-        filename: String
-    },
-    Vmfs {
-        filename: String
-    },
-    VmfsRaw {
-        filename: String
-    },
-    VmfsRdm {
-        filename: String
-    },
-    VmfsSparse {
-        filename: String
-    },
-    Zero
+    Flat { filename: String, offset: u64 },
+    SeSparse { filename: String },
+    Sparse { filename: String },
+    Vmfs { filename: String },
+    VmfsRaw { filename: String },
+    VmfsRdm { filename: String },
+    VmfsSparse { filename: String },
+    Zero,
 }
 
 impl From<&ExtentDescriptionInner> for ExtentKind {
@@ -171,7 +160,7 @@ impl From<&ExtentDescriptionInner> for ExtentKind {
             ExtentDescriptionInner::VmfsRaw { .. } => ExtentKind::VmfsRaw,
             ExtentDescriptionInner::VmfsRdm { .. } => ExtentKind::VmfsRdm,
             ExtentDescriptionInner::VmfsSparse { .. } => ExtentKind::VmfsSparse,
-            ExtentDescriptionInner::Zero => ExtentKind::Zero
+            ExtentDescriptionInner::Zero => ExtentKind::Zero,
         }
     }
 }
@@ -180,18 +169,18 @@ impl From<&ExtentDescriptionInner> for ExtentKind {
 pub struct ExtentDescription {
     pub access_mode: AccessMode,
     pub sectors: u64,
-    pub kind: ExtentDescriptionInner
+    pub kind: ExtentDescriptionInner,
 }
 
 impl ExtentDescription {
     pub fn filename(&self) -> &str {
         match &self.kind {
-            ExtentDescriptionInner::Sparse { filename } |
-            ExtentDescriptionInner::SeSparse { filename } |
-            ExtentDescriptionInner::Flat { filename, .. } |
-            ExtentDescriptionInner::Vmfs { filename } |
-            ExtentDescriptionInner::VmfsSparse { filename } => filename,
-            _ => todo!("TODO: {:?} support", self.kind)
+            ExtentDescriptionInner::Sparse { filename }
+            | ExtentDescriptionInner::SeSparse { filename }
+            | ExtentDescriptionInner::Flat { filename, .. }
+            | ExtentDescriptionInner::Vmfs { filename }
+            | ExtentDescriptionInner::VmfsSparse { filename } => filename,
+            _ => todo!("TODO: {:?} support", self.kind),
         }
     }
 }
@@ -219,17 +208,17 @@ impl TryFrom<ExtentDescriptionLine> for ExtentDescription {
                 ExtentDescriptionLine {
                     kind: ExtentKind::Sparse,
                     filename: Some(filename),
-// TODO: apparently 0 is possible here?
-//                   offset: None,
-                   offset: None | Some(0),
+                    // TODO: apparently 0 is possible here?
+                    //                   offset: None,
+                    offset: None | Some(0),
                     ..
                 } => ExtentDescriptionInner::Sparse { filename },
                 ExtentDescriptionLine {
                     kind: ExtentKind::SeSparse,
                     filename: Some(filename),
-// TODO: apparently 0 is possible here?
-//                   offset: None,
-                   offset: None | Some(0),
+                    // TODO: apparently 0 is possible here?
+                    //                   offset: None,
+                    offset: None | Some(0),
                     ..
                 } => ExtentDescriptionInner::SeSparse { filename },
                 ExtentDescriptionLine {
@@ -256,24 +245,23 @@ impl TryFrom<ExtentDescriptionLine> for ExtentDescription {
                     offset: None,
                     ..
                 } => ExtentDescriptionInner::VmfsRaw { filename },
-                _ => Err(ParseExtentDescriptionError)?
-            }
+                _ => Err(ParseExtentDescriptionError)?,
+            },
         })
     }
 }
 
 pub fn extract_extent_descriptions(
-    descriptor: &str
-) -> Result<Vec<ExtentDescription>, ParseExtentDescriptionError>
-{
+    descriptor: &str,
+) -> Result<Vec<ExtentDescription>, ParseExtentDescriptionError> {
     let mut eds = vec![];
 
     for line in descriptor.lines() {
         match line.trim_start().split_once(' ') {
             Some((a, _)) if a.parse::<AccessMode>().is_ok() => {
                 eds.push(line.parse::<ExtentDescriptionLine>()?.try_into()?);
-            },
-            _ => continue
+            }
+            _ => continue,
         }
     }
 
@@ -374,32 +362,32 @@ mod test {
         );
     }
 
-/*
-    #[test]
-    fn read_extent_description_line_zero() {
-        let ed = r#"RW 12345 ZERO"#;
-        assert_eq!(
-            ed.parse::<ExtentDescriptionLine>().unwrap(),
-            ExtentDescriptionLine {
-                sectors: 12345,
-                kind: ExtentKind::ZERO,
-                filename: "test-f001.vmdk",
-                offset: Some(0)
-            }
-        );
-    }
-*/
+    /*
+        #[test]
+        fn read_extent_description_line_zero() {
+            let ed = r#"RW 12345 ZERO"#;
+            assert_eq!(
+                ed.parse::<ExtentDescriptionLine>().unwrap(),
+                ExtentDescriptionLine {
+                    sectors: 12345,
+                    kind: ExtentKind::ZERO,
+                    filename: "test-f001.vmdk",
+                    offset: Some(0)
+                }
+            );
+        }
+    */
 
-/*
-TODO: extent description tests for:
-    ZERO,
-    VMFSRDM
-    VMFSRAW
+    /*
+    TODO: extent description tests for:
+        ZERO,
+        VMFSRDM
+        VMFSRAW
 
-TODO: What happens if the filename has a double quote in it?
-TODO: What happens if the filename has a space in it?
-TODO: extent description test for filename containing a space
-TODO: extent description test for filename containing a double quote
-TODO: can extent description filenames be single-quote delimited?
-*/
+    TODO: What happens if the filename has a double quote in it?
+    TODO: What happens if the filename has a space in it?
+    TODO: extent description test for filename containing a space
+    TODO: extent description test for filename containing a double quote
+    TODO: can extent description filenames be single-quote delimited?
+    */
 }

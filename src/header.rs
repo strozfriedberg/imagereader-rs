@@ -3,7 +3,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 use crate::{
     errors::{DeserializationError, OpenErrorKind},
-    readseek::ReadSeek
+    readseek::ReadSeek,
 };
 
 const SECTOR_SIZE: u64 = 512;
@@ -20,30 +20,28 @@ struct Vmdk3Header {
     file_sectors: u32,
     cylinders: u32,
     heads: u32,
-    sectors_per_track: u32
+    sectors_per_track: u32,
 }
 
 impl Vmdk3Header {
     fn from_reader<R: Read>(r: &mut R) -> std::io::Result<Self> {
-        Ok(
-            Self {
-                magic: {
-                    let mut m = [0; 4];
-                    r.read_exact(&mut m)?;
-                    m
-                },
-                version: r.read_u32::<LittleEndian>()?,
-                flags: r.read_u32::<LittleEndian>()?,
-                disk_sectors: r.read_u32::<LittleEndian>()?,
-                granularity: r.read_u32::<LittleEndian>()?,
-                l1dir_offset: r.read_u32::<LittleEndian>()?,
-                l1dir_size: r.read_u32::<LittleEndian>()?,
-                file_sectors: r.read_u32::<LittleEndian>()?,
-                cylinders: r.read_u32::<LittleEndian>()?,
-                heads: r.read_u32::<LittleEndian>()?,
-                sectors_per_track: r.read_u32::<LittleEndian>()?
-            }
-        )
+        Ok(Self {
+            magic: {
+                let mut m = [0; 4];
+                r.read_exact(&mut m)?;
+                m
+            },
+            version: r.read_u32::<LittleEndian>()?,
+            flags: r.read_u32::<LittleEndian>()?,
+            disk_sectors: r.read_u32::<LittleEndian>()?,
+            granularity: r.read_u32::<LittleEndian>()?,
+            l1dir_offset: r.read_u32::<LittleEndian>()?,
+            l1dir_size: r.read_u32::<LittleEndian>()?,
+            file_sectors: r.read_u32::<LittleEndian>()?,
+            cylinders: r.read_u32::<LittleEndian>()?,
+            heads: r.read_u32::<LittleEndian>()?,
+            sectors_per_track: r.read_u32::<LittleEndian>()?,
+        })
     }
 }
 
@@ -62,37 +60,35 @@ pub struct Vmdk4Header {
     grain_offset: u64,
     filler: u8,
     check_bytes: [u8; 4],
-    compress_algorithm: u16
+    compress_algorithm: u16,
 }
 
 impl Vmdk4Header {
     pub fn from_reader<R: Read>(r: &mut R) -> std::io::Result<Self> {
-        Ok(
-            Self {
-                magic: {
-                    let mut m = [0; 4];
-                    r.read_exact(&mut m)?;
-                    m
-                },
-                version: r.read_u32::<LittleEndian>()?,
-                flags: r.read_u32::<LittleEndian>()?,
-                capacity: r.read_u64::<LittleEndian>()?,
-                granularity: r.read_u64::<LittleEndian>()?,
-                desc_offset: r.read_u64::<LittleEndian>()?,
-                desc_size: r.read_u64::<LittleEndian>()?,
-                num_gtes_per_gt: r.read_u32::<LittleEndian>()?,
-                rgd_offset: r.read_u64::<LittleEndian>()?,
-                gd_offset: r.read_u64::<LittleEndian>()?,
-                grain_offset: r.read_u64::<LittleEndian>()?,
-                filler: r.read_u8()?,
-                check_bytes: {
-                    let mut cb = [0; 4];
-                    r.read_exact(&mut cb)?;
-                    cb
-                },
-                compress_algorithm: r.read_u16::<LittleEndian>()?
-            }
-        )
+        Ok(Self {
+            magic: {
+                let mut m = [0; 4];
+                r.read_exact(&mut m)?;
+                m
+            },
+            version: r.read_u32::<LittleEndian>()?,
+            flags: r.read_u32::<LittleEndian>()?,
+            capacity: r.read_u64::<LittleEndian>()?,
+            granularity: r.read_u64::<LittleEndian>()?,
+            desc_offset: r.read_u64::<LittleEndian>()?,
+            desc_size: r.read_u64::<LittleEndian>()?,
+            num_gtes_per_gt: r.read_u32::<LittleEndian>()?,
+            rgd_offset: r.read_u64::<LittleEndian>()?,
+            gd_offset: r.read_u64::<LittleEndian>()?,
+            grain_offset: r.read_u64::<LittleEndian>()?,
+            filler: r.read_u8()?,
+            check_bytes: {
+                let mut cb = [0; 4];
+                r.read_exact(&mut cb)?;
+                cb
+            },
+            compress_algorithm: r.read_u16::<LittleEndian>()?,
+        })
     }
 
     pub fn use_secondary(&self) -> bool {
@@ -108,9 +104,9 @@ impl Vmdk4Header {
 struct VmdkSeSparseConstHeader {
     magic: [u8; 8],
     version: u64,
-    capacity: u64,                  // total number of sectors
-    grain_size: u64,                // number of sectors per l2 entry
-    grain_table_size: u64,          // size of each l2 table in ???
+    capacity: u64,         // total number of sectors
+    grain_size: u64,       // number of sectors per l2 entry
+    grain_table_size: u64, // size of each l2 table in ???
     flags: u64,
     reserved1: u64,
     reserved2: u64,
@@ -122,55 +118,52 @@ struct VmdkSeSparseConstHeader {
     journal_header_size: u64,
     journal_offset: u64,
     journal_size: u64,
-    grain_dir_offset: u64,          // offset of l1 table in sectors
-    grain_dir_size: u64,            // size of l1 table in ???
-    grain_tables_offset: u64,       // l2 tables base offset in sectors
+    grain_dir_offset: u64,    // offset of l1 table in sectors
+    grain_dir_size: u64,      // size of l1 table in ???
+    grain_tables_offset: u64, // l2 tables base offset in sectors
     grain_tables_size: u64,
     free_bitmap_offset: u64,
     free_bitmap_size: u64,
     backmap_offset: u64,
     backmap_size: u64,
-    grains_offset: u64,             // grains base offset in sectors
-    grains_size: u64
-//    pad: [u8; 304]
+    grains_offset: u64, // grains base offset in sectors
+    grains_size: u64,   //    pad: [u8; 304]
 }
 
 impl VmdkSeSparseConstHeader {
     fn from_reader<R: Read>(r: &mut R) -> std::io::Result<Self> {
-        Ok(
-            Self {
-                magic: {
-                    let mut m = [0; 8];
-                    r.read_exact(&mut m)?;
-                    m
-                },
-                version: r.read_u64::<LittleEndian>()?,
-                capacity: r.read_u64::<LittleEndian>()?,
-                grain_size: r.read_u64::<LittleEndian>()?,
-                grain_table_size: r.read_u64::<LittleEndian>()?,
-                flags: r.read_u64::<LittleEndian>()?,
-                reserved1: r.read_u64::<LittleEndian>()?,
-                reserved2: r.read_u64::<LittleEndian>()?,
-                reserved3: r.read_u64::<LittleEndian>()?,
-                reserved4: r.read_u64::<LittleEndian>()?,
-                volatile_header_offset: r.read_u64::<LittleEndian>()?,
-                volatile_header_size: r.read_u64::<LittleEndian>()?,
-                journal_header_offset: r.read_u64::<LittleEndian>()?,
-                journal_header_size: r.read_u64::<LittleEndian>()?,
-                journal_offset: r.read_u64::<LittleEndian>()?,
-                journal_size: r.read_u64::<LittleEndian>()?,
-                grain_dir_offset: r.read_u64::<LittleEndian>()?,
-                grain_dir_size: r.read_u64::<LittleEndian>()?,
-                grain_tables_offset: r.read_u64::<LittleEndian>()?,
-                grain_tables_size: r.read_u64::<LittleEndian>()?,
-                free_bitmap_offset: r.read_u64::<LittleEndian>()?,
-                free_bitmap_size: r.read_u64::<LittleEndian>()?,
-                backmap_offset: r.read_u64::<LittleEndian>()?,
-                backmap_size: r.read_u64::<LittleEndian>()?,
-                grains_offset: r.read_u64::<LittleEndian>()?,
-                grains_size: r.read_u64::<LittleEndian>()?
-            }
-        )
+        Ok(Self {
+            magic: {
+                let mut m = [0; 8];
+                r.read_exact(&mut m)?;
+                m
+            },
+            version: r.read_u64::<LittleEndian>()?,
+            capacity: r.read_u64::<LittleEndian>()?,
+            grain_size: r.read_u64::<LittleEndian>()?,
+            grain_table_size: r.read_u64::<LittleEndian>()?,
+            flags: r.read_u64::<LittleEndian>()?,
+            reserved1: r.read_u64::<LittleEndian>()?,
+            reserved2: r.read_u64::<LittleEndian>()?,
+            reserved3: r.read_u64::<LittleEndian>()?,
+            reserved4: r.read_u64::<LittleEndian>()?,
+            volatile_header_offset: r.read_u64::<LittleEndian>()?,
+            volatile_header_size: r.read_u64::<LittleEndian>()?,
+            journal_header_offset: r.read_u64::<LittleEndian>()?,
+            journal_header_size: r.read_u64::<LittleEndian>()?,
+            journal_offset: r.read_u64::<LittleEndian>()?,
+            journal_size: r.read_u64::<LittleEndian>()?,
+            grain_dir_offset: r.read_u64::<LittleEndian>()?,
+            grain_dir_size: r.read_u64::<LittleEndian>()?,
+            grain_tables_offset: r.read_u64::<LittleEndian>()?,
+            grain_tables_size: r.read_u64::<LittleEndian>()?,
+            free_bitmap_offset: r.read_u64::<LittleEndian>()?,
+            free_bitmap_size: r.read_u64::<LittleEndian>()?,
+            backmap_offset: r.read_u64::<LittleEndian>()?,
+            backmap_size: r.read_u64::<LittleEndian>()?,
+            grains_offset: r.read_u64::<LittleEndian>()?,
+            grains_size: r.read_u64::<LittleEndian>()?,
+        })
     }
 }
 
@@ -178,11 +171,11 @@ impl VmdkSeSparseConstHeader {
 pub struct VmdkSparseMeta {
     pub compressed: bool,
     pub has_zero_grain: bool,
-    pub sectors: u64,        // total number of sectors
-    pub l1_offset: u64,      // offset of l1 in bytes
-    pub l1_len: u64,         // number of l1 entries
-    pub l2_len: u64,         // number of entries per l2 table
-    pub cluster_sectors: u64 // number of sectors per l2 entry
+    pub sectors: u64,         // total number of sectors
+    pub l1_offset: u64,       // offset of l1 in bytes
+    pub l1_len: u64,          // number of l1 entries
+    pub l2_len: u64,          // number of entries per l2 table
+    pub cluster_sectors: u64, // number of sectors per l2 entry
 }
 
 impl TryFrom<Vmdk3Header> for VmdkSparseMeta {
@@ -196,11 +189,10 @@ impl TryFrom<Vmdk3Header> for VmdkSparseMeta {
             l1_offset: h.l1dir_offset as u64 * SECTOR_SIZE,
             l1_len: h.l1dir_size as u64,
             l2_len: 4096,
-            cluster_sectors: h.granularity as u64
+            cluster_sectors: h.granularity as u64,
         };
 
-        if meta.l1_len * meta.l2_len *
-           meta.cluster_sectors * SECTOR_SIZE > (1 << 41) {
+        if meta.l1_len * meta.l2_len * meta.cluster_sectors * SECTOR_SIZE > (1 << 41) {
             // 2TB is the maximum supported size for VMDK3
             return Err(OpenErrorKind::InvalidFileHeader);
         }
@@ -213,10 +205,7 @@ impl TryFrom<Vmdk4Header> for VmdkSparseMeta {
     type Error = OpenErrorKind;
 
     fn try_from(h: Vmdk4Header) -> Result<Self, Self::Error> {
-        if h.version > 3 ||
-            h.num_gtes_per_gt == 0 ||
-            h.num_gtes_per_gt > 512 ||
-            h.granularity == 0
+        if h.version > 3 || h.num_gtes_per_gt == 0 || h.num_gtes_per_gt > 512 || h.granularity == 0
         {
             return Err(OpenErrorKind::InvalidFileHeader);
         }
@@ -224,8 +213,7 @@ impl TryFrom<Vmdk4Header> for VmdkSparseMeta {
         // check flags to select primary or secondary grain dir
         let l1_offset = if h.flags & 0x02 != 0 {
             h.rgd_offset
-        }
-        else {
+        } else {
             h.gd_offset
         } * SECTOR_SIZE;
 
@@ -239,11 +227,10 @@ impl TryFrom<Vmdk4Header> for VmdkSparseMeta {
             l1_offset,
             l1_len,
             l2_len: h.num_gtes_per_gt as u64,
-            cluster_sectors: h.granularity
+            cluster_sectors: h.granularity,
         };
 
-        if meta.l1_len * meta.l2_len *
-           meta.cluster_sectors * SECTOR_SIZE > (1 << 41) {
+        if meta.l1_len * meta.l2_len * meta.cluster_sectors * SECTOR_SIZE > (1 << 41) {
             // 2TB is the maximum supported size for VMDK4
             return Err(OpenErrorKind::InvalidFileHeader);
         }
@@ -254,27 +241,27 @@ impl TryFrom<Vmdk4Header> for VmdkSparseMeta {
 
 #[derive(Debug)]
 pub struct VmdkSeSparseMeta {
-    pub sectors: u64,           // total number of sectors
-    pub l1_offset: u64,         // offset of l1 in bytes
-    pub l1_len: u64,            // number of l1 entries
-    pub l2_tables_offset: u64,  // base offset of l2 tables in bytes
-    pub l2_len: u64,            // number of entries per l2 table
-    pub cluster_sectors: u64,   // number of sectors per l2 entry
-    pub clusters_offset: u64    // base offset of grains
+    pub sectors: u64,          // total number of sectors
+    pub l1_offset: u64,        // offset of l1 in bytes
+    pub l1_len: u64,           // number of l1 entries
+    pub l2_tables_offset: u64, // base offset of l2 tables in bytes
+    pub l2_len: u64,           // number of entries per l2 table
+    pub cluster_sectors: u64,  // number of sectors per l2 entry
+    pub clusters_offset: u64,  // base offset of grains
 }
 
 impl TryFrom<VmdkSeSparseConstHeader> for VmdkSeSparseMeta {
     type Error = OpenErrorKind;
 
     fn try_from(h: VmdkSeSparseConstHeader) -> Result<Self, Self::Error> {
-        if h.version != 0x0000000200000001 ||
-            h.grain_size != 8 ||
-            h.grain_table_size != 64 ||
-            h.flags != 0 ||
-            h.reserved1 != 0 ||
-            h.reserved2 != 0 ||
-            h.reserved3 != 0 ||
-            h.reserved4 != 0
+        if h.version != 0x0000000200000001
+            || h.grain_size != 8
+            || h.grain_table_size != 64
+            || h.flags != 0
+            || h.reserved1 != 0
+            || h.reserved2 != 0
+            || h.reserved3 != 0
+            || h.reserved4 != 0
         {
             // none of these are supported; if these fields aren't as
             // expected, we probably can't read successfully
@@ -289,11 +276,10 @@ impl TryFrom<VmdkSeSparseConstHeader> for VmdkSeSparseMeta {
             l2_tables_offset: h.grain_tables_offset * SECTOR_SIZE,
             l2_len: h.grain_table_size * SECTOR_SIZE / 8,
             cluster_sectors: h.grain_size,
-            clusters_offset: h.grains_offset
+            clusters_offset: h.grains_offset,
         };
 
-        if meta.l1_len * meta.l2_len *
-           meta.cluster_sectors * SECTOR_SIZE > (1 << 46) {
+        if meta.l1_len * meta.l2_len * meta.cluster_sectors * SECTOR_SIZE > (1 << 46) {
             // 64TB is the maximum supported size for SESPARSE
             return Err(OpenErrorKind::InvalidFileHeader);
         }
@@ -310,14 +296,14 @@ const VMDK_SESPARSE_MAGIC: [u8; 8] = [0xBE, 0xBA, 0xFE, 0xCA, 0x00, 0x00, 0x00, 
 pub enum FileType {
     Vmdk3,
     Vmdk4,
-    VmdkSeSparse
+    VmdkSeSparse,
 }
 
 impl FileType {
     pub fn sig_len(&self) -> usize {
         match self {
             FileType::Vmdk3 | FileType::Vmdk4 => 4,
-            FileType::VmdkSeSparse => 8
+            FileType::VmdkSeSparse => 8,
         }
     }
 }
@@ -327,15 +313,13 @@ fn signature_to_file_type(sig: &[u8; 8]) -> Option<FileType> {
         _ if sig.starts_with(&VMDK3_MAGIC) => Some(FileType::Vmdk3),
         _ if sig.starts_with(&VMDK4_MAGIC) => Some(FileType::Vmdk4),
         VMDK_SESPARSE_MAGIC => Some(FileType::VmdkSeSparse),
-        _ => None
+        _ => None,
     }
 }
 
-pub fn check_signature<T>(
-    src: &mut T
-) -> Result<Option<FileType>, std::io::Error>
+pub fn check_signature<T>(src: &mut T) -> Result<Option<FileType>, std::io::Error>
 where
-    T: Read
+    T: Read,
 {
     // check the signature
     let mut sig = [0; 8];
@@ -344,9 +328,8 @@ where
 }
 
 pub fn read_header_sparse<T: Read + Seek + Clone + 'static>(
-    mut src: T
-) -> Result<VmdkSparseMeta, OpenErrorKind>
-{
+    mut src: T,
+) -> Result<VmdkSparseMeta, OpenErrorKind> {
     src.seek(SeekFrom::Start(0))?;
     let ft = check_signature(&mut src)?;
     src.seek(SeekFrom::Start(0))?;
@@ -354,10 +337,9 @@ pub fn read_header_sparse<T: Read + Seek + Clone + 'static>(
     let mut src = Box::new(src) as Box<dyn ReadSeek>;
 
     match ft {
-        Some(FileType::Vmdk3) =>
-            Vmdk3Header::from_reader(&mut src)
-                .map_err(|e| DeserializationError("Vmdk3Header", e))?
-                .try_into(),
+        Some(FileType::Vmdk3) => Vmdk3Header::from_reader(&mut src)
+            .map_err(|e| DeserializationError("Vmdk3Header", e))?
+            .try_into(),
         Some(FileType::Vmdk4) => {
             let h = Vmdk4Header::from_reader(&mut src)
                 .map_err(|e| DeserializationError("Vmdk4Header", e))?;
@@ -370,20 +352,18 @@ pub fn read_header_sparse<T: Read + Seek + Clone + 'static>(
 
                 Vmdk4Header::from_reader(&mut src)
                     .map_err(|e| DeserializationError("Vmdk4Header", e))?
-            }
-            else {
+            } else {
                 h
             }
             .try_into()
-        },
-        _ => Err(OpenErrorKind::InvalidFileHeader)
+        }
+        _ => Err(OpenErrorKind::InvalidFileHeader),
     }
 }
 
 pub fn read_header_sesparse<T: Read + Seek + Clone + 'static>(
-    mut src: T
-) -> Result<VmdkSeSparseMeta, OpenErrorKind>
-{
+    mut src: T,
+) -> Result<VmdkSeSparseMeta, OpenErrorKind> {
     src.seek(SeekFrom::Start(0))?;
     let ft = check_signature(&mut src)?;
     src.seek(SeekFrom::Start(0))?;
@@ -393,8 +373,7 @@ pub fn read_header_sesparse<T: Read + Seek + Clone + 'static>(
         VmdkSeSparseConstHeader::from_reader(&mut src)
             .map_err(|e| DeserializationError("VmdkSeSparseConstHeader", e))?
             .try_into()
-    }
-    else {
+    } else {
         Err(OpenErrorKind::InvalidFileHeader)
     }
 }

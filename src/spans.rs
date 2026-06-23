@@ -1,14 +1,9 @@
 use std::{
     collections::BTreeMap,
-    ops::Bound::{Included, Excluded}
+    ops::Bound::{Excluded, Included},
 };
 
-pub fn remove_span(
-    mut sbeg: u64,
-    send: u64,
-    map: &mut BTreeMap<u64, u64>
-)
-{
+pub fn remove_span(mut sbeg: u64, send: u64, map: &mut BTreeMap<u64, u64>) {
     loop {
         // find span starting not less than sbeg
         let lb = map.range(..=sbeg).last();
@@ -20,19 +15,16 @@ pub fn remove_span(
 
                 if lbeg < sbeg {
                     map.insert(lbeg, sbeg);
-                }
-                else {
+                } else {
                     map.remove(&lbeg);
                 }
 
                 if send < lend {
                     map.insert(send, lend);
                     return;
-                }
-                else if send == lend {
+                } else if send == lend {
                     return;
-                }
-                else {
+                } else {
                     sbeg = lend;
                 }
             }
@@ -40,7 +32,9 @@ pub fn remove_span(
 
         let ub = map.range((Excluded(sbeg), Included(u64::MAX))).next();
 
-        if let Some((&ubeg, &uend)) = ub && ubeg <= send {
+        if let Some((&ubeg, &uend)) = ub
+            && ubeg <= send
+        {
             // sbeg < ubeg <= send
 
             map.remove(&ubeg);
@@ -48,12 +42,10 @@ pub fn remove_span(
             if send < uend {
                 map.insert(send, uend);
                 return;
-            }
-            else {
+            } else {
                 sbeg = uend;
             }
-        }
-        else {
+        } else {
             return;
         }
     }
@@ -63,9 +55,8 @@ pub fn insert_span<T: Clone + PartialEq>(
     mut sbeg: u64,
     send: u64,
     val: T,
-    map: &mut BTreeMap<u64, (u64, T)>
-)
-{
+    map: &mut BTreeMap<u64, (u64, T)>,
+) {
     loop {
         // find span starting not less than sbeg
         let lb = map.range(..=sbeg).last();
@@ -77,15 +68,13 @@ pub fn insert_span<T: Clone + PartialEq>(
                     // lbeg <= sbeg < send <= lend
                     // [sbeg, send) is already covered
                     return;
-                }
-                else {
+                } else {
                     // lbeg <= sbeg <= lend < send
                     // restrict span start to lend
                     sbeg = lend;
                     continue;
                 }
-            }
-            else if sbeg == lend && val == *lv {
+            } else if sbeg == lend && val == *lv {
                 // merge (eventually) with same-valued prev span
                 sbeg = lbeg;
             }
@@ -94,15 +83,16 @@ pub fn insert_span<T: Clone + PartialEq>(
         // find next span starting after sbeg
         let ub = map.range((Excluded(sbeg), Included(u64::MAX))).next();
 
-        if let Some((&ubeg, &(uend, ref uv))) = ub && ubeg <= send {
+        if let Some((&ubeg, &(uend, ref uv))) = ub
+            && ubeg <= send
+        {
             // sbeg < ubeg <= send
 
             if *uv == val {
                 // merge with same-valued next span
                 map.remove(&ubeg);
                 map.insert(sbeg, (uend, val.clone()));
-            }
-            else {
+            } else {
                 // insert up to different-valued next span
                 map.insert(sbeg, (ubeg, val.clone()));
             };
@@ -110,13 +100,11 @@ pub fn insert_span<T: Clone + PartialEq>(
             if uend < send {
                 // resume inserting the rest of span after uend
                 sbeg = uend;
-            }
-            else {
+            } else {
                 // we've covered the span to send, so we're done
                 return;
             }
-        }
-        else {
+        } else {
             // sbeg < send < ubeg
             // no overlap with next span, add this span
             map.insert(sbeg, (send, val.clone()));
@@ -133,10 +121,7 @@ mod test {
     fn test_insert_span_one() {
         let mut m: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
         insert_span(0, 10, 0, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [ (0, (10, 0)) ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, (10, 0))]);
     }
 
     #[test]
@@ -144,10 +129,7 @@ mod test {
         let mut m: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
         insert_span(0, 10, 0, &mut m);
         insert_span(0, 10, 1, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [ (0, (10, 0)) ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, (10, 0))]);
     }
 
     #[test]
@@ -155,10 +137,7 @@ mod test {
         let mut m: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
         insert_span(0, 10, 0, &mut m);
         insert_span(1, 9, 1, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [ (0, (10, 0)) ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, (10, 0))]);
     }
 
     #[test]
@@ -167,10 +146,7 @@ mod test {
         insert_span(0, 5, 0, &mut m);
         insert_span(5, 10, 0, &mut m);
         insert_span(1, 9, 1, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [ (0, (10, 0)) ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, (10, 0))]);
     }
 
     #[test]
@@ -180,10 +156,7 @@ mod test {
         insert_span(0, 5, 1, &mut m);
         assert_eq!(
             m.into_iter().collect::<Vec<_>>(),
-            [
-                (0, (4, 1)),
-                (4, (10, 0))
-            ]
+            [(0, (4, 1)), (4, (10, 0))]
         );
     }
 
@@ -194,11 +167,7 @@ mod test {
         insert_span(0, 10, 1, &mut m);
         assert_eq!(
             m.into_iter().collect::<Vec<_>>(),
-            [
-                (0, (4, 1)),
-                (4, (6, 0)),
-                (6, (10, 1))
-            ]
+            [(0, (4, 1)), (4, (6, 0)), (6, (10, 1))]
         );
     }
 
@@ -209,10 +178,7 @@ mod test {
         insert_span(4, 10, 1, &mut m);
         assert_eq!(
             m.into_iter().collect::<Vec<_>>(),
-            [
-                (0, (5, 0)),
-                (5, (10, 1))
-            ]
+            [(0, (5, 0)), (5, (10, 1))]
         );
     }
 
@@ -221,10 +187,7 @@ mod test {
         let mut m: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
         insert_span(5, 10, 0, &mut m);
         insert_span(0, 5, 0, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [ (0, (10, 0)) ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, (10, 0))]);
     }
 
     #[test]
@@ -232,10 +195,7 @@ mod test {
         let mut m: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
         insert_span(4, 6, 0, &mut m);
         insert_span(0, 10, 0, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [ (0, (10, 0)) ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, (10, 0))]);
     }
 
     #[test]
@@ -243,10 +203,7 @@ mod test {
         let mut m: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
         insert_span(0, 5, 0, &mut m);
         insert_span(5, 10, 0, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [ (0, (10, 0)) ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, (10, 0))]);
     }
 
     #[test]
@@ -267,45 +224,27 @@ mod test {
     fn test_remove_span_overlap_before() {
         let mut m: BTreeMap<u64, u64> = BTreeMap::from([(4, 10)]);
         remove_span(0, 6, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [ (6, 10) ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(6, 10)]);
     }
 
     #[test]
     fn test_remove_span_overlap_middle() {
         let mut m: BTreeMap<u64, u64> = BTreeMap::from([(0, 10)]);
         remove_span(4, 6, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [
-                (0, 4),
-                (6, 10)
-            ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, 4), (6, 10)]);
     }
 
     #[test]
     fn test_remove_span_overlap_after() {
         let mut m: BTreeMap<u64, u64> = BTreeMap::from([(0, 6)]);
         remove_span(4, 10, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [ (0, 4) ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, 4)]);
     }
 
     #[test]
     fn test_remove_span_overlap_multi() {
         let mut m: BTreeMap<u64, u64> = BTreeMap::from([(0, 5), (6, 10)]);
         remove_span(4, 7, &mut m);
-        assert_eq!(
-            m.into_iter().collect::<Vec<_>>(),
-            [
-                (0, 4),
-                (7, 10)
-            ]
-        );
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), [(0, 4), (7, 10)]);
     }
 }

@@ -2,7 +2,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::{
     collections::HashMap,
     io::{Read, Seek, SeekFrom},
-    sync::{Arc, Mutex}
+    sync::{Arc, Mutex},
 };
 use tokio::runtime::Runtime;
 use tracing::info;
@@ -13,10 +13,10 @@ use crate::{
     cachereadseek::CacheReadSeek,
     errors::{OpenError, OpenErrorKind},
     extent_description::{ExtentDescription, ExtentDescriptionInner},
-    header::{VmdkSparseMeta, VmdkSeSparseMeta, read_header_sparse, read_header_sesparse},
-    vmdk_reader::source_for_url,
+    header::{VmdkSeSparseMeta, VmdkSparseMeta, read_header_sesparse, read_header_sparse},
     readseek::ReadSeek,
-    storage::{ExtentStorage, FlatStorage, SparseStorage}
+    storage::{ExtentStorage, FlatStorage, SparseStorage},
+    vmdk_reader::source_for_url,
 };
 
 /*
@@ -31,7 +31,7 @@ sector_start = 8323072, sectors = 2162688
 pub struct Extent {
     pub start_sector: u64,
     pub sectors: u64,
-    pub storage: ExtentStorage
+    pub storage: ExtentStorage,
 }
 
 impl Extent {
@@ -39,7 +39,9 @@ impl Extent {
         match &self.storage {
             // Sparse storage is a collection of blocks of bytes.
             // It need not cover the extent's whole space.
-            ExtentStorage::Sparse(storage) => storage.grain_table.keys()
+            ExtentStorage::Sparse(storage) => storage
+                .grain_table
+                .keys()
                 .map(|goff| {
                     // grain_size is in sectors
                     let beg = self.start_sector + goff * storage.grain_size;
@@ -48,9 +50,11 @@ impl Extent {
                 })
                 .collect::<Vec<_>>(),
             // Flat and Zero storage are each a single block of bytes.
-            ExtentStorage::Flat(_) | ExtentStorage::Zero =>
+            ExtentStorage::Flat(_) | ExtentStorage::Zero => {
                 vec![(self.start_sector, self.start_sector + self.sectors)]
-        }.into_iter()
+            }
+        }
+        .into_iter()
     }
 
     pub fn has_file(&self) -> bool {
@@ -63,16 +67,19 @@ const SECTOR_SIZE: u64 = 512;
 fn read_grain_table_sparse<R>(
     h: &VmdkSparseMeta,
     start_sector: u64,
-    src: &mut R
+    src: &mut R,
 ) -> Result<HashMap<u64, u64>, std::io::Error>
 where
-    R: Read + Seek
+    R: Read + Seek,
 {
     // read level 1
     src.seek(SeekFrom::Start(h.l1_offset))?;
 
     let l1_entries = (0..h.l1_len)
-        .map(|_| src.read_u32::<LittleEndian>().map(|e| e as u64 * SECTOR_SIZE))
+        .map(|_| {
+            src.read_u32::<LittleEndian>()
+                .map(|e| e as u64 * SECTOR_SIZE)
+        })
         .collect::<Result<Vec<u64>, std::io::Error>>()?;
 
     // read level 2
@@ -101,10 +108,11 @@ where
             .collect::<Result<Vec<u64>, std::io::Error>>()?;
 
         grain_table.extend(
-            l2_entries.iter()
+            l2_entries
+                .iter()
                 .enumerate()
                 .filter(|(_, grain)| **grain != 0)
-                .map(|(i, grain)| (cur_sector + i as u64 , *grain))
+                .map(|(i, grain)| (cur_sector + i as u64, *grain)),
         );
 
         cur_sector += l2_len;
@@ -116,10 +124,10 @@ where
 fn read_grain_table_sesparse<R>(
     h: &VmdkSeSparseMeta,
     start_sector: u64,
-    src: &mut R
+    src: &mut R,
 ) -> Result<HashMap<u64, u64>, std::io::Error>
 where
-    R: Read + Seek
+    R: Read + Seek,
 {
     /*
         SESPARSE extents differ from earlier sparse extent types:
@@ -192,14 +200,14 @@ where
                 0x1000000000000000 | 0x2000000000000000 => {
                     // zeroed grain
                     1
-                },
+                }
                 0x3000000000000000 => {
                     // allocted grain
-                    h.clusters_offset + (
-                        ((l2_entry & 0x0FFF000000000000) >> 48) |
-                        ((l2_entry & 0x0000FFFFFFFFFFFF) << 12)
-                    ) * h.cluster_sectors
-                },
+                    h.clusters_offset
+                        + (((l2_entry & 0x0FFF000000000000) >> 48)
+                            | ((l2_entry & 0x0000FFFFFFFFFFFF) << 12))
+                            * h.cluster_sectors
+                }
                 _ => {
                     // 0 in high nibble means unallocated grain, which
                     // should not happen; anything else is also corrupt
@@ -220,23 +228,18 @@ fn read_extent<R, F>(
     ed: &ExtentDescription,
     start_sector: u64,
     filename: F,
-    mut src: R
+    mut src: R,
 ) -> Result<ExtentStorage, OpenError>
 where
     R: Read + Seek + Clone + 'static,
-    F: Into<String>
+    F: Into<String>,
 {
     let filename = filename.into();
 
     Ok(match &ed.kind {
-        ExtentDescriptionInner::Sparse { .. } |
-        ExtentDescriptionInner::VmfsSparse { .. } => {
+        ExtentDescriptionInner::Sparse { .. } | ExtentDescriptionInner::VmfsSparse { .. } => {
             let header = read_header_sparse(src.clone())?;
-            let grain_table = read_grain_table_sparse(
-                &header,
-                start_sector,
-                &mut src
-            )?;
+            let grain_table = read_grain_table_sparse(&header, start_sector, &mut src)?;
 
             ExtentStorage::Sparse(SparseStorage {
                 file: Box::new(src) as Box<dyn ReadSeek>,
@@ -244,16 +247,12 @@ where
                 grain_table,
                 grain_size: header.cluster_sectors,
                 has_compressed_grain: header.compressed,
-                zeroed_grain_table_entry: header.has_zero_grain
+                zeroed_grain_table_entry: header.has_zero_grain,
             })
-        },
+        }
         ExtentDescriptionInner::SeSparse { .. } => {
             let header = read_header_sesparse(src.clone())?;
-            let grain_table = read_grain_table_sesparse(
-                &header,
-                start_sector,
-                &mut src
-            )?;
+            let grain_table = read_grain_table_sesparse(&header, start_sector, &mut src)?;
 
             ExtentStorage::Sparse(SparseStorage {
                 file: Box::new(src) as Box<dyn ReadSeek>,
@@ -261,24 +260,20 @@ where
                 grain_table,
                 grain_size: header.cluster_sectors,
                 has_compressed_grain: false,
-                zeroed_grain_table_entry: true
+                zeroed_grain_table_entry: true,
             })
-        },
-        ExtentDescriptionInner::Vmfs { .. } => {
-            ExtentStorage::Flat(FlatStorage {
-                file: Box::new(src) as Box<dyn ReadSeek>,
-                filename,
-                offset: 0
-            })
-        },
-        ExtentDescriptionInner::Flat { offset, .. } => {
-            ExtentStorage::Flat(FlatStorage {
-                file: Box::new(src) as Box<dyn ReadSeek>,
-                filename,
-                offset: *offset
-            })
-        },
-        _ => todo!("TODO: {:?} support", ed.kind)
+        }
+        ExtentDescriptionInner::Vmfs { .. } => ExtentStorage::Flat(FlatStorage {
+            file: Box::new(src) as Box<dyn ReadSeek>,
+            filename,
+            offset: 0,
+        }),
+        ExtentDescriptionInner::Flat { offset, .. } => ExtentStorage::Flat(FlatStorage {
+            file: Box::new(src) as Box<dyn ReadSeek>,
+            filename,
+            offset: *offset,
+        }),
+        _ => todo!("TODO: {:?} support", ed.kind),
     })
 }
 
@@ -288,9 +283,8 @@ pub fn read_extents(
     is_bin_and_singular: bool,
     cache: Arc<Mutex<dyn Cache + Send>>,
     runtime: Arc<Runtime>,
-    mut idx: usize
-) -> Result<Vec<Extent>, OpenError>
-{
+    mut idx: usize,
+) -> Result<Vec<Extent>, OpenError> {
     let mut extents = vec![];
 
     let mut start_sector = 0;
@@ -298,7 +292,8 @@ pub fn read_extents(
     for ed in eds {
         let filename = ed.filename();
 
-        let ed_url = image_url.join(filename)
+        let ed_url = image_url
+            .join(filename)
             .map_err(|_| OpenErrorKind::BadPath(filename.into()))
             .map_err(OpenError::from)
             .map_err(|e| e.with_path(filename))?;
@@ -318,20 +313,15 @@ pub fn read_extents(
 
         cache.lock().expect("poisoned").add_source(idx, src);
 
-        let crs = CacheReadSeek::new(
-            cache.clone(),
-            runtime.clone(),
-            idx,
-            seg_len
-        );
+        let crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, seg_len);
 
-        let storage = read_extent(ed, start_sector, filename, crs)
-            .map_err(|e| e.with_path(ed_url))?;
+        let storage =
+            read_extent(ed, start_sector, filename, crs).map_err(|e| e.with_path(ed_url))?;
 
         extents.push(Extent {
             sectors: ed.sectors,
             start_sector,
-            storage
+            storage,
         });
 
         start_sector += ed.sectors;
@@ -342,5 +332,4 @@ pub fn read_extents(
 }
 
 #[cfg(test)]
-mod test {
-}
+mod test {}

@@ -1,37 +1,25 @@
 use async_trait::async_trait;
 use foyer::{
-    BlockEngineConfig,
-    DefaultHasher,
-    DeviceBuilder,
-    FsDeviceBuilder,
-    HybridCache,
-    HybridCacheBuilder,
-    HybridGetOrFetch
+    BlockEngineConfig, DefaultHasher, DeviceBuilder, FsDeviceBuilder, HybridCache,
+    HybridCacheBuilder, HybridGetOrFetch,
 };
 use foyer_common::code::HashBuilder;
 use futures::future::{TryFutureExt, try_join_all};
-use std::{
-    fmt::Debug,
-    sync::Arc
-};
+use std::{fmt::Debug, sync::Arc};
 use tempfile::TempDir;
 use tracing::{debug, trace};
 
-use crate::{
-    bytessource::BytesSource,
-    cache::Cache,
-    placeholdersource::PlaceholderSource
-};
+use crate::{bytessource::BytesSource, cache::Cache, placeholdersource::PlaceholderSource};
 
 pub struct FoyerCache<S = DefaultHasher>
 where
-    S: HashBuilder + Debug
+    S: HashBuilder + Debug,
 {
     chlen: usize,
     sources: Vec<Box<dyn BytesSource + Send>>,
     cache: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
     cache_dir: TempDir,
-    readahead: usize
+    readahead: usize,
 }
 
 impl FoyerCache<DefaultHasher> {
@@ -39,14 +27,11 @@ impl FoyerCache<DefaultHasher> {
         chlen: usize,
         mem_size: usize,
         disk_size: usize,
-        readahead: usize
-    ) -> Result<Self, std::io::Error>
-    {
+        readahead: usize,
+    ) -> Result<Self, std::io::Error> {
         let cache_dir = tempfile::tempdir()?;
 
-        let builder = HybridCacheBuilder::new()
-            .memory(mem_size)
-            .storage();
+        let builder = HybridCacheBuilder::new().memory(mem_size).storage();
 
         let builder = if disk_size > 0 {
             let device = FsDeviceBuilder::new(cache_dir.path())
@@ -55,15 +40,11 @@ impl FoyerCache<DefaultHasher> {
                 .map_err(std::io::Error::other)?;
 
             builder.with_engine_config(BlockEngineConfig::new(device))
-        }
-        else {
+        } else {
             builder
         };
 
-        let cache = builder
-            .build()
-            .await
-            .map_err(std::io::Error::other)?;
+        let cache = builder.build().await.map_err(std::io::Error::other)?;
 
         Ok(Self::new(cache, cache_dir, chlen, readahead))
     }
@@ -71,21 +52,20 @@ impl FoyerCache<DefaultHasher> {
 
 impl<S> FoyerCache<S>
 where
-    S: HashBuilder + Debug
+    S: HashBuilder + Debug,
 {
     pub fn new(
         cache: HybridCache<(usize, u64), Vec<u8>, S>,
         cache_dir: TempDir,
         chlen: usize,
-        readahead: usize
-    ) -> Self
-    {
+        readahead: usize,
+    ) -> Self {
         Self {
             chlen,
             sources: vec![],
             cache: Arc::new(cache),
             cache_dir,
-            readahead
+            readahead,
         }
     }
 }
@@ -95,17 +75,22 @@ fn make_getter<S>(
     idx: usize,
     source: &Box<dyn BytesSource + Send>,
     end: u64,
-    cache: Arc<HybridCache<(usize, u64), Vec<u8>, S>>
+    cache: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
 ) -> impl FnMut(u64) -> HybridGetOrFetch<(usize, u64), Vec<u8>, S>
 where
-    S: HashBuilder + Debug
+    S: HashBuilder + Debug,
 {
     move |choff: u64| {
-        let fetch = move ||
-            source.read(choff, (choff + chlen as u64).min(end))
-                .map_err(foyer::Error::io_error);
+        let fetch = move || {
+            source
+                .read(choff, (choff + chlen as u64).min(end))
+                .map_err(foyer::Error::io_error)
+        };
 
-        trace!("fetching {idx} [{choff},{})", (choff + chlen as u64).min(end));
+        trace!(
+            "fetching {idx} [{choff},{})",
+            (choff + chlen as u64).min(end)
+        );
         cache.get_or_fetch(&(idx, choff), fetch)
     }
 }
@@ -113,16 +98,12 @@ where
 #[async_trait]
 impl<S> Cache for FoyerCache<S>
 where
-    S: HashBuilder + Debug
+    S: HashBuilder + Debug,
 {
-    async fn read(
-        &mut self,
-        idx: usize,
-        off: u64,
-        buf: &mut [u8]
-    ) -> Result<(), std::io::Error>
-    {
-        let source = self.sources.get(idx)
+    async fn read(&mut self, idx: usize, off: u64, buf: &mut [u8]) -> Result<(), std::io::Error> {
+        let source = self
+            .sources
+            .get(idx)
             .ok_or(std::io::Error::other(format!("{idx} out of bounds")))?;
 
         let end = source.end();
@@ -136,29 +117,15 @@ where
         let raend = (rabeg + (self.readahead * self.chlen) as u64).min(end);
 
         // request the chunks we need
-        let getter = make_getter(
-            self.chlen,
-            idx,
-            source,
-            end,
-            self.cache.clone()
-        );
+        let getter = make_getter(self.chlen, idx, source, end, self.cache.clone());
 
-        let fut = try_join_all((csbeg..csend)
-            .step_by(self.chlen)
-            .map(getter)
-        );
+        let fut = try_join_all((csbeg..csend).step_by(self.chlen).map(getter));
 
         // request read-ahead chunks in the background
-        let getter = make_getter(
-            self.chlen,
-            idx,
-            source,
-            end,
-            self.cache.clone()
-        );
+        let getter = make_getter(self.chlen, idx, source, end, self.cache.clone());
 
-        let _ = (rabeg..raend).step_by(self.chlen)
+        let _ = (rabeg..raend)
+            .step_by(self.chlen)
             .map(getter)
             .map(tokio::spawn);
 
@@ -184,14 +151,16 @@ where
     }
 
     fn end(&self, idx: usize) -> Result<u64, std::io::Error> {
-        self.sources.get(idx)
+        self.sources
+            .get(idx)
             .ok_or(std::io::Error::other(format!("{idx} out of bounds")))
             .map(|src| src.end())
     }
 
     fn add_source(&mut self, idx: usize, src: Box<dyn BytesSource + Send>) {
         if self.sources.len() <= idx {
-            self.sources.resize_with(idx + 1, || Box::new(PlaceholderSource));
+            self.sources
+                .resize_with(idx + 1, || Box::new(PlaceholderSource));
         }
         self.sources[idx] = src;
     }

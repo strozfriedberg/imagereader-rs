@@ -28,11 +28,7 @@ mod storage;
 
 #[cfg(test)]
 mod test {
-    use crate::{
-        test_data::*,
-        test_helper::do_hash,
-        vmdk_reader::VmdkReader
-    };
+    use crate::{test_data::*, test_helper::do_hash, vmdk_reader::VmdkReader};
 
     #[track_caller]
     fn assert_eq_test_data(exp: &TestData) {
@@ -42,17 +38,16 @@ mod test {
         let sha1 = do_hash(
             |offset, buf: &mut [u8]| {
                 let buf_len = buf.len();
-                reader.read_at_offset(offset, &mut buf[..buf_len])
-                    .unwrap()
+                reader.read_at_offset(offset, &mut buf[..buf_len]).unwrap()
             },
             image_size,
-            false
+            false,
         );
 
         let act = TestData {
             image_path: exp.image_path,
             image_size: reader.image_size,
-            sha1: &sha1
+            sha1: &sha1,
         };
 
         assert_eq!(&act, exp);

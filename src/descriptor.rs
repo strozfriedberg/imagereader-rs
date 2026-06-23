@@ -1,19 +1,16 @@
 use regex::Regex;
 use std::{
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
-    sync::LazyLock
+    sync::LazyLock,
 };
 
 use crate::errors::{DescriptorError, OpenErrorKind};
 
 const SECTOR_SIZE: u64 = 512;
 
-pub fn read_descriptor_internal<R>(
-   src: &mut R,
-   offset: u64
-) -> Result<String, std::io::Error>
+pub fn read_descriptor_internal<R>(src: &mut R, offset: u64) -> Result<String, std::io::Error>
 where
-    R: Read + Seek
+    R: Read + Seek,
 {
     let mut buf = vec![];
 
@@ -26,11 +23,9 @@ where
     Ok(String::from_utf8_lossy(&buf[..(len - 1)]).into())
 }
 
-pub fn read_descriptor_file<R>(
-    src: R
-) -> Result<String, OpenErrorKind>
+pub fn read_descriptor_file<R>(src: R) -> Result<String, OpenErrorKind>
 where
-    R: Read
+    R: Read,
 {
     // Read a line at a time until we know we have a descriptor file,
     // to avoid reading a giant file which is not a descriptor file
@@ -49,22 +44,20 @@ where
                 // this is a descriptor file, read the rest
                 r.read_to_string(&mut desc)?;
                 return Ok(desc);
-            },
+            }
             "" => line.clear(),
-            _ => return Err(
-                OpenErrorKind::DescriptorError(
-                    DescriptorError::UnrecognizedDescriptor
-                )
-            )
+            _ => {
+                return Err(OpenErrorKind::DescriptorError(
+                    DescriptorError::UnrecognizedDescriptor,
+                ));
+            }
         }
     }
 }
 
 pub fn extract_parent_fn_hint(descriptor: &str) -> Option<String> {
-    static PAT: LazyLock<Regex> = LazyLock::new(||
-        Regex::new(r#"^parentFileNameHint="([^"]+)"#)
-            .expect("bad regex")
-    );
+    static PAT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"^parentFileNameHint="([^"]+)"#).expect("bad regex"));
 
     for line in descriptor.lines() {
         if let Some(captures) = PAT.captures(line) {
@@ -97,10 +90,7 @@ RW 4096 VMFSSPARSE "vmfs_thick-000001-delta.vmdk"
 ddb.longContentID = "4b98b55ba6a6bc2e8fd6eb368f67ca74"
 "#;
 
-        assert_eq!(
-            read_descriptor_file(desc.as_bytes()).unwrap(),
-            desc
-        );
+        assert_eq!(read_descriptor_file(desc.as_bytes()).unwrap(), desc);
     }
 
     #[test]
@@ -113,9 +103,7 @@ Bogus crap
 
         assert!(matches!(
             read_descriptor_file(desc.as_bytes()).unwrap_err(),
-            OpenErrorKind::DescriptorError(
-                DescriptorError::UnrecognizedDescriptor
-            )
+            OpenErrorKind::DescriptorError(DescriptorError::UnrecognizedDescriptor)
         ));
     }
 }
