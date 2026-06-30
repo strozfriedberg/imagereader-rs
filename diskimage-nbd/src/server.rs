@@ -90,7 +90,7 @@ pub fn register_sigusr1(flag: Arc<AtomicBool>) {
         .expect("register SIGUSR1 handler");
     std::thread::spawn(move || {
         for _ in signals.forever() {
-            flag.store(true, Ordering::Relaxed);
+            flag.store(true, Ordering::Release);
             tracing::info!("cache: metadata phase ended, switched to regular phase (SIGUSR1)");
         }
     });
