@@ -327,7 +327,7 @@ where
     Ok(signature_to_file_type(&sig))
 }
 
-pub fn read_header_sparse<T: Read + Seek + Clone + 'static>(
+pub fn read_header_sparse<T: Read + Seek + Clone + Send + 'static>(
     mut src: T,
 ) -> Result<VmdkSparseMeta, OpenErrorKind> {
     src.seek(SeekFrom::Start(0))?;
@@ -361,7 +361,7 @@ pub fn read_header_sparse<T: Read + Seek + Clone + 'static>(
     }
 }
 
-pub fn read_header_sesparse<T: Read + Seek + Clone + 'static>(
+pub fn read_header_sesparse<T: Read + Seek + Clone + Send + 'static>(
     mut src: T,
 ) -> Result<VmdkSeSparseMeta, OpenErrorKind> {
     src.seek(SeekFrom::Start(0))?;

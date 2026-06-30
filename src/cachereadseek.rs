@@ -5,6 +5,7 @@ use std::{
 use tokio::runtime::Runtime;
 
 use crate::cache::Cache;
+use crate::io_log::ReadTrace;
 
 #[derive(Clone)]
 pub struct CacheReadSeek {
@@ -41,8 +42,9 @@ impl Read for CacheReadSeek {
         let len = (rend - self.pos) as usize;
 
         if len > 0 {
+            let mut trace = ReadTrace::default();
             self.runtime
-                .block_on(cache.read(self.idx, self.pos, &mut buf[..len]))?;
+                .block_on(cache.read(self.idx, self.pos, &mut buf[..len], &mut trace))?;
             self.pos = rend;
         }
 
