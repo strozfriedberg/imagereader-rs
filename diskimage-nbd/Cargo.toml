@@ -20,8 +20,8 @@ path = "src/bin/vmdk-nbd.rs"
 [dependencies]
 byteorder = "1.5"
 clap = { version = "4.1.7", features = ["derive"] }
-e01-rs = { path = "../../e01" }
-vmdk-rs = { path = "../../vmdk" }
+e01-rs = { path = "../../../e01" }
+vmdk-rs = { path = "../../../vmdk" }
 signal-hook = "0.3"
 time = "0.3"
 tracing = "0.1.41"
