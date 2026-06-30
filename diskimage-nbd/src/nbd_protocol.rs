@@ -92,11 +92,31 @@ fn write_simple_reply(stream: &mut impl Write, error: u32, handle: u64) -> io::R
 }
 
 fn write_simple_error(stream: &mut impl Write, err: io::Error, handle: u64) -> io::Result<()> {
+    // Walk the error source chain looking for an OS error code.  Both adapters
+    // wrap format-layer errors with io::Error::other(), which carries no OS code,
+    // so the fallback EIO (5) fires for most format-level failures.
     let code = err
         .raw_os_error()
         .and_then(|c| u32::try_from(c).ok())
         .filter(|c| *c != 0)
-        .unwrap_or(5);
+        .or_else(|| {
+            use std::error::Error as _;
+            let mut src = err.source();
+            while let Some(e) = src {
+                if let Some(io_e) = e.downcast_ref::<io::Error>() {
+                    if let Some(c) = io_e
+                        .raw_os_error()
+                        .and_then(|c| u32::try_from(c).ok())
+                        .filter(|&c| c != 0)
+                    {
+                        return Some(c);
+                    }
+                }
+                src = e.source();
+            }
+            None
+        })
+        .unwrap_or(5); // EIO
     write_simple_reply(stream, code, handle)
 }
 
