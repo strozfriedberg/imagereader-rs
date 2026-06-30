@@ -161,7 +161,7 @@ async fn route_block(
 ) -> Result<Vec<u8>, std::io::Error> {
     let key = (idx, choff);
     if let Some((md_cache, regular_phase)) = metadata {
-        if regular_phase.load(Ordering::Relaxed) {
+        if regular_phase.load(Ordering::Acquire) {
             if let Some(entry) = md_cache.get(&key).await.map_err(std::io::Error::other)? {
                 return Ok(entry.value().clone());
             }
