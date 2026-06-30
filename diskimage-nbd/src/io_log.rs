@@ -43,14 +43,8 @@ pub struct IoLog {
     serving: AtomicBool,
     nbd_reads: AtomicU64,
     nbd_read_bytes: AtomicU64,
-    reads: AtomicU64,
-    read_bytes: AtomicU64,
     s3_fetches: AtomicU64,
     s3_bytes: AtomicU64,
-    foyer_hits: AtomicU64,
-    foyer_misses: AtomicU64,
-    chunk_hits: AtomicU64,
-    chunk_misses: AtomicU64,
     prefetch_enqueued: AtomicU64,
 }
 
@@ -63,14 +57,8 @@ impl IoLog {
             serving: AtomicBool::new(false),
             nbd_reads: AtomicU64::new(0),
             nbd_read_bytes: AtomicU64::new(0),
-            reads: AtomicU64::new(0),
-            read_bytes: AtomicU64::new(0),
             s3_fetches: AtomicU64::new(0),
             s3_bytes: AtomicU64::new(0),
-            foyer_hits: AtomicU64::new(0),
-            foyer_misses: AtomicU64::new(0),
-            chunk_hits: AtomicU64::new(0),
-            chunk_misses: AtomicU64::new(0),
             prefetch_enqueued: AtomicU64::new(0),
         }))
     }
@@ -109,14 +97,8 @@ impl IoLog {
         // log_nbd_read that observes serving=true never races with a reset.
         self.nbd_reads.store(0, Ordering::Relaxed);
         self.nbd_read_bytes.store(0, Ordering::Relaxed);
-        self.reads.store(0, Ordering::Relaxed);
-        self.read_bytes.store(0, Ordering::Relaxed);
         self.s3_fetches.store(0, Ordering::Relaxed);
         self.s3_bytes.store(0, Ordering::Relaxed);
-        self.foyer_hits.store(0, Ordering::Relaxed);
-        self.foyer_misses.store(0, Ordering::Relaxed);
-        self.chunk_hits.store(0, Ordering::Relaxed);
-        self.chunk_misses.store(0, Ordering::Relaxed);
         self.prefetch_enqueued.store(0, Ordering::Relaxed);
 
         // Truncate and reopen the file before publishing serving=true.
@@ -149,35 +131,6 @@ impl IoLog {
         ));
     }
 
-    pub fn log_read(&self, offset: u64, len: usize, dur_us: u64, foyer: &str, chunk: &str) {
-        if !self.serving.load(Ordering::Relaxed) {
-            return;
-        }
-        self.reads.fetch_add(1, Ordering::Relaxed);
-        self.read_bytes.fetch_add(len as u64, Ordering::Relaxed);
-        match foyer {
-            "hit" => {
-                self.foyer_hits.fetch_add(1, Ordering::Relaxed);
-            }
-            "miss" => {
-                self.foyer_misses.fetch_add(1, Ordering::Relaxed);
-            }
-            _ => {}
-        }
-        match chunk {
-            "hit" => {
-                self.chunk_hits.fetch_add(1, Ordering::Relaxed);
-            }
-            "miss" => {
-                self.chunk_misses.fetch_add(1, Ordering::Relaxed);
-            }
-            _ => {}
-        }
-        let _ = self.write_line(&format!(
-            r#"{{"kind":"read","offset":{offset},"len":{len},"dur_us":{dur_us},"foyer":"{foyer}","chunk":"{chunk}"}}"#
-        ));
-    }
-
     pub fn log_s3_fetch(&self, segment: usize, beg: u64, end: u64, dur_us: u64) {
         if !self.serving.load(Ordering::Relaxed) {
             return;
@@ -196,29 +149,17 @@ impl IoLog {
         }
         let nbd_reads = self.nbd_reads.load(Ordering::Relaxed);
         let nbd_read_bytes = self.nbd_read_bytes.load(Ordering::Relaxed);
-        let reads = self.reads.load(Ordering::Relaxed);
-        let read_bytes = self.read_bytes.load(Ordering::Relaxed);
         let s3_fetches = self.s3_fetches.load(Ordering::Relaxed);
         let s3_bytes = self.s3_bytes.load(Ordering::Relaxed);
-        let foyer_hits = self.foyer_hits.load(Ordering::Relaxed);
-        let foyer_misses = self.foyer_misses.load(Ordering::Relaxed);
-        let chunk_hits = self.chunk_hits.load(Ordering::Relaxed);
-        let chunk_misses = self.chunk_misses.load(Ordering::Relaxed);
         let prefetch_enqueued = self.prefetch_enqueued.load(Ordering::Relaxed);
         let _ = self.write_line(&format!(
-            r#"{{"kind":"summary","nbd_reads":{nbd_reads},"nbd_read_bytes":{nbd_read_bytes},"reads":{reads},"read_bytes":{read_bytes},"s3_fetches":{s3_fetches},"s3_bytes":{s3_bytes},"foyer_hits":{foyer_hits},"foyer_misses":{foyer_misses},"chunk_hits":{chunk_hits},"chunk_misses":{chunk_misses},"prefetch_enqueued":{prefetch_enqueued}}}"#
+            r#"{{"kind":"summary","nbd_reads":{nbd_reads},"nbd_read_bytes":{nbd_read_bytes},"s3_fetches":{s3_fetches},"s3_bytes":{s3_bytes},"prefetch_enqueued":{prefetch_enqueued}}}"#
         ));
         tracing::info!(
             nbd_reads,
             nbd_read_bytes,
-            reads,
-            read_bytes,
             s3_fetches,
             s3_bytes,
-            foyer_hits,
-            foyer_misses,
-            chunk_hits,
-            chunk_misses,
             prefetch_enqueued,
             "io trace summary"
         );
