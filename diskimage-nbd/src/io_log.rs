@@ -102,9 +102,11 @@ impl IoLog {
 
     /// Drop open-phase events; subsequent lines are the NBD serving workload.
     pub fn begin_serving(&self) -> std::io::Result<()> {
-        if self.serving.swap(true, Ordering::SeqCst) {
+        if self.serving.load(Ordering::Acquire) {
             return Ok(());
         }
+        // Zero all counters before setting serving=true so that a concurrent
+        // log_nbd_read that observes serving=true never races with a reset.
         self.nbd_reads.store(0, Ordering::Relaxed);
         self.nbd_read_bytes.store(0, Ordering::Relaxed);
         self.reads.store(0, Ordering::Relaxed);
@@ -117,6 +119,7 @@ impl IoLog {
         self.chunk_misses.store(0, Ordering::Relaxed);
         self.prefetch_enqueued.store(0, Ordering::Relaxed);
 
+        // Truncate and reopen the file before publishing serving=true.
         let file = File::options()
             .create(true)
             .write(true)
@@ -129,6 +132,9 @@ impl IoLog {
                 .map_err(|_| std::io::Error::other("io log lock poisoned"))?;
             *w = BufWriter::new(file);
         }
+        // SeqCst: all counter resets and the file swap are visible to any
+        // thread that subsequently observes serving=true.
+        self.serving.store(true, Ordering::SeqCst);
         self.write_line(r#"{"kind":"marker","event":"nbd_connected"}"#)
     }
 
