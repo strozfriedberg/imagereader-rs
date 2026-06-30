@@ -81,6 +81,11 @@ impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
         e01_reader::E01ReaderOptions {
             corrupt_section_policy: options.corrupt_section_policy.into(),
             corrupt_chunk_policy: options.corrupt_chunk_policy.into(),
+            foyer_readahead: 0,
+            s3_concurrency: e01_reader::DEFAULT_S3_CONCURRENCY,
+            cache_mem_mib: e01_reader::DEFAULT_CACHE_MEM_MIB,
+            cache_mode: e01_reader::CacheMode::default(),
+            io_log: None,
         }
     }
 }
