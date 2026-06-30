@@ -3,7 +3,6 @@ name = "vmdk-rs"
 version = "0.1.1"
 authors = ["LevelBlue"]
 edition = "2024"
-
 [profile.release]
 debug = false
 lto = true
@@ -30,13 +29,23 @@ flate2 = "1"
 futures = "0.3.31"
 hex = "0.4.3"
 regex = "1"
-rust-s3 = "0.37.1"
+rust-s3 = { version = "0.37.1", features = ["tokio-rustls-tls"] }
+aws-config = { version = "1.8", default-features = false, features = [
+    "behavior-version-latest",
+    "credentials-process",
+    "sso",
+    "rustls",
+] }
+aws-credential-types = "1.2"
+aws-creds = { version = "0.39", default-features = false }
+aws-smithy-async = { version = "1.2", features = ["rt-tokio"] }
 sha-1 = "^0.10"
 tempfile = "3.23.0"
 thiserror = "2.0.12"
-tokio = { version = "1.47.1", features = ["fs", "io-util", "rt-multi-thread"] }
+time = "0.3"
+tokio = { version = "1.47.1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json", "time"] }
 url = "2.5.7"
 
 [dev-dependencies]

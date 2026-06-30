@@ -14,7 +14,9 @@ use crate::{
     errors::{OpenError, OpenErrorKind},
     extent_description::{ExtentDescription, ExtentDescriptionInner},
     header::{VmdkSeSparseMeta, VmdkSparseMeta, read_header_sesparse, read_header_sparse},
+    io_log::IoLog,
     readseek::ReadSeek,
+    s3_creds::S3Auth,
     storage::{ExtentStorage, FlatStorage, SparseStorage},
     vmdk_reader::source_for_url,
 };
@@ -231,7 +233,7 @@ fn read_extent<R, F>(
     mut src: R,
 ) -> Result<ExtentStorage, OpenError>
 where
-    R: Read + Seek + Clone + 'static,
+    R: Read + Seek + Clone + Send + 'static,
     F: Into<String>,
 {
     let filename = filename.into();
@@ -277,6 +279,7 @@ where
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn read_extents(
     image_url: &Url,
     eds: &[ExtentDescription],
@@ -284,6 +287,8 @@ pub fn read_extents(
     cache: Arc<Mutex<dyn Cache + Send>>,
     runtime: Arc<Runtime>,
     mut idx: usize,
+    s3_auth: Option<&Arc<S3Auth>>,
+    io_log: Option<&Arc<IoLog>>,
 ) -> Result<Vec<Extent>, OpenError> {
     let mut extents = vec![];
 
@@ -298,11 +303,10 @@ pub fn read_extents(
             .map_err(OpenError::from)
             .map_err(|e| e.with_path(filename))?;
 
-        let src = source_for_url(&ed_url, &runtime)
-            .or_else(|e|
+        let src = source_for_url(&ed_url, idx, &runtime, s3_auth, io_log).or_else(|e|
                 // if first filename is wrong and we are bin, try current file
                 if is_bin_and_singular && &ed_url != image_url {
-                    source_for_url(image_url, &runtime)
+                    source_for_url(image_url, idx, &runtime, s3_auth, io_log)
                 }
                 else {
                     Err(e)
