@@ -26,7 +26,7 @@ struct Args {
     e01_path: String,
 
     /// Ignore chunk checksums while reading (less safe).
-    #[arg(short, long, default_value = "false")]
+    #[arg(short, long)]
     ignore_checksums: bool,
 
     #[command(flatten)]
@@ -48,7 +48,7 @@ impl NbdImage for E01Adapter {
 }
 
 fn open_reader(args: &Args, cache_mode: CacheMode) -> Result<E01Adapter, Box<dyn Error>> {
-    Ok(E01Reader::open_glob(
+    E01Reader::open_glob(
         &args.e01_path,
         &E01ReaderOptions {
             corrupt_section_policy: CorruptSectionPolicy::Error,
@@ -66,22 +66,21 @@ fn open_reader(args: &Args, cache_mode: CacheMode) -> Result<E01Adapter, Box<dyn
             io_log: None,
         },
     )
-    .map(E01Adapter)?)
+    .map(E01Adapter)
+    .map_err(Into::into)
 }
 
 fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let io_log = open_io_log(args.common.io_log.as_deref())?;
 
-    let regular_phase = Arc::new(AtomicBool::new(false));
-    if args.common.metadata_cache {
-        register_sigusr1(regular_phase.clone());
-    }
     let cache_mode = if args.common.metadata_cache {
+        let regular_phase = Arc::new(AtomicBool::new(false));
+        register_sigusr1(regular_phase.clone());
         CacheMode::DualHybrid {
             content_disk_mib: args.common.content_cache_disk_mib,
             metadata_mem_mib: args.common.metadata_cache_mem_mib,
             metadata_disk_mib: args.common.metadata_cache_disk_mib,
-            regular_phase: regular_phase.clone(),
+            regular_phase,
         }
     } else {
         CacheMode::SingleMemory
@@ -95,26 +94,30 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             unix_path.display(),
             args.e01_path
         );
-        let reader = Arc::new(Mutex::new(open_reader(&args, cache_mode)?));
+        let adapter = open_reader(&args, cache_mode)?;
+        let image_size = adapter.size();
+        let reader = Arc::new(Mutex::new(adapter));
         log_cache_opts(&args.common);
         tracing::info!(
             "listening on unix:{}; image size {} bytes",
             unix_path.display(),
-            reader.lock().unwrap().size()
+            image_size
         );
-        return Ok(run_accept_loop_unix(listener, unix_path, reader, io_log)?);
+        return run_accept_loop_unix(listener, unix_path, reader, io_log).map_err(Into::into);
     }
 
     tracing::info!("opening {}", args.e01_path);
-    let reader = Arc::new(Mutex::new(open_reader(&args, cache_mode)?));
+    let adapter = open_reader(&args, cache_mode)?;
+    let image_size = adapter.size();
+    let reader = Arc::new(Mutex::new(adapter));
     log_cache_opts(&args.common);
     let listener = TcpListener::bind(args.common.listen)?;
     tracing::info!(
         "listening on {}; image size {} bytes",
         args.common.listen,
-        reader.lock().unwrap().size()
+        image_size
     );
-    Ok(run_accept_loop_tcp(listener, reader, io_log)?)
+    run_accept_loop_tcp(listener, reader, io_log).map_err(Into::into)
 }
 
 fn main() -> ExitCode {

@@ -87,11 +87,14 @@ impl IoLog {
         }
         let count = offsets.len() as u64;
         self.prefetch_enqueued.fetch_add(count, Ordering::Relaxed);
-        let offs = offsets
-            .iter()
-            .map(|o| o.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
+        use std::fmt::Write as _;
+        let mut offs = String::new();
+        for (i, o) in offsets.iter().enumerate() {
+            if i > 0 {
+                offs.push(',');
+            }
+            let _ = write!(offs, "{o}");
+        }
         let _ = self.write_line(&format!(
             r#"{{"kind":"prefetch","segment":{segment},"block":{block_off},"offsets":[{offs}],"count":{count}}}"#
         ));
@@ -213,6 +216,7 @@ impl IoLog {
             prefetch_enqueued,
             "io trace summary"
         );
+        let _ = self.flush();
     }
 
     fn write_line(&self, line: &str) -> std::io::Result<()> {
@@ -222,8 +226,14 @@ impl IoLog {
             .lock()
             .map_err(|_| std::io::Error::other("io log lock poisoned"))?;
         w.write_all(line.as_bytes())?;
-        w.write_all(b"\n")?;
-        w.flush()
+        w.write_all(b"\n")
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        self.writer
+            .lock()
+            .map_err(|_| std::io::Error::other("io log lock poisoned"))?
+            .flush()
     }
 }
 

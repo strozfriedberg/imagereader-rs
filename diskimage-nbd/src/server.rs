@@ -45,7 +45,7 @@ pub struct CommonArgs {
 
     /// Enable two-tier metadata cache for cache warming workflows. Starts in metadata phase;
     /// send SIGUSR1 to exit metadata phase and switch to regular content cache.
-    #[arg(long, default_value = "false")]
+    #[arg(long)]
     pub metadata_cache: bool,
 
     /// Content-cache on-disk size (MiB), requires --metadata-cache.
