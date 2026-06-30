@@ -1,17 +1,15 @@
 use bytesize::ByteSize;
 use clap::Parser;
-use std::{
-    collections::HashSet,
-    iter::FromIterator,
-    ops::BitAndAssign,
-    process::ExitCode,
-    time::{Duration, Instant},
-};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
-
 use e01::{
     e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Error, E01Reader, E01ReaderOptions},
     hasher::{HashType, MultiHasher},
+    init_tracing,
+};
+use std::{
+    collections::HashSet,
+    iter::FromIterator,
+    process::ExitCode,
+    time::{Duration, Instant},
 };
 
 #[derive(Parser)]
@@ -80,6 +78,7 @@ fn run(args: Args) -> Result<ExitCode, E01Error> {
             } else {
                 CorruptChunkPolicy::Error
             },
+            ..Default::default()
         },
     )?;
 
@@ -175,31 +174,7 @@ fn run(args: Args) -> Result<ExitCode, E01Error> {
 }
 
 fn main() -> ExitCode {
-    let stderr_layer = tracing_subscriber::fmt::layer()
-        //        .with_current_span(true)
-        .without_time()
-        .with_file(false)
-        .with_line_number(false)
-        .with_thread_ids(false)
-        .with_thread_names(false)
-        //        .with_target(false)
-        .with_writer(std::io::stderr);
-
-    tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            [
-                // log at info by default
-                "info",
-                // foyer is noisy below warn level
-                "foyer=warn",
-                "foyer_memory=warn",
-                "foyer_storage=warn",
-            ]
-            .join(",")
-            .into()
-        }))
-        .with(stderr_layer)
-        .init();
+    init_tracing();
 
     let args = Args::parse();
 

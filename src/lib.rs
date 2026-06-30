@@ -15,22 +15,32 @@ mod cachereadseek;
 mod cacheworkersource;
 mod dummycache;
 mod error;
+mod fetch_pool;
 mod filesource;
 mod foyercache;
 mod generated;
 pub mod hasher;
+mod io_log;
 mod placeholdersource;
 mod readworker;
+mod s3_creds;
 mod s3source;
 mod sec_read;
 mod seg_path;
 mod segment;
+mod tracing_init;
 mod workersource;
+
+pub use io_log::{IoLog, ReadTimer, ReadTrace, chunk_cache_label};
+pub use tracing_init::init as init_tracing;
 
 #[cfg(test)]
 mod test {
     use crate::{
-        e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Reader, E01ReaderOptions},
+        e01_reader::{
+            CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, DEFAULT_CACHE_MEM_MIB,
+            DEFAULT_S3_CONCURRENCY, E01Reader, E01ReaderOptions,
+        },
         hasher::HashType,
         test_data::*,
         test_helper::do_hash,
@@ -120,53 +130,67 @@ mod test {
         assert_eq!(&act, exp);
     }
 
-    const ERROR_ERROR: E01ReaderOptions = E01ReaderOptions {
-        corrupt_section_policy: CorruptSectionPolicy::Error,
-        corrupt_chunk_policy: CorruptChunkPolicy::Error,
-    };
+    fn error_error() -> E01ReaderOptions {
+        E01ReaderOptions {
+            corrupt_section_policy: CorruptSectionPolicy::Error,
+            corrupt_chunk_policy: CorruptChunkPolicy::Error,
+            foyer_readahead: 0,
+            s3_concurrency: DEFAULT_S3_CONCURRENCY,
+            cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_mode: CacheMode::default(),
+            io_log: None,
+        }
+    }
 
-    const ERROR_ZERO: E01ReaderOptions = E01ReaderOptions {
-        corrupt_section_policy: CorruptSectionPolicy::Error,
-        corrupt_chunk_policy: CorruptChunkPolicy::Zero,
-    };
+    fn error_zero() -> E01ReaderOptions {
+        E01ReaderOptions {
+            corrupt_section_policy: CorruptSectionPolicy::Error,
+            corrupt_chunk_policy: CorruptChunkPolicy::Zero,
+            foyer_readahead: 0,
+            s3_concurrency: DEFAULT_S3_CONCURRENCY,
+            cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_mode: CacheMode::default(),
+            io_log: None,
+        }
+    }
 
     #[test]
     fn test_image_e01() {
-        assert_eq_test_data(&IMAGE_E01, &ERROR_ERROR);
+        assert_eq_test_data(&IMAGE_E01, &error_error());
     }
 
     /*
         #[test]
         fn test_image_e01_zero_bad_chunks() {
-            assert_eq_test_data(&IMAGE_E01, &ERROR_ZERO);
+            assert_eq_test_data(&IMAGE_E01, &error_zero());
         }
     */
 
     #[test]
     fn test_mimage_e01() {
-        assert_eq_test_data(&MIMAGE_E01, &ERROR_ERROR);
+        assert_eq_test_data(&MIMAGE_E01, &error_error());
     }
 
     #[test]
     fn test_mimage_e01_zero_bad_chunks() {
-        assert_eq_test_data(&MIMAGE_E01, &ERROR_ZERO);
+        assert_eq_test_data(&MIMAGE_E01, &error_zero());
     }
 
     #[test]
     #[should_panic]
     fn test_bad_chunk_e01() {
-        assert_eq_test_data(&BAD_CHUNK_E01, &ERROR_ERROR);
+        assert_eq_test_data(&BAD_CHUNK_E01, &error_error());
     }
 
     #[test]
     fn test_bad_chunk_e01_zero_bad_chunks() {
-        assert_eq_test_data(&BAD_CHUNK_E01_ZEROED, &ERROR_ZERO);
+        assert_eq_test_data(&BAD_CHUNK_E01_ZEROED, &error_zero());
     }
 
     /*
         #[test]
         fn test_imageformat_mmls_1_e01() {
-            assert_eq_test_data_nonglob(&IMAGEFORMAT_MMLS_1_E01, &ERROR_ERROR);
+            assert_eq_test_data_nonglob(&IMAGEFORMAT_MMLS_1_E01, &error_error());
         }
     */
 
@@ -187,7 +211,7 @@ mod test {
 
         #[test]
         fn test_dademurphy_e01() {
-            assert_eq_test_data(&DADEMURPHY_E01, &ERROR_ERROR);
+            assert_eq_test_data(&DADEMURPHY_E01, &error_error());
         }
     */
 
@@ -201,7 +225,7 @@ mod test {
 
         #[test]
         fn test_nfury_e01() {
-            assert_eq_test_data(NFURY_E01, &ERROR_ERROR);
+            assert_eq_test_data(NFURY_E01, &error_error());
         }
     */
 }

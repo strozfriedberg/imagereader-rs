@@ -1,15 +1,18 @@
 use kaitai::{BytesReader, KError, ReadSeek};
 use rayon::prelude::*;
-use s3::{bucket::Bucket, creds::Credentials, region::Region};
+use s3::{bucket::Bucket, region::Region};
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    str::FromStr,
+    sync::{Arc, Mutex, atomic::AtomicBool},
 };
 use tokio::runtime::Runtime;
 use tracing::{debug, debug_span, trace, warn};
 use url::{self, Url};
 
+use crate::io_log::{IoLog, ReadTimer, ReadTrace, chunk_cache_label};
+use crate::s3_creds::{S3Auth, resolve_s3_auth, s3_region_name, snapshot_credentials_sync};
 use crate::{
     bytessource::BytesSource,
     cache::Cache,
@@ -19,7 +22,7 @@ use crate::{
     error::{IoError, LibError},
     filesource::FileSource,
     foyercache::FoyerCache,
-    readworker::ReadWorker,
+    readworker::{DecodedChunkCache, ReadWorker},
     s3source::S3Source,
     sec_read::{Chunk, Section, SectionIterator, VolumeSection},
     seg_path::{ExistsChecker, UnrecognizedExtension, validated_segment_paths},
@@ -259,12 +262,14 @@ fn make_bytes_reader(
     idx: usize,
     cache: Arc<Mutex<dyn Cache + Send>>,
     runtime: Arc<Runtime>,
+    s3_auth: Option<&Arc<S3Auth>>,
+    io_log: Option<Arc<IoLog>>,
 ) -> Result<BytesReader, OpenError> {
     debug!("opening {}", p);
 
     let url = path_or_url_to_url(p).ok_or(OpenError::BadPath(p.into()))?;
 
-    let src = source_for_url(&url, &runtime)?;
+    let src = source_for_url(&url, idx, &runtime, s3_auth, io_log.as_ref())?;
 
     let seg_len = src.end();
     cache.lock().unwrap().add_source(idx, src);
@@ -383,10 +388,61 @@ pub enum CorruptChunkPolicy {
     RawIfPossible,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+/// Default concurrent S3 segment fetches (foyer cache misses).
+pub const DEFAULT_S3_CONCURRENCY: usize = 8;
+
+/// Default foyer memory cache capacity (~1 MiB entries when chunk size is 1 MiB).
+pub const DEFAULT_CACHE_MEM_MIB: usize = 1024;
+
+/// How the foyer cache is structured for a session.
+#[derive(Debug, Clone)]
+pub enum CacheMode {
+    /// Local-file backing: a single memory-only cache.
+    SingleMemory,
+    /// S3 backing: a dedicated metadata cache plus a content cache. `regular_phase`
+    /// starts `false` (metadata phase) and is flipped to `true` by the SIGUSR1 handler.
+    DualHybrid {
+        content_disk_mib: usize,
+        metadata_mem_mib: usize,
+        metadata_disk_mib: usize,
+        regular_phase: Arc<AtomicBool>,
+    },
+}
+
+impl Default for CacheMode {
+    fn default() -> Self {
+        CacheMode::SingleMemory
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct E01ReaderOptions {
     pub corrupt_section_policy: CorruptSectionPolicy,
     pub corrupt_chunk_policy: CorruptChunkPolicy,
+    /// Foyer backing-cache readahead in 1 MiB blocks (S3/file segment fetch). 0 disables.
+    pub foyer_readahead: usize,
+    /// Max concurrent in-flight S3 segment byte-range fetches. 0 = serial.
+    pub s3_concurrency: usize,
+    /// Foyer in-memory cache capacity in ~1 MiB entries (see [`DEFAULT_CACHE_MEM_MIB`]).
+    pub cache_mem_mib: usize,
+    /// Cache structure for this session (single vs dedicated-metadata).
+    pub cache_mode: CacheMode,
+    /// When set, append JSONL read/S3 traces (see [`IoLog`]).
+    pub io_log: Option<Arc<IoLog>>,
+}
+
+impl Default for E01ReaderOptions {
+    fn default() -> Self {
+        Self {
+            corrupt_section_policy: CorruptSectionPolicy::default(),
+            corrupt_chunk_policy: CorruptChunkPolicy::default(),
+            foyer_readahead: 0,
+            s3_concurrency: DEFAULT_S3_CONCURRENCY,
+            cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_mode: CacheMode::default(),
+            io_log: None,
+        }
+    }
 }
 
 fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
@@ -404,7 +460,78 @@ fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
     }
 }
 
-fn source_for_url(url: &Url, runtime: &Runtime) -> Result<Box<dyn BytesSource + Send>, OpenError> {
+fn s3_region_for_host_in_region(name: &str, region_name: &str) -> Region {
+    if name.ends_with("-s3alias") || name.ends_with("-ext-s3alias") {
+        Region::Custom {
+            region: region_name.to_string(),
+            endpoint: format!("s3-accesspoint.{region_name}.amazonaws.com"),
+        }
+    } else {
+        Region::from_str(region_name).unwrap_or(Region::UsEast1)
+    }
+}
+
+/// Whether a region was explicitly resolved from env vars or the AWS profile.
+/// When false (and the host is not an access-point alias), `s3_bucket` discovers
+/// the bucket's real region via GetBucketLocation rather than assuming one.
+fn s3_region_configured(auth: &S3Auth) -> bool {
+    s3_region_name(Some(auth)).is_some()
+}
+
+fn s3_region_for_host(name: &str, auth: Option<&S3Auth>) -> Region {
+    // `us-east-1` here is only the bootstrap endpoint used to issue the
+    // GetBucketLocation discovery call when no region is configured; it is not a
+    // regional default. A configured region (env/profile) is used as-is, and an
+    // unconfigured bucket's real region is discovered in `s3_bucket`.
+    let region_name = s3_region_name(auth).unwrap_or_else(|| "us-east-1".to_string());
+    s3_region_for_host_in_region(name, &region_name)
+}
+
+fn s3_bucket(
+    name: &str,
+    ctx: &str,
+    runtime: &Runtime,
+    auth: &Arc<S3Auth>,
+) -> Result<Bucket, OpenError> {
+    let region = s3_region_for_host(name, Some(auth));
+    let credentials = snapshot_credentials_sync(runtime, auth)
+        .map_err(OpenError::from)
+        .map_err(|e| e.with_path(ctx))?;
+
+    let bucket = Bucket::new(name, region, credentials)
+        .map(|b| *b)
+        .map_err(std::io::Error::other)
+        .map_err(OpenError::from)
+        .map_err(|e| e.with_path(ctx))?;
+
+    // A configured region (env/profile) or an access-point alias is trusted as-is.
+    // Otherwise discover the bucket's real region instead of assuming one.
+    if s3_region_configured(auth) || name.ends_with("-s3alias") || name.ends_with("-ext-s3alias") {
+        return Ok(bucket);
+    }
+
+    match runtime.block_on(bucket.location()) {
+        Ok((actual, _)) if actual != bucket.region() => {
+            let credentials = snapshot_credentials_sync(runtime, auth)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(ctx))?;
+            Bucket::new(name, actual, credentials)
+                .map(|b| *b)
+                .map_err(std::io::Error::other)
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(ctx))
+        }
+        Ok(_) | Err(_) => Ok(bucket),
+    }
+}
+
+fn source_for_url(
+    url: &Url,
+    segment: usize,
+    runtime: &Runtime,
+    s3_auth: Option<&Arc<S3Auth>>,
+    io_log: Option<&Arc<IoLog>>,
+) -> Result<Box<dyn BytesSource + Send + Sync>, OpenError> {
     match url.scheme() {
         "file" => {
             let p = if cfg!(windows) {
@@ -425,14 +552,12 @@ fn source_for_url(url: &Url, runtime: &Runtime) -> Result<Box<dyn BytesSource + 
             }))
         }
         "s3" => {
+            let auth = s3_auth.ok_or_else(|| {
+                OpenError::from(std::io::Error::other("S3 credentials not resolved"))
+            })?;
             let name = url.host_str().ok_or(OpenError::BadPath(url.to_string()))?;
-
-            let bucket = *Bucket::new(name, Region::UsEast1, Credentials::anonymous().unwrap())
-                .map_err(std::io::Error::other)
-                .map_err(OpenError::from)
-                .map_err(|e| e.with_path(url))?;
-
-            let key = url.path();
+            let key = url.path().trim_start_matches('/');
+            let bucket = s3_bucket(name, url.as_ref(), runtime, auth)?;
 
             let (h, _) = runtime
                 .block_on(bucket.head_object(key))
@@ -443,7 +568,14 @@ fn source_for_url(url: &Url, runtime: &Runtime) -> Result<Box<dyn BytesSource + 
             let len = h.content_length.unwrap().try_into().unwrap();
             debug!("content-length: {len}");
 
-            Ok(Box::new(S3Source::new(bucket, key.into(), len)))
+            Ok(Box::new(S3Source::new(
+                bucket,
+                key.to_string(),
+                len,
+                auth.clone(),
+                segment,
+                io_log.cloned(),
+            )))
         }
         _ => Err(OpenError::UnsupportedScheme(url.to_string())),
     }
@@ -469,8 +601,12 @@ pub struct E01Reader {
 
     workers: Vec<ReadWorker>,
     cache: Arc<Mutex<dyn Cache + Send>>,
+    decoded_chunk_cache: Arc<Mutex<DecodedChunkCache>>,
     runtime: Arc<Runtime>,
+    io_log: Option<Arc<IoLog>>,
 }
+
+const DECODED_CHUNK_CACHE_CHUNKS: usize = 1024;
 
 impl Debug for E01Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -500,20 +636,22 @@ impl ExistsChecker for FileChecker {
 }
 
 struct S3Checker {
-    bucket: Bucket,
+    bucket_name: String,
+    region: Region,
     runtime: Arc<Runtime>,
+    auth: Arc<S3Auth>,
 }
 
 impl S3Checker {
-    fn new(url: &Url, runtime: Arc<Runtime>) -> Result<Self, OpenError> {
+    fn new(url: &Url, runtime: Arc<Runtime>, auth: Arc<S3Auth>) -> Result<Self, OpenError> {
         let name = url.host_str().ok_or(OpenError::BadPath(url.to_string()))?;
-
-        let bucket = *Bucket::new(name, Region::UsEast1, Credentials::anonymous().unwrap())
-            .map_err(std::io::Error::other)
-            .map_err(OpenError::from)
-            .map_err(|e| e.with_path(url))?;
-
-        Ok(Self { bucket, runtime })
+        let bucket = s3_bucket(name, url.as_ref(), &runtime, &auth)?;
+        Ok(Self {
+            bucket_name: name.to_string(),
+            region: bucket.region().clone(),
+            runtime,
+            auth,
+        })
     }
 }
 
@@ -521,9 +659,20 @@ impl ExistsChecker for S3Checker {
     fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
         Url::parse(path.as_ref())
             .map(|url| {
-                self.runtime
-                    .block_on(self.bucket.head_object(url.path()))
-                    .is_ok_and(|(_, code)| code == 200)
+                let bucket = snapshot_credentials_sync(&self.runtime, &self.auth)
+                    .ok()
+                    .and_then(|credentials| {
+                        Bucket::new(&self.bucket_name, self.region.clone(), credentials)
+                            .ok()
+                            .map(|b| *b)
+                    });
+                bucket
+                    .map(|bucket| {
+                        self.runtime
+                            .block_on(bucket.head_object(url.path().trim_start_matches('/')))
+                            .is_ok_and(|(_, code)| code == 200)
+                    })
+                    .unwrap_or(false)
             })
             .unwrap_or(false)
     }
@@ -545,15 +694,21 @@ impl E01Reader {
                 validated_segment_paths(example_segment_path, FileChecker)?,
                 options,
                 runtime,
+                None,
             ),
-            "s3" => Self::open_impl(
-                validated_segment_paths(
-                    example_segment_path,
-                    S3Checker::new(&url, runtime.clone())?,
-                )?,
-                options,
-                runtime,
-            ),
+            "s3" => {
+                let s3_auth = resolve_s3_auth(&runtime).map_err(OpenError::from)?;
+                let auth = Arc::new(s3_auth);
+                Self::open_impl(
+                    validated_segment_paths(
+                        example_segment_path,
+                        S3Checker::new(&url, runtime.clone(), auth.clone())?,
+                    )?,
+                    options,
+                    runtime,
+                    Some(auth),
+                )
+            }
             _ => Err(OpenError::UnsupportedScheme(url.to_string())),
         }
     }
@@ -565,39 +720,71 @@ impl E01Reader {
         let runtime =
             Arc::new(tokio::runtime::Runtime::new().map_err(InitError::TokioRuntimeFailed)?);
 
-        Self::open_impl(segment_paths, options, runtime)
+        let paths: Vec<String> = segment_paths
+            .into_iter()
+            .map(|p| p.as_ref().to_string())
+            .collect();
+        let s3_auth = if paths.iter().any(|p| p.starts_with("s3://")) {
+            Some(Arc::new(
+                resolve_s3_auth(&runtime).map_err(OpenError::from)?,
+            ))
+        } else {
+            None
+        };
+
+        Self::open_impl(paths, options, runtime, s3_auth)
     }
 
     fn open_impl<T: IntoIterator<Item: AsRef<str>>>(
         segment_paths: T,
         options: &E01ReaderOptions,
         runtime: Arc<Runtime>,
+        s3_auth: Option<Arc<S3Auth>>,
     ) -> Result<Self, OpenError> {
         let mut sp_itr = segment_paths.into_iter().peekable();
 
-        //        let c = DummyCache::new();
-
-        let cache_disk_size = match sp_itr.peek() {
-            Some(p) if p.as_ref().starts_with("s3://") => 256,
-            Some(_) => 0,
-            None => return Err(OpenError::NoSegmentFiles),
-        };
+        if sp_itr.peek().is_none() {
+            return Err(OpenError::NoSegmentFiles);
+        }
 
         let cache_chunk_size = 1024 * 1024;
-        let cache_mem_size = 1024;
-        let c = runtime
-            .block_on(FoyerCache::with_default_cache(
-                cache_chunk_size,
-                cache_mem_size,
-                cache_disk_size,
-                0,
-            ))
-            .map_err(InitError::CacheSetupFailed)?;
+        let cache_mem_size = options.cache_mem_mib;
+        let foyer_readahead = options.foyer_readahead;
+        let s3_concurrency = options.s3_concurrency;
+        let c = match options.cache_mode.clone() {
+            CacheMode::SingleMemory => runtime
+                .block_on(FoyerCache::single_memory(
+                    cache_chunk_size,
+                    cache_mem_size,
+                    foyer_readahead,
+                    s3_concurrency,
+                ))
+                .map_err(InitError::CacheSetupFailed)?,
+            CacheMode::DualHybrid {
+                content_disk_mib,
+                metadata_mem_mib,
+                metadata_disk_mib,
+                regular_phase,
+            } => runtime
+                .block_on(FoyerCache::dual_hybrid(
+                    cache_chunk_size,
+                    cache_mem_size,
+                    content_disk_mib,
+                    metadata_mem_mib,
+                    metadata_disk_mib,
+                    foyer_readahead,
+                    s3_concurrency,
+                    regular_phase,
+                ))
+                .map_err(InitError::CacheSetupFailed)?,
+        };
 
         let cache = Arc::new(Mutex::new(c));
 
         let ignore_checksums =
             options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;
+
+        let io_log = options.io_log.clone();
 
         // read the segment metadata
         let segs = sp_itr
@@ -607,7 +794,14 @@ impl E01Reader {
             .into_par_iter()
             .enumerate()
             .map(|(idx, sp)| {
-                let io = make_bytes_reader(&sp, idx, cache.clone(), runtime.clone())?;
+                let io = make_bytes_reader(
+                    &sp,
+                    idx,
+                    cache.clone(),
+                    runtime.clone(),
+                    s3_auth.as_ref(),
+                    io_log.clone(),
+                )?;
                 read_segment(sp, idx, &io, ignore_checksums)
             })
             .collect::<Result<Vec<SegmentComponents>, _>>()?;
@@ -644,7 +838,11 @@ impl E01Reader {
             corrupt_chunk_policy: options.corrupt_chunk_policy,
             workers: vec![],
             cache,
+            decoded_chunk_cache: Arc::new(Mutex::new(DecodedChunkCache::new(
+                DECODED_CHUNK_CACHE_CHUNKS,
+            ))),
             runtime,
+            io_log: options.io_log.clone(),
         })
     }
 
@@ -653,6 +851,8 @@ impl E01Reader {
         mut offset: u64,
         mut buf: &mut [u8],
     ) -> Result<usize, ReadError> {
+        let timer = self.io_log.as_ref().map(|_| ReadTimer::start());
+        let read_offset = offset;
         // don't start reading past the end
         let image_end = self.image_size;
         if offset > image_end {
@@ -671,6 +871,15 @@ impl E01Reader {
 
         let beg_chunk_index = (buf_beg / chunk_size) as usize;
         let end_chunk_index = (buf_end / chunk_size + (buf_end % chunk_size).min(1)) as usize;
+
+        let chunk_hit = if crate::readworker::ENABLE_DECODED_CHUNK_CACHE {
+            let mut cache = self.decoded_chunk_cache.lock().unwrap();
+            Some((beg_chunk_index..end_chunk_index).all(|idx| cache.get(idx).is_some()))
+        } else {
+            None
+        };
+
+        let foyer_trace = Arc::new(Mutex::new(ReadTrace::default()));
 
         // TODO: Number of workers should have some fixed/configured maximum,
         // should not scale with the number of chunks to be fetched.
@@ -710,12 +919,14 @@ impl E01Reader {
                 cache: self.cache.clone(),
                 runtime: self.runtime.clone(),
                 idx: chunk.segment,
+                foyer_trace: Some(foyer_trace.clone()),
             };
-
+            let decoded_chunk_cache = self.decoded_chunk_cache.clone();
             tasks.push((
                 chunk_index,
                 chunk,
                 src,
+                decoded_chunk_cache,
                 bleft,
                 beg_in_chunk,
                 end_in_chunk,
@@ -726,26 +937,153 @@ impl E01Reader {
             offset += end_in_buf - beg_in_buf;
         }
 
-        //        tasks.into_iter()
-        tasks.into_par_iter().try_for_each(
-            |(chunk_index, chunk, mut src, sbuf, beg_in_chunk, end_in_chunk, seg_path, worker)| {
-                worker
-                    .read(
-                        chunk,
-                        &mut src,
-                        chunk_index,
-                        sbuf,
-                        beg_in_chunk,
-                        end_in_chunk,
-                    )
-                    .map_err(ReadError::from)
-                    .map_err(|e| e.with_path(seg_path))
-            },
-        )?;
+        if tasks.len() == 1 {
+            let (
+                chunk_index,
+                chunk,
+                mut src,
+                decoded_chunk_cache,
+                sbuf,
+                beg_in_chunk,
+                end_in_chunk,
+                seg_path,
+                worker,
+            ) = tasks.into_iter().next().expect("one task");
+            worker
+                .read_cached(
+                    chunk,
+                    &mut src,
+                    chunk_index,
+                    sbuf,
+                    beg_in_chunk,
+                    end_in_chunk,
+                    &decoded_chunk_cache,
+                )
+                .map_err(ReadError::from)
+                .map_err(|e| e.with_path(seg_path))?;
+        } else {
+            tasks.into_par_iter().try_for_each(
+                |(
+                    chunk_index,
+                    chunk,
+                    mut src,
+                    decoded_chunk_cache,
+                    sbuf,
+                    beg_in_chunk,
+                    end_in_chunk,
+                    seg_path,
+                    worker,
+                )| {
+                    worker
+                        .read_cached(
+                            chunk,
+                            &mut src,
+                            chunk_index,
+                            sbuf,
+                            beg_in_chunk,
+                            end_in_chunk,
+                            &decoded_chunk_cache,
+                        )
+                        .map_err(ReadError::from)
+                        .map_err(|e| e.with_path(seg_path))
+                },
+            )?;
+        }
 
-        Ok((offset - buf_beg) as usize)
+        let read_len = (offset - buf_beg) as usize;
+        if let Some(log) = &self.io_log {
+            let dur_us = timer.as_ref().map(ReadTimer::elapsed_us).unwrap_or(0);
+            let foyer = foyer_trace.lock().unwrap().foyer_label();
+            log.log_read(
+                read_offset,
+                read_len,
+                dur_us,
+                foyer,
+                chunk_cache_label(chunk_hit),
+            );
+        }
+
+        Ok(read_len)
     }
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    use super::*;
+    use s3::creds::Credentials;
+
+    #[test]
+    fn repeated_partial_reads_match_single_read() {
+        let options = E01ReaderOptions {
+            corrupt_section_policy: CorruptSectionPolicy::Error,
+            corrupt_chunk_policy: CorruptChunkPolicy::Error,
+            foyer_readahead: 0,
+            s3_concurrency: DEFAULT_S3_CONCURRENCY,
+            cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_mode: CacheMode::default(),
+            io_log: None,
+        };
+        let mut reader =
+            E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
+        let chunk_size = reader.chunk_size as u64;
+        let base = chunk_size * 3;
+        let span = 4096usize;
+
+        let mut first = vec![0u8; span];
+        let mut second = vec![0u8; span];
+        reader.read_at_offset(base + 100, &mut first).unwrap();
+        reader
+            .read_at_offset(base + 100 + span as u64, &mut second)
+            .unwrap();
+
+        let mut combined = vec![0u8; span * 2];
+        reader.read_at_offset(base + 100, &mut combined).unwrap();
+
+        assert_eq!(&combined[..span], &first[..]);
+        assert_eq!(&combined[span..], &second[..]);
+    }
+
+    #[test]
+    fn parallel_then_serial_reads_same_chunk_stay_consistent() {
+        let options = E01ReaderOptions {
+            corrupt_section_policy: CorruptSectionPolicy::Error,
+            corrupt_chunk_policy: CorruptChunkPolicy::Error,
+            foyer_readahead: 0,
+            s3_concurrency: DEFAULT_S3_CONCURRENCY,
+            cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_mode: CacheMode::default(),
+            io_log: None,
+        };
+        let mut reader =
+            E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
+        let chunk_size = reader.chunk_size as u64;
+        let base = chunk_size * 2;
+
+        let mut cross = vec![0u8; (chunk_size * 2) as usize];
+        reader.read_at_offset(base, &mut cross).unwrap();
+
+        let mut again = vec![0u8; 4096];
+        reader.read_at_offset(base + 8192, &mut again).unwrap();
+
+        assert_eq!(&again[..], &cross[8192..8192 + 4096]);
+    }
+
+    #[test]
+    fn s3_access_point_alias_uses_accesspoint_domain() {
+        let region = s3_region_for_host_in_region("foo-s3alias", "us-east-1");
+        match &region {
+            Region::Custom { region, endpoint } => {
+                assert_eq!(region, "us-east-1");
+                assert_eq!(endpoint, "s3-accesspoint.us-east-1.amazonaws.com");
+            }
+            _ => panic!("expected custom access point region"),
+        }
+
+        let bucket =
+            *Bucket::new("foo-s3alias", region, Credentials::anonymous().unwrap()).unwrap();
+        assert_eq!(
+            bucket.host(),
+            "foo-s3alias.s3-accesspoint.us-east-1.amazonaws.com"
+        );
+    }
+}

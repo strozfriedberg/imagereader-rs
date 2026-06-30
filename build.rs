@@ -21,6 +21,11 @@ fn remove_inner_attrs(file: &str) {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed=src/");
+    println!("cargo:rerun-if-changed=ksy/");
+
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let env_var_compiler_name = "KAITAI_STRUCT_COMPILER";
 
