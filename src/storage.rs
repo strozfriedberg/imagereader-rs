@@ -12,6 +12,7 @@ const SECTOR_SIZE: u64 = 512;
 #[derive(Debug)]
 pub struct SparseStorage {
     pub file: Box<dyn ReadSeek>,
+    #[allow(dead_code)]
     pub filename: String,
     pub grain_table: HashMap<u64 /*sector*/, u64 /*real sector in file*/>,
     // size size_grain * 512
@@ -23,6 +24,7 @@ pub struct SparseStorage {
 #[derive(Debug)]
 pub struct FlatStorage {
     pub file: Box<dyn ReadSeek>,
+    #[allow(dead_code)]
     pub filename: String,
     pub offset: u64,
 }

@@ -5,7 +5,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::runtime::Runtime;
-use tracing::info;
 use url::Url;
 
 use crate::{

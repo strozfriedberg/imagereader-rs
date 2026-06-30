@@ -37,7 +37,9 @@ pub struct VmdkReader {
 
     spans: Vec<(u64, (u64, usize))>,
     extents: Vec<Extent>,
+    #[allow(dead_code)]
     cache: Arc<Mutex<dyn Cache + Send>>,
+    #[allow(dead_code)]
     runtime: Arc<Runtime>,
 }
 
@@ -228,7 +230,7 @@ fn handle_image(
     let descriptor = match ft {
         // this has an internal descriptor
         Some(FileType::Vmdk4) => {
-            let p = crs.seek(SeekFrom::Start(0))?;
+            crs.seek(SeekFrom::Start(0))?;
             let mut h = Vmdk4Header::from_reader(&mut crs)?;
 
             if h.use_secondary() {

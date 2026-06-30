@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use aws_config::BehaviorVersion;
 use aws_config::default_provider::credentials::DefaultCredentialsChain;
@@ -202,6 +202,7 @@ pub fn snapshot_credentials_sync(
     Ok(runtime.block_on(async { auth.shared_creds.read().await.clone() }))
 }
 
+#[allow(dead_code)]
 pub async fn snapshot_credentials_async(auth: &S3Auth) -> Result<Credentials, std::io::Error> {
     ensure_fresh_async(auth).await?;
     Ok(auth.shared_creds.read().await.clone())
@@ -238,6 +239,7 @@ pub async fn ensure_fresh_async(auth: &S3Auth) -> Result<(), std::io::Error> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::SystemTime;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 

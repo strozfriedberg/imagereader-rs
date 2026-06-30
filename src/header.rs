@@ -9,6 +9,7 @@ use crate::{
 const SECTOR_SIZE: u64 = 512;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Vmdk3Header {
     magic: [u8; 4],
     version: u32,
@@ -46,6 +47,7 @@ impl Vmdk3Header {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Vmdk4Header {
     magic: [u8; 4],
     version: u32,
@@ -101,6 +103,7 @@ impl Vmdk4Header {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct VmdkSeSparseConstHeader {
     magic: [u8; 8],
     version: u64,
@@ -300,6 +303,7 @@ pub enum FileType {
 }
 
 impl FileType {
+    #[allow(dead_code)]
     pub fn sig_len(&self) -> usize {
         match self {
             FileType::Vmdk3 | FileType::Vmdk4 => 4,
@@ -347,7 +351,7 @@ pub fn read_header_sparse<T: Read + Seek + Clone + Send + 'static>(
             if h.use_secondary() {
                 // secondary header is 1024 bytes from the end of the file
                 src.seek(SeekFrom::End(-1024))?;
-                let ft = check_signature(&mut src)?;
+                let _ft = check_signature(&mut src)?;
                 src.seek(SeekFrom::End(-1024))?;
 
                 Vmdk4Header::from_reader(&mut src)

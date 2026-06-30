@@ -4,11 +4,13 @@ use crate::{
     bytessource::BytesSource, cache::Cache, io_log::ReadTrace, placeholdersource::PlaceholderSource,
 };
 
+#[allow(dead_code)]
 pub struct DummyCache {
     sources: Vec<Box<dyn BytesSource + Send + Sync>>,
 }
 
 impl DummyCache {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self { sources: vec![] }
     }
