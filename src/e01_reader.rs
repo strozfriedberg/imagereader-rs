@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, Mutex, atomic::AtomicBool},
 };
 use tokio::runtime::Runtime;
-use tracing::{debug, debug_span, trace, warn};
+use tracing::{debug, warn};
 use url::{self, Url};
 
 use crate::io_log::{IoLog, ReadTimer, ReadTrace, chunk_cache_label};
@@ -18,7 +18,6 @@ use crate::{
     cache::Cache,
     cachereadseek::CacheReadSeek,
     cacheworkersource::CacheWorkerSource,
-    dummycache::DummyCache,
     error::{IoError, LibError},
     filesource::FileSource,
     foyercache::FoyerCache,
@@ -294,7 +293,6 @@ struct E01Metadata {
 
 fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
     segs: S,
-    ignore_checksums: bool,
 ) -> Result<E01Metadata, OpenError> {
     let mut volume = None;
     let mut stored_md5 = None;
@@ -807,7 +805,7 @@ impl E01Reader {
             .collect::<Result<Vec<SegmentComponents>, _>>()?;
 
         // process segment metadata
-        let meta = process_segments(segs, ignore_checksums)?;
+        let meta = process_segments(segs)?;
 
         let exp_chunk_count = meta.volume.chunk_count as usize;
         let chunk_count = meta.chunks.len();

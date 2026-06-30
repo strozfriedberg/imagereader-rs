@@ -26,6 +26,7 @@ impl TryFrom<u16> for CompressionMethod {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct SegmentFileHeader {
     major_version: u8,
     minor_version: u8,

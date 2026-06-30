@@ -89,6 +89,7 @@ mod test {
     }
 
     #[track_caller]
+    #[allow(dead_code)]
     fn assert_eq_test_data_nonglob(exp: &TestData, options: &E01ReaderOptions) {
         let mut reader = E01Reader::open(exp.segment_paths, options).unwrap();
 

@@ -76,6 +76,7 @@ pub const BAD_CHUNK_E01_ZEROED: TestData = TestData {
     sha256: Some("077861781adaad81e64b229111ef4a490884eecee74eb7c91fed5d291995caf2"),
 };
 
+#[allow(dead_code)]
 pub const IMAGEFORMAT_MMLS_1_E01: TestData = TestData {
     segment_paths: &["s3://digitalcorpora/corpora/drives/dftt-2004/imageformat_mmls_1.E01"],
     chunk_size: 32768,
