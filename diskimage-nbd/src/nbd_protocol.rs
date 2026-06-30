@@ -226,6 +226,10 @@ fn serve_read(
     let timer = io_log.map(|_| ReadTimer::start());
     if let Some(error) = read_request_error(offset, length, export_size) {
         write_simple_reply(stream, error, handle)?;
+        if let Some(log) = io_log {
+            let dur_us = timer.as_ref().map(ReadTimer::elapsed_us).unwrap_or(0);
+            log.log_nbd_read(offset, req_len, dur_us);
+        }
         return Ok(());
     }
 
