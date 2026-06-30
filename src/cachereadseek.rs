@@ -5,6 +5,7 @@ use std::{
 use tokio::runtime::Runtime;
 
 use crate::cache::Cache;
+use crate::io_log::ReadTrace;
 
 pub struct CacheReadSeek {
     cache: Arc<Mutex<dyn Cache + Send>>,
@@ -32,7 +33,9 @@ impl CacheReadSeek {
 impl Read for CacheReadSeek {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
         let mut cache = self.cache.lock().expect("poisoned");
-        self.runtime.block_on(cache.read(self.idx, self.pos, buf))?;
+        let mut trace = ReadTrace::default();
+        self.runtime
+            .block_on(cache.read(self.idx, self.pos, buf, &mut trace))?;
 
         self.pos += buf.len() as u64;
         Ok(buf.len())
