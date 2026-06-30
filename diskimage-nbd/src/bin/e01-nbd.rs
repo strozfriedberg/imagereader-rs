@@ -2,22 +2,12 @@
 
 use clap::Parser;
 use diskimage_nbd::{
-    CommonArgs, NbdImage, init_tracing,
-    server::{
-        bind_unix, log_cache_opts, open_io_log, register_sigusr1, run_accept_loop_tcp,
-        run_accept_loop_unix,
-    },
+    CommonArgs, NbdImage, init_tracing, make_cache_phase, run_serve, server::open_io_log,
 };
 use e01::e01_reader::{
     CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, E01Reader, E01ReaderOptions,
 };
-use std::{
-    error::Error,
-    io,
-    net::TcpListener,
-    process::ExitCode,
-    sync::{Arc, Mutex, atomic::AtomicBool},
-};
+use std::{io, process::ExitCode, sync::Arc};
 
 #[derive(Parser)]
 #[command(author, version, about = "Serve an E01 image over NBD", long_about = None)]
@@ -47,19 +37,26 @@ impl NbdImage for E01Adapter {
     }
 }
 
-fn open_reader(args: &Args, cache_mode: CacheMode) -> Result<E01Adapter, Box<dyn Error>> {
+fn open_reader(
+    path: &str,
+    ignore_checksums: bool,
+    readahead: usize,
+    s3_concurrency: usize,
+    cache_mem_mib: usize,
+    cache_mode: CacheMode,
+) -> Result<E01Adapter, Box<dyn std::error::Error>> {
     E01Reader::open_glob(
-        &args.e01_path,
+        path,
         &E01ReaderOptions {
             corrupt_section_policy: CorruptSectionPolicy::Error,
-            corrupt_chunk_policy: if args.ignore_checksums {
+            corrupt_chunk_policy: if ignore_checksums {
                 CorruptChunkPolicy::Zero
             } else {
                 CorruptChunkPolicy::Error
             },
-            foyer_readahead: args.common.readahead,
-            s3_concurrency: args.common.s3_concurrency,
-            cache_mem_mib: args.common.cache_mem_mib,
+            foyer_readahead: readahead,
+            s3_concurrency,
+            cache_mem_mib,
             cache_mode,
             // S3/cache traces via e01's own IoLog are a separate concern; the
             // --io-log flag here captures only NBD-level reads via diskimage-nbd's IoLog.
@@ -70,54 +67,44 @@ fn open_reader(args: &Args, cache_mode: CacheMode) -> Result<E01Adapter, Box<dyn
     .map_err(Into::into)
 }
 
-fn run(args: Args) -> Result<(), Box<dyn Error>> {
-    let io_log = open_io_log(args.common.io_log.as_deref())?;
-
-    let cache_mode = if args.common.metadata_cache {
-        let regular_phase = Arc::new(AtomicBool::new(false));
-        register_sigusr1(regular_phase.clone());
+fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    let Args {
+        e01_path,
+        ignore_checksums,
+        common,
+    } = args;
+    let io_log = open_io_log(common.io_log.as_deref())?;
+    let cache_mode = if common.metadata_cache {
         CacheMode::DualHybrid {
-            content_disk_mib: args.common.content_cache_disk_mib,
-            metadata_mem_mib: args.common.metadata_cache_mem_mib,
-            metadata_disk_mib: args.common.metadata_cache_disk_mib,
-            regular_phase,
+            content_disk_mib: common.content_cache_disk_mib,
+            metadata_mem_mib: common.metadata_cache_mem_mib,
+            metadata_disk_mib: common.metadata_cache_disk_mib,
+            regular_phase: make_cache_phase(&common),
         }
     } else {
         CacheMode::SingleMemory
     };
-
-    #[cfg(unix)]
-    if let Some(unix_path) = &args.common.unix {
-        let listener = bind_unix(unix_path)?;
-        tracing::info!(
-            "socket bound at {}; opening {}",
-            unix_path.display(),
-            args.e01_path
-        );
-        let adapter = open_reader(&args, cache_mode)?;
-        let image_size = adapter.size();
-        let reader = Arc::new(Mutex::new(adapter));
-        log_cache_opts(&args.common);
-        tracing::info!(
-            "listening on unix:{}; image size {} bytes",
-            unix_path.display(),
-            image_size
-        );
-        return run_accept_loop_unix(listener, unix_path, reader, io_log).map_err(Into::into);
-    }
-
-    tracing::info!("opening {}", args.e01_path);
-    let adapter = open_reader(&args, cache_mode)?;
-    let image_size = adapter.size();
-    let reader = Arc::new(Mutex::new(adapter));
-    log_cache_opts(&args.common);
-    let listener = TcpListener::bind(args.common.listen)?;
-    tracing::info!(
-        "listening on {}; image size {} bytes",
-        args.common.listen,
-        image_size
+    let (readahead, s3_concurrency, cache_mem_mib) = (
+        common.readahead,
+        common.s3_concurrency,
+        common.cache_mem_mib,
     );
-    run_accept_loop_tcp(listener, reader, io_log).map_err(Into::into)
+    let path = e01_path.clone();
+    run_serve(
+        common,
+        &e01_path,
+        move || {
+            open_reader(
+                &path,
+                ignore_checksums,
+                readahead,
+                s3_concurrency,
+                cache_mem_mib,
+                cache_mode,
+            )
+        },
+        io_log,
+    )
 }
 
 fn main() -> ExitCode {

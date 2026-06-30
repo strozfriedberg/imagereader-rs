@@ -72,6 +72,17 @@ pub fn open_io_log(path: Option<&Path>) -> io::Result<Option<Arc<IoLog>>> {
     }
 }
 
+/// Create the `regular_phase` flag and, when `metadata_cache` is enabled, register a SIGUSR1
+/// handler that flips it.  Must be called before any blocking S3 open — the default SIGUSR1
+/// disposition is terminate.
+pub fn make_cache_phase(common: &CommonArgs) -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    if common.metadata_cache {
+        register_sigusr1(flag.clone());
+    }
+    flag
+}
+
 /// Register a SIGUSR1 handler that sets `flag` to true.  Must be called before any blocking
 /// S3 open — the default disposition for SIGUSR1 is terminate.
 pub fn register_sigusr1(flag: Arc<AtomicBool>) {
@@ -218,4 +229,53 @@ where
         });
     }
     Ok(())
+}
+
+/// Open a reader via `open`, then bind the appropriate transport and serve clients.
+///
+/// On Unix, the socket is bound before `open` is called (bind-before-open) so that
+/// orchestrators can detect readiness via the socket path immediately.
+pub fn run_serve<I, E, F>(
+    common: CommonArgs,
+    image_path: &str,
+    open: F,
+    io_log: Option<Arc<IoLog>>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    I: NbdImage + Send + 'static,
+    E: Into<Box<dyn std::error::Error>>,
+    F: FnOnce() -> Result<I, E>,
+{
+    #[cfg(unix)]
+    if let Some(unix_path) = &common.unix {
+        let listener = bind_unix(unix_path)?;
+        tracing::info!(
+            "socket bound at {}; opening {}",
+            unix_path.display(),
+            image_path
+        );
+        let adapter = open().map_err(Into::into)?;
+        let image_size = adapter.size();
+        let reader = Arc::new(Mutex::new(adapter));
+        log_cache_opts(&common);
+        tracing::info!(
+            "listening on unix:{}; image size {} bytes",
+            unix_path.display(),
+            image_size
+        );
+        return run_accept_loop_unix(listener, unix_path, reader, io_log).map_err(Into::into);
+    }
+
+    tracing::info!("opening {}", image_path);
+    let adapter = open().map_err(Into::into)?;
+    let image_size = adapter.size();
+    let reader = Arc::new(Mutex::new(adapter));
+    log_cache_opts(&common);
+    let listener = TcpListener::bind(common.listen)?;
+    tracing::info!(
+        "listening on {}; image size {} bytes",
+        common.listen,
+        image_size
+    );
+    run_accept_loop_tcp(listener, reader, io_log).map_err(Into::into)
 }
