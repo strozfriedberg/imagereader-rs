@@ -139,6 +139,10 @@ where
     S: Read + Write,
     I: NbdImage,
 {
+    // Hold the lock for the entire connection. Format readers are stateful and
+    // not thread-safe. The accept loops spawn one thread per client, but only
+    // one client is active at a time — all others block here until the current
+    // client disconnects (intentional single-client-at-a-time model).
     let mut reader = reader.lock().unwrap();
     let export_size = reader.size();
     handshake(&mut stream, export_size)?;
