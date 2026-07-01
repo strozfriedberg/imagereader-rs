@@ -75,25 +75,26 @@ pub fn open_io_log(path: Option<&Path>) -> io::Result<Option<Arc<IoLog>>> {
 /// Create the `regular_phase` flag and, when `metadata_cache` is enabled, register a SIGUSR1
 /// handler that flips it.  Must be called before any blocking S3 open — the default SIGUSR1
 /// disposition is terminate.
-pub fn make_cache_phase(common: &CommonArgs) -> Arc<AtomicBool> {
+pub fn make_cache_phase(common: &CommonArgs) -> io::Result<Arc<AtomicBool>> {
     let flag = Arc::new(AtomicBool::new(false));
     if common.metadata_cache {
-        register_sigusr1(flag.clone());
+        register_sigusr1(flag.clone())?;
     }
-    flag
+    Ok(flag)
 }
 
 /// Register a SIGUSR1 handler that sets `flag` to true.  Must be called before any blocking
 /// S3 open — the default disposition for SIGUSR1 is terminate.
-pub fn register_sigusr1(flag: Arc<AtomicBool>) {
+pub fn register_sigusr1(flag: Arc<AtomicBool>) -> io::Result<()> {
     let mut signals = signal_hook::iterator::Signals::new([signal_hook::consts::SIGUSR1])
-        .expect("register SIGUSR1 handler");
+        .map_err(|e| io::Error::other(format!("register SIGUSR1 handler: {e}")))?;
     std::thread::spawn(move || {
         for _ in signals.forever() {
             flag.store(true, Ordering::Release);
             tracing::info!("cache: metadata phase ended, switched to regular phase (SIGUSR1)");
         }
     });
+    Ok(())
 }
 
 pub fn log_cache_opts(args: &CommonArgs) {

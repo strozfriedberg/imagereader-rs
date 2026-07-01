@@ -7,7 +7,7 @@ use diskimage_nbd::{
 use e01::e01_reader::{
     CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, E01Reader, E01ReaderOptions,
 };
-use std::{io, process::ExitCode, sync::Arc};
+use std::{io, process::ExitCode};
 
 #[derive(Parser)]
 #[command(author, version, about = "Serve an E01 image over NBD", long_about = None)]
@@ -79,7 +79,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             content_disk_mib: common.content_cache_disk_mib,
             metadata_mem_mib: common.metadata_cache_mem_mib,
             metadata_disk_mib: common.metadata_cache_disk_mib,
-            regular_phase: make_cache_phase(&common),
+            regular_phase: make_cache_phase(&common)?,
         }
     } else {
         CacheMode::SingleMemory

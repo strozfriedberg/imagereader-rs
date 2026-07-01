@@ -4,7 +4,7 @@ use clap::Parser;
 use diskimage_nbd::{
     CommonArgs, NbdImage, init_tracing, make_cache_phase, run_serve, server::open_io_log,
 };
-use std::{io, process::ExitCode, sync::Arc};
+use std::{io, process::ExitCode};
 use vmdkrs::vmdk_reader::{CacheMode, VmdkReader, VmdkReaderOptions};
 
 #[derive(Parser)]
@@ -63,7 +63,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             content_disk_mib: common.content_cache_disk_mib,
             metadata_mem_mib: common.metadata_cache_mem_mib,
             metadata_disk_mib: common.metadata_cache_disk_mib,
-            regular_phase: make_cache_phase(&common),
+            regular_phase: make_cache_phase(&common)?,
         }
     } else {
         CacheMode::SingleMemory
