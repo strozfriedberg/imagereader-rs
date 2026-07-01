@@ -200,19 +200,6 @@ fn stamp_json_line(line: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::stamp_json_line;
-
-    #[test]
-    fn stamp_json_line_prepends_ts() {
-        let out = stamp_json_line(r#"{"kind":"read","offset":0}"#);
-        assert!(out.starts_with(r#"{"ts":""#));
-        assert!(out.contains(r#""kind":"read""#));
-        assert!(out.ends_with(r#""offset":0}"#));
-    }
-}
-
 pub struct ReadTimer {
     start: Instant,
 }
@@ -226,5 +213,18 @@ impl ReadTimer {
 
     pub fn elapsed_us(&self) -> u64 {
         self.start.elapsed().as_micros().min(u64::MAX as u128) as u64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stamp_json_line;
+
+    #[test]
+    fn stamp_json_line_prepends_ts() {
+        let out = stamp_json_line(r#"{"kind":"read","offset":0}"#);
+        assert!(out.starts_with(r#"{"ts":""#));
+        assert!(out.contains(r#""kind":"read""#));
+        assert!(out.ends_with(r#""offset":0}"#));
     }
 }

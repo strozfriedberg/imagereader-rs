@@ -103,14 +103,13 @@ fn write_simple_error(stream: &mut impl Write, err: io::Error, handle: u64) -> i
             use std::error::Error as _;
             let mut src = err.source();
             while let Some(e) = src {
-                if let Some(io_e) = e.downcast_ref::<io::Error>() {
-                    if let Some(c) = io_e
+                if let Some(io_e) = e.downcast_ref::<io::Error>()
+                    && let Some(c) = io_e
                         .raw_os_error()
                         .and_then(|c| u32::try_from(c).ok())
                         .filter(|&c| c != 0)
-                    {
-                        return Some(c);
-                    }
+                {
+                    return Some(c);
                 }
                 src = e.source();
             }
@@ -212,6 +211,7 @@ pub fn handshake(stream: &mut (impl Read + Write), export_size: u64) -> io::Resu
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 8 distinct protocol-framing params; a struct would obscure the NBD wire layout
 fn serve_read(
     stream: &mut impl Write,
     reader: &mut impl NbdImage,

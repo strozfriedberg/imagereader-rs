@@ -162,10 +162,10 @@ pub fn bind_unix(path: &Path) -> io::Result<UnixListener> {
     // Call remove_file unconditionally rather than checking exists() first:
     // the exists()+remove_file sequence has a TOCTOU window, and remove_file
     // returning NotFound is harmless (there was no stale file to clear).
-    if let Err(e) = std::fs::remove_file(path) {
-        if e.kind() != io::ErrorKind::NotFound {
-            return Err(e);
-        }
+    if let Err(e) = std::fs::remove_file(path)
+        && e.kind() != io::ErrorKind::NotFound
+    {
+        return Err(e);
     }
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
