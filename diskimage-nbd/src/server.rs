@@ -143,7 +143,9 @@ where
     // not thread-safe. The accept loops spawn one thread per client, but only
     // one client is active at a time — all others block here until the current
     // client disconnects (intentional single-client-at-a-time model).
-    let mut reader = reader.lock().unwrap();
+    let mut reader = reader
+        .lock()
+        .map_err(|_| io::Error::other("image reader lock poisoned"))?;
     let export_size = reader.size();
     handshake(&mut stream, export_size)?;
     if let Some(log) = &io_log {
