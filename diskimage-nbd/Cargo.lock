@@ -988,7 +988,6 @@ dependencies = [
  "rust-s3",
  "sha1",
  "sha2 0.10.9",
- "signal-hook",
  "simd-adler32",
  "tempfile",
  "thiserror",
@@ -3335,7 +3334,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vmdk-rs"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -3353,7 +3352,6 @@ dependencies = [
  "regex",
  "rust-s3",
  "sha-1",
- "signal-hook",
  "tempfile",
  "thiserror",
  "time",
