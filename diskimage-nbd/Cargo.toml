@@ -10,12 +10,8 @@ debug = false
 lto = true
 
 [[bin]]
-name = "e01-nbd"
-path = "src/bin/e01-nbd.rs"
-
-[[bin]]
-name = "vmdk-nbd"
-path = "src/bin/vmdk-nbd.rs"
+name = "diskimage-nbd"
+path = "src/bin/diskimage-nbd.rs"
 
 [dependencies]
 byteorder = "1.5"
