@@ -314,6 +314,9 @@ pub struct VmdkReaderOptions {
     pub cache_mem_mib: usize,
     /// Cache structure for this session (single vs dedicated-metadata).
     pub cache_mode: CacheMode,
+    /// Base directory for foyer's on-disk cache (created as a random subdir
+    /// under this path). `None` uses the OS default temp directory.
+    pub cache_dir: Option<PathBuf>,
     /// When set, append JSONL read/S3 traces (see [`IoLog`]).
     pub io_log: Option<Arc<IoLog>>,
     /// Foyer block size in bytes.
@@ -327,6 +330,7 @@ impl Default for VmdkReaderOptions {
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
             cache_mode: CacheMode::default(),
+            cache_dir: None,
             io_log: None,
             cache_chunk_size: DEFAULT_CACHE_CHUNK_SIZE,
         }
@@ -360,6 +364,7 @@ impl VmdkReader {
                 opts.cache_mem_mib,
                 opts.foyer_readahead,
                 opts.s3_concurrency,
+                opts.cache_dir.as_deref(),
             )),
             CacheMode::DualHybrid {
                 content_disk_mib,
@@ -375,6 +380,7 @@ impl VmdkReader {
                 opts.foyer_readahead,
                 opts.s3_concurrency,
                 regular_phase,
+                opts.cache_dir.as_deref(),
             )),
         }
         .map_err(InitError::CacheSetupFailed)

@@ -6,7 +6,7 @@ use foyer::{
 use foyer_common::code::HashBuilder;
 use futures::future::try_join_all;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{fmt::Debug, future::Future, sync::Arc};
+use std::{fmt::Debug, future::Future, path::Path, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tracing::trace;
@@ -37,6 +37,13 @@ where
     readahead: usize,
 }
 
+fn make_tempdir(base: Option<&Path>) -> std::io::Result<TempDir> {
+    match base {
+        Some(dir) => tempfile::Builder::new().tempdir_in(dir),
+        None => tempfile::tempdir(),
+    }
+}
+
 async fn build_hybrid(
     mem_capacity: usize,
     disk_size: usize,
@@ -61,8 +68,9 @@ impl FoyerCache<DefaultHasher> {
         mem_capacity: usize,
         readahead: usize,
         s3_concurrency: usize,
+        cache_base_dir: Option<&Path>,
     ) -> Result<Self, std::io::Error> {
-        let dir = tempfile::tempdir()?;
+        let dir = make_tempdir(cache_base_dir)?;
         let content = Arc::new(build_hybrid(mem_capacity, 0, &dir).await?);
         Ok(Self {
             chlen,
@@ -85,9 +93,10 @@ impl FoyerCache<DefaultHasher> {
         readahead: usize,
         s3_concurrency: usize,
         regular_phase: Arc<AtomicBool>,
+        cache_base_dir: Option<&Path>,
     ) -> Result<Self, std::io::Error> {
-        let content_dir = tempfile::tempdir()?;
-        let metadata_dir = tempfile::tempdir()?;
+        let content_dir = make_tempdir(cache_base_dir)?;
+        let metadata_dir = make_tempdir(cache_base_dir)?;
         let content = Arc::new(
             build_hybrid(
                 content_mem_mib,
@@ -338,7 +347,7 @@ mod tests {
         const CHUNK64: u64 = CHUNK as u64;
 
         let regular = Arc::new(AtomicBool::new(false));
-        let mut cache = FoyerCache::dual_hybrid(CHUNK, 64, 0, 64, 0, 0, 4, regular.clone())
+        let mut cache = FoyerCache::dual_hybrid(CHUNK, 64, 0, 64, 0, 0, 4, regular.clone(), None)
             .await
             .unwrap();
         cache.add_source(0, test_source());
@@ -367,5 +376,30 @@ mod tests {
         // Block 0 was read during metadata phase — stays in metadata cache
         cache.read(0, 0, &mut a, &mut t).await.unwrap();
         assert!(cache.metadata.as_ref().unwrap().cache.contains(&(0, 0)));
+    }
+
+    #[tokio::test]
+    async fn dual_hybrid_creates_tempdirs_under_custom_base() {
+        let base = tempfile::tempdir().unwrap();
+        let before: Vec<_> = std::fs::read_dir(base.path()).unwrap().collect();
+        assert_eq!(before.len(), 0);
+
+        let regular = Arc::new(AtomicBool::new(false));
+        let _cache = FoyerCache::dual_hybrid(
+            64 * 1024,
+            64,
+            1,
+            64,
+            1,
+            0,
+            4,
+            regular,
+            Some(base.path()),
+        )
+        .await
+        .unwrap();
+
+        let after: Vec<_> = std::fs::read_dir(base.path()).unwrap().collect();
+        assert_eq!(after.len(), 2, "expected content_dir and metadata_dir under the custom base");
     }
 }
