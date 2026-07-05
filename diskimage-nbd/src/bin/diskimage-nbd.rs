@@ -9,7 +9,11 @@ use e01::e01_reader::{
     CacheMode as E01CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, E01Reader,
     E01ReaderOptions,
 };
-use std::{io, path::Path, process::ExitCode};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 use vmdkrs::vmdk_reader::{CacheMode as VmdkCacheMode, VmdkReader, VmdkReaderOptions};
 
 #[derive(Parser)]
@@ -104,6 +108,7 @@ fn open_e01(
     s3_concurrency: usize,
     cache_mem_mib: usize,
     cache_mode: E01CacheMode,
+    cache_dir: Option<PathBuf>,
 ) -> Result<Adapter, Box<dyn std::error::Error>> {
     E01Reader::open_glob(
         path,
@@ -118,6 +123,7 @@ fn open_e01(
             s3_concurrency,
             cache_mem_mib,
             cache_mode,
+            cache_dir,
             // S3/cache traces via e01's own IoLog are a separate concern; the
             // --io-log flag here captures only NBD-level reads via diskimage-nbd's IoLog.
             io_log: None,
@@ -133,6 +139,7 @@ fn open_vmdk(
     s3_concurrency: usize,
     cache_mem_mib: usize,
     cache_mode: VmdkCacheMode,
+    cache_dir: Option<PathBuf>,
 ) -> Result<Adapter, Box<dyn std::error::Error>> {
     VmdkReader::open_with_options(
         path,
@@ -141,6 +148,7 @@ fn open_vmdk(
             s3_concurrency,
             cache_mem_mib,
             cache_mode,
+            cache_dir,
             // S3/cache traces via vmdk's own IoLog are a separate concern; the
             // --io-log flag here captures only NBD-level reads via diskimage-nbd's IoLog.
             io_log: None,
@@ -164,6 +172,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         common.s3_concurrency,
         common.cache_mem_mib,
     );
+    let cache_dir = common.cache_dir.clone();
     let path = image_path.clone();
     match format {
         Format::E01 => {
@@ -188,6 +197,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                         s3_concurrency,
                         cache_mem_mib,
                         cache_mode,
+                        cache_dir,
                     )
                 },
                 io_log,
@@ -207,7 +217,16 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             run_serve(
                 common,
                 &image_path,
-                move || open_vmdk(&path, readahead, s3_concurrency, cache_mem_mib, cache_mode),
+                move || {
+                    open_vmdk(
+                        &path,
+                        readahead,
+                        s3_concurrency,
+                        cache_mem_mib,
+                        cache_mode,
+                        cache_dir,
+                    )
+                },
                 io_log,
             )
         }
@@ -267,5 +286,26 @@ mod tests {
     fn rejects_missing_extension() {
         let err = detect_format("/data/image").unwrap_err();
         assert!(err.contains(".e01 or .vmdk"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn cache_dir_flag_parses_to_some() {
+        let args = Args::try_parse_from([
+            "diskimage-nbd",
+            "/data/image.e01",
+            "--cache-dir",
+            "/mnt/nvme-cache",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.common.cache_dir,
+            Some(std::path::PathBuf::from("/mnt/nvme-cache"))
+        );
+    }
+
+    #[test]
+    fn cache_dir_flag_defaults_to_none() {
+        let args = Args::try_parse_from(["diskimage-nbd", "/data/image.e01"]).unwrap();
+        assert_eq!(args.common.cache_dir, None);
     }
 }

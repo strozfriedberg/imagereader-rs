@@ -59,6 +59,11 @@ pub struct CommonArgs {
     /// Metadata-cache in-memory capacity (~1 MiB entries), requires --metadata-cache.
     #[arg(long, default_value = "256")]
     pub metadata_cache_mem_mib: usize,
+
+    /// Base directory for foyer's on-disk cache (created as a random subdir
+    /// under this path). Defaults to the OS temp directory if unset.
+    #[arg(long)]
+    pub cache_dir: Option<PathBuf>,
 }
 
 pub fn open_io_log(path: Option<&Path>) -> io::Result<Option<Arc<IoLog>>> {
