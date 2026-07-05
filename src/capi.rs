@@ -85,6 +85,7 @@ impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
             s3_concurrency: e01_reader::DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: e01_reader::DEFAULT_CACHE_MEM_MIB,
             cache_mode: e01_reader::CacheMode::default(),
+            cache_dir: None,
             io_log: None,
         }
     }

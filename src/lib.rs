@@ -139,6 +139,7 @@ mod test {
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
             cache_mode: CacheMode::default(),
+            cache_dir: None,
             io_log: None,
         }
     }
@@ -151,6 +152,7 @@ mod test {
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
             cache_mode: CacheMode::default(),
+            cache_dir: None,
             io_log: None,
         }
     }

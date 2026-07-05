@@ -425,6 +425,9 @@ pub struct E01ReaderOptions {
     pub cache_mem_mib: usize,
     /// Cache structure for this session (single vs dedicated-metadata).
     pub cache_mode: CacheMode,
+    /// Base directory for foyer's on-disk cache (created as a random subdir
+    /// under this path). `None` uses the OS default temp directory.
+    pub cache_dir: Option<PathBuf>,
     /// When set, append JSONL read/S3 traces (see [`IoLog`]).
     pub io_log: Option<Arc<IoLog>>,
 }
@@ -438,6 +441,7 @@ impl Default for E01ReaderOptions {
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
             cache_mode: CacheMode::default(),
+            cache_dir: None,
             io_log: None,
         }
     }
@@ -756,6 +760,7 @@ impl E01Reader {
                     cache_mem_size,
                     foyer_readahead,
                     s3_concurrency,
+                    options.cache_dir.as_deref(),
                 ))
                 .map_err(InitError::CacheSetupFailed)?,
             CacheMode::DualHybrid {
@@ -773,6 +778,7 @@ impl E01Reader {
                     foyer_readahead,
                     s3_concurrency,
                     regular_phase,
+                    options.cache_dir.as_deref(),
                 ))
                 .map_err(InitError::CacheSetupFailed)?,
         };
@@ -1019,6 +1025,7 @@ mod test {
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
             cache_mode: CacheMode::default(),
+            cache_dir: None,
             io_log: None,
         };
         let mut reader =
@@ -1050,6 +1057,7 @@ mod test {
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
             cache_mode: CacheMode::default(),
+            cache_dir: None,
             io_log: None,
         };
         let mut reader =
