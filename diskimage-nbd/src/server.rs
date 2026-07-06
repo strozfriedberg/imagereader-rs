@@ -11,9 +11,45 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
+
+/// At most one active session plus one waiting on the reader lock. The waiter
+/// covers a client reconnecting while its old session is still tearing down;
+/// anything beyond that would just pile up blocked threads, so those
+/// connections are dropped at accept time.
+const MAX_PENDING_SESSIONS: usize = 2;
+
+/// RAII session slot: incremented at accept, released when the session thread
+/// finishes (or the slot is dropped for any other reason).
+struct SessionSlot(Arc<AtomicUsize>);
+
+impl SessionSlot {
+    fn try_acquire(counter: &Arc<AtomicUsize>) -> Option<Self> {
+        let mut current = counter.load(Ordering::Relaxed);
+        loop {
+            if current >= MAX_PENDING_SESSIONS {
+                return None;
+            }
+            match counter.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some(Self(Arc::clone(counter))),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+
+impl Drop for SessionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 /// CLI flags shared by every diskimage-nbd binary.  Flatten into format-specific `Args`.
 #[derive(Parser)]
@@ -208,6 +244,7 @@ pub fn run_accept_loop_tcp<I>(
 where
     I: NbdImage + Send + 'static,
 {
+    let sessions = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let stream = match stream {
             Ok(s) => s,
@@ -215,6 +252,10 @@ where
                 tracing::error!("accept failed: {e}");
                 continue;
             }
+        };
+        let Some(slot) = SessionSlot::try_acquire(&sessions) else {
+            tracing::warn!("dropping connection: one session active and one already waiting");
+            continue;
         };
         tune_tcp(&stream);
         let peer = stream
@@ -226,6 +267,7 @@ where
         let reader = Arc::clone(&reader);
         let io_log = io_log.clone();
         std::thread::spawn(move || {
+            let _slot = slot;
             if let Err(e) = serve_connection(stream, reader, io_log) {
                 tracing::warn!("session ended: {e}");
             }
@@ -244,6 +286,7 @@ pub fn run_accept_loop_unix<I>(
 where
     I: NbdImage + Send + 'static,
 {
+    let sessions = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let stream = match stream {
             Ok(s) => s,
@@ -252,11 +295,16 @@ where
                 continue;
             }
         };
+        let Some(slot) = SessionSlot::try_acquire(&sessions) else {
+            tracing::warn!("dropping connection: one session active and one already waiting");
+            continue;
+        };
         tracing::info!("connection on unix:{}", unix_path.display());
 
         let reader = Arc::clone(&reader);
         let io_log = io_log.clone();
         std::thread::spawn(move || {
+            let _slot = slot;
             if let Err(e) = serve_connection(stream, reader, io_log) {
                 tracing::warn!("session ended: {e}");
             }
@@ -334,6 +382,64 @@ mod tests {
             buf.fill(0);
             Ok(buf.len())
         }
+    }
+
+    /// With one client active and one waiting, a third connection must be
+    /// dropped instead of piling up another blocked thread; once the first
+    /// two disconnect, new connections must be accepted again.
+    #[test]
+    #[cfg(unix)]
+    fn accept_loop_bounds_pending_sessions() {
+        use std::time::Duration;
+
+        let sock = std::env::temp_dir().join(format!(
+            "diskimage-nbd-test-gate-{}.sock",
+            std::process::id()
+        ));
+        let listener = bind_unix(&sock).unwrap();
+        let reader = Arc::new(Mutex::new(ZeroImage { size: 4096 }));
+        {
+            let reader = Arc::clone(&reader);
+            let sock = sock.clone();
+            std::thread::spawn(move || run_accept_loop_unix(listener, &sock, reader, None));
+        }
+
+        // Client 1 is served (greeting arrives); client 2 queues on the reader
+        // lock; client 3 must be dropped without a greeting.
+        let c1 = UnixStream::connect(&sock).unwrap();
+        c1.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut magic = [0u8; 8];
+        (&c1).read_exact(&mut magic).unwrap();
+        assert_eq!(&magic, b"NBDMAGIC");
+
+        let c2 = UnixStream::connect(&sock).unwrap();
+        let mut c3 = UnixStream::connect(&sock).unwrap();
+        c3.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut byte = [0u8; 1];
+        match c3.read(&mut byte) {
+            Ok(0) => {} // EOF: connection dropped, as required
+            other => panic!("third connection should be dropped, got {other:?}"),
+        }
+
+        // Free both slots; a new client must then be served.
+        drop(c1);
+        drop(c2);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let c4 = UnixStream::connect(&sock).unwrap();
+            c4.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+            let mut magic = [0u8; 8];
+            if (&c4).read_exact(&mut magic).is_ok() {
+                assert_eq!(&magic, b"NBDMAGIC");
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "slots never freed after sessions ended"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::fs::remove_file(&sock).ok();
     }
 
     /// A panic in one session thread poisons the reader mutex; later connections
