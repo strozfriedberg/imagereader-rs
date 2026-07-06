@@ -88,11 +88,11 @@ impl IoLog {
         ));
     }
 
-    /// Drop open-phase events; subsequent lines are the NBD serving workload.
+    /// Called on each client connect. The first call truncates the file so it
+    /// drops open-phase events; every call resets the counters so each
+    /// session's summary covers only that session. Sessions are serialized by
+    /// the connection-wide reader lock, so resets never race with logging.
     pub fn begin_serving(&self) -> std::io::Result<()> {
-        if self.serving.load(Ordering::Acquire) {
-            return Ok(());
-        }
         // Zero all counters before setting serving=true so that a concurrent
         // log_nbd_read that observes serving=true never races with a reset.
         self.nbd_reads.store(0, Ordering::Relaxed);
@@ -101,22 +101,24 @@ impl IoLog {
         self.s3_bytes.store(0, Ordering::Relaxed);
         self.prefetch_enqueued.store(0, Ordering::Relaxed);
 
-        // Truncate and reopen the file before publishing serving=true.
-        let file = File::options()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.path)?;
-        {
-            let mut w = self
-                .writer
-                .lock()
-                .map_err(|_| std::io::Error::other("io log lock poisoned"))?;
-            *w = BufWriter::new(file);
+        if !self.serving.load(Ordering::Acquire) {
+            // Truncate and reopen the file before publishing serving=true.
+            let file = File::options()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&self.path)?;
+            {
+                let mut w = self
+                    .writer
+                    .lock()
+                    .map_err(|_| std::io::Error::other("io log lock poisoned"))?;
+                *w = BufWriter::new(file);
+            }
+            // SeqCst: all counter resets and the file swap are visible to any
+            // thread that subsequently observes serving=true.
+            self.serving.store(true, Ordering::SeqCst);
         }
-        // SeqCst: all counter resets and the file swap are visible to any
-        // thread that subsequently observes serving=true.
-        self.serving.store(true, Ordering::SeqCst);
         self.write_line(r#"{"kind":"marker","event":"nbd_connected"}"#)
     }
 
@@ -218,7 +220,7 @@ impl ReadTimer {
 
 #[cfg(test)]
 mod tests {
-    use super::stamp_json_line;
+    use super::{IoLog, stamp_json_line};
 
     #[test]
     fn stamp_json_line_prepends_ts() {
@@ -226,5 +228,42 @@ mod tests {
         assert!(out.starts_with(r#"{"ts":""#));
         assert!(out.contains(r#""kind":"read""#));
         assert!(out.ends_with(r#""offset":0}"#));
+    }
+
+    /// Each session's summary must count only that session; the second connect
+    /// must not truncate lines the first session already wrote.
+    #[test]
+    fn summary_counters_reset_per_session() {
+        let path = std::env::temp_dir().join(format!(
+            "diskimage-nbd-test-summary-reset-{}.jsonl",
+            std::process::id()
+        ));
+        let log = IoLog::open(&path).unwrap();
+
+        log.begin_serving().unwrap();
+        log.log_nbd_read(0, 512, 10);
+        log.log_summary();
+
+        log.begin_serving().unwrap(); // second session connects
+        log.log_summary();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        let summaries: Vec<&str> = content
+            .lines()
+            .filter(|l| l.contains(r#""kind":"summary""#))
+            .collect();
+        assert_eq!(summaries.len(), 2, "log: {content}");
+        assert!(summaries[0].contains(r#""nbd_reads":1"#), "{}", summaries[0]);
+        assert!(
+            summaries[1].contains(r#""nbd_reads":0"#),
+            "second session summary must start from zero: {}",
+            summaries[1]
+        );
+        assert!(
+            content.contains(r#""kind":"nbd_read""#),
+            "second connect must not truncate session 1 lines: {content}"
+        );
     }
 }

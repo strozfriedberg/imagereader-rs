@@ -75,18 +75,24 @@ fn write_option_reply(
     rtype: u32,
     data: &[u8],
 ) -> io::Result<()> {
-    stream.write_u64::<BigEndian>(0x0003_e889_0455_65a9)?;
-    stream.write_u32::<BigEndian>(clopt)?;
-    stream.write_u32::<BigEndian>(rtype)?;
-    stream.write_u32::<BigEndian>(data.len() as u32)?;
-    stream.write_all(data)?;
+    let mut reply = Vec::with_capacity(20 + data.len());
+    reply.write_u64::<BigEndian>(0x0003_e889_0455_65a9)?;
+    reply.write_u32::<BigEndian>(clopt)?;
+    reply.write_u32::<BigEndian>(rtype)?;
+    reply.write_u32::<BigEndian>(data.len() as u32)?;
+    reply.write_all(data)?;
+    stream.write_all(&reply)?;
     stream.flush()
 }
 
+// One write call per reply header: on a raw socket with TCP_NODELAY, each
+// small write is a syscall and potentially its own packet.
 fn write_simple_reply(stream: &mut impl Write, error: u32, handle: u64) -> io::Result<()> {
-    stream.write_u32::<BigEndian>(NBD_SIMPLE_REPLY_MAGIC)?;
-    stream.write_u32::<BigEndian>(error)?;
-    stream.write_u64::<BigEndian>(handle)
+    let mut header = [0u8; 16];
+    header[..4].copy_from_slice(&NBD_SIMPLE_REPLY_MAGIC.to_be_bytes());
+    header[4..8].copy_from_slice(&error.to_be_bytes());
+    header[8..].copy_from_slice(&handle.to_be_bytes());
+    stream.write_all(&header)
 }
 
 fn write_simple_error(stream: &mut impl Write, err: io::Error, handle: u64) -> io::Result<()> {
@@ -224,12 +230,15 @@ fn serve_read(
 ) -> io::Result<()> {
     let req_len = length;
     let timer = io_log.map(|_| ReadTimer::start());
-    if let Some(error) = read_request_error(offset, length, export_size) {
-        write_simple_reply(stream, error, handle)?;
+    let log_read = |io_log: Option<&Arc<IoLog>>, timer: &Option<ReadTimer>| {
         if let Some(log) = io_log {
             let dur_us = timer.as_ref().map(ReadTimer::elapsed_us).unwrap_or(0);
             log.log_nbd_read(offset, req_len, dur_us);
         }
+    };
+    if let Some(error) = read_request_error(offset, length, export_size) {
+        write_simple_reply(stream, error, handle)?;
+        log_read(io_log, &timer);
         return Ok(());
     }
 
@@ -242,6 +251,7 @@ fn serve_read(
         let want = remaining.min(buf.len());
         match reader.read_at_offset(pos, &mut buf[..want]) {
             Ok(0) => {
+                log_read(io_log, &timer);
                 let err = io_err("unexpected EOF while serving read");
                 if replied {
                     return Err(err);
@@ -259,6 +269,7 @@ fn serve_read(
                 pos += n as u64;
             }
             Err(e) => {
+                log_read(io_log, &timer);
                 if replied {
                     return Err(e);
                 }
@@ -272,10 +283,7 @@ fn serve_read(
         write_simple_reply(stream, 0, handle)?;
     }
 
-    if let Some(log) = io_log {
-        let dur_us = timer.as_ref().map(ReadTimer::elapsed_us).unwrap_or(0);
-        log.log_nbd_read(offset, req_len, dur_us);
-    }
+    log_read(io_log, &timer);
 
     Ok(())
 }
@@ -289,15 +297,18 @@ pub fn transmission(
     let mut buf = vec![0; READ_BUF_SIZE];
 
     loop {
-        if stream.read_u32::<BigEndian>()? != NBD_REQ_MAGIC {
+        // One read call for the whole 28-byte request header, not one per field.
+        let mut header = [0u8; 28];
+        stream.read_exact(&mut header)?;
+        let mut fields = &header[..];
+        if fields.read_u32::<BigEndian>()? != NBD_REQ_MAGIC {
             return Err(io_err("invalid request magic"));
         }
-
-        let _flags = stream.read_u16::<BigEndian>()?;
-        let typ = stream.read_u16::<BigEndian>()?;
-        let handle = stream.read_u64::<BigEndian>()?;
-        let offset = stream.read_u64::<BigEndian>()?;
-        let length = stream.read_u32::<BigEndian>()?;
+        let _flags = fields.read_u16::<BigEndian>()?;
+        let typ = fields.read_u16::<BigEndian>()?;
+        let handle = fields.read_u64::<BigEndian>()?;
+        let offset = fields.read_u64::<BigEndian>()?;
+        let length = fields.read_u32::<BigEndian>()?;
 
         match typ {
             NBD_CMD_READ => {
@@ -562,6 +573,43 @@ mod tests {
         error
     }
 
+    struct FailImage;
+
+    impl NbdImage for FailImage {
+        fn size(&self) -> u64 {
+            4096
+        }
+
+        fn read_at_offset(&mut self, _offset: u64, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("backing store exploded"))
+        }
+    }
+
+    /// Reads that fail in the backing store must still appear in the io-log;
+    /// the failing reads are exactly the ones workload analysis needs.
+    #[test]
+    fn failed_reads_are_still_io_logged() {
+        let path = std::env::temp_dir().join(format!(
+            "diskimage-nbd-test-failed-read-{}.jsonl",
+            std::process::id()
+        ));
+        let log = IoLog::open(&path).unwrap();
+        log.begin_serving().unwrap();
+
+        let mut out = Vec::new();
+        let mut buf = vec![0u8; 1024];
+        serve_read(&mut out, &mut FailImage, 4096, 0, 512, 7, &mut buf, Some(&log)).unwrap();
+        log.log_summary(); // flushes
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert!(
+            content.contains(r#""kind":"nbd_read""#),
+            "failed read missing from io log: {content}"
+        );
+        assert!(content.contains(r#""nbd_reads":1"#), "summary: {content}");
+    }
+
     /// A write command carries a payload the server must drain even though the
     /// export is read-only; otherwise the payload bytes desync the request stream.
     #[test]
@@ -598,6 +646,77 @@ mod tests {
         send_command(&mut client, NBD_CMD_DISC, 0, 0, 0);
         client.flush().unwrap();
         server.join().unwrap().unwrap();
+    }
+
+    /// Counts `read`/`write` calls; on a real socket each call is one syscall
+    /// (and with TCP_NODELAY, each small write is potentially one packet).
+    struct ScriptedStream {
+        input: std::io::Cursor<Vec<u8>>,
+        reads: usize,
+        write_lens: Vec<usize>,
+        output: Vec<u8>,
+    }
+
+    impl ScriptedStream {
+        fn new(input: Vec<u8>) -> Self {
+            Self {
+                input: std::io::Cursor::new(input),
+                reads: 0,
+                write_lens: Vec::new(),
+                output: Vec::new(),
+            }
+        }
+    }
+
+    impl Read for ScriptedStream {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.reads += 1;
+            self.input.read(buf)
+        }
+    }
+
+    impl Write for ScriptedStream {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_lens.push(buf.len());
+            self.output.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The 28-byte request header must be read with one call and the 16-byte
+    /// simple-reply header written with one call — not per-field syscalls.
+    #[test]
+    fn transmission_uses_single_reads_and_writes_per_request() {
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+
+        // Script: READ 512@1024, then DISC.
+        let mut input = Vec::new();
+        for (typ, offset, length) in [(NBD_CMD_READ, 1024u64, 512u32), (NBD_CMD_DISC, 0, 0)] {
+            input.write_u32::<BigEndian>(NBD_REQ_MAGIC).unwrap();
+            input.write_u16::<BigEndian>(0).unwrap();
+            input.write_u16::<BigEndian>(typ).unwrap();
+            input.write_u64::<BigEndian>(0x1234).unwrap();
+            input.write_u64::<BigEndian>(offset).unwrap();
+            input.write_u32::<BigEndian>(length).unwrap();
+        }
+
+        let mut stream = ScriptedStream::new(input);
+        let mut img = MemImage(data);
+        transmission(&mut stream, &mut img, 4096, None).unwrap();
+
+        assert_eq!(
+            stream.write_lens,
+            vec![16, 512],
+            "reply must be one 16-byte header write plus one payload write"
+        );
+        assert_eq!(
+            stream.reads, 2,
+            "each request header must be read with a single call"
+        );
     }
 
     /// Unknown options must get NBD_REP_ERR_UNSUP and negotiation must continue,
