@@ -80,4 +80,8 @@ impl SegmentFileHeader {
             _ => Err(LibError::InvalidSegmentFileHeader),
         }
     }
+
+    pub fn segment_number(&self) -> u16 {
+        self.segment_number
+    }
 }

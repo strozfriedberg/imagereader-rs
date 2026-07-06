@@ -66,6 +66,12 @@ pub enum OpenError {
     UnsupportedScheme(String),
     #[error("{0}")]
     InitializationFailed(#[from] InitError),
+    #[error("Segment file {path} has segment number {actual}, expected {expected}")]
+    SegmentOutOfOrder {
+        path: String,
+        actual: u16,
+        expected: u16,
+    },
 }
 
 impl From<std::io::Error> for OpenError {
@@ -173,6 +179,7 @@ struct Segment {
 
 struct SegmentComponents {
     path: String,
+    segment_number: u16,
     volume: Option<VolumeSection>,
     md5: Option<[u8; 16]>,
     sha1: Option<[u8; 20]>,
@@ -188,7 +195,7 @@ fn read_segment<T: AsRef<str>>(
 ) -> Result<SegmentComponents, OpenError> {
     debug!("reading sections {}", segment_path.as_ref());
 
-    let _header = SegmentFileHeader::new(io)
+    let header = SegmentFileHeader::new(io)
         .map_err(OpenError::from)
         .map_err(|e| e.with_path(&segment_path))?;
 
@@ -246,6 +253,7 @@ fn read_segment<T: AsRef<str>>(
 
     Ok(SegmentComponents {
         path: segment_path.as_ref().into(),
+        segment_number: header.segment_number(),
         volume,
         md5,
         sha1,
@@ -302,7 +310,16 @@ fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
 
     let mut done = false;
 
-    for seg in segs {
+    for (i, seg) in segs.into_iter().enumerate() {
+        let expected = (i + 1) as u16; // EWF segment numbers are 1-based
+        if seg.segment_number != expected {
+            return Err(OpenError::SegmentOutOfOrder {
+                path: seg.path.clone(),
+                actual: seg.segment_number,
+                expected,
+            });
+        }
+
         debug!("handling {}", seg.path);
 
         // take the volume section if it's the first one
@@ -1084,5 +1101,20 @@ mod test {
             bucket.host(),
             "foo-s3alias.s3-accesspoint.us-east-1.amazonaws.com"
         );
+    }
+
+    #[test]
+    fn open_rejects_out_of_order_segments() {
+        let options = E01ReaderOptions::default();
+        let err = E01Reader::open(["data/mimage.E02", "data/mimage.E01"], &options).unwrap_err();
+        match err {
+            OpenError::SegmentOutOfOrder {
+                actual, expected, ..
+            } => {
+                assert_eq!(actual, 2);
+                assert_eq!(expected, 1);
+            }
+            e => panic!("expected SegmentOutOfOrder, got {e:?}"),
+        }
     }
 }
