@@ -163,9 +163,12 @@ where
     // not thread-safe. The accept loops spawn one thread per client, but only
     // one client is active at a time — all others block here until the current
     // client disconnects (intentional single-client-at-a-time model).
-    let mut reader = reader
-        .lock()
-        .map_err(|_| io::Error::other("image reader lock poisoned"))?;
+    // Recover from poisoning: a panic in a previous session must not brick the
+    // server forever. The reader is read-only, so its state is still usable.
+    let mut reader = reader.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("image reader lock poisoned by a panicked session; recovering");
+        poisoned.into_inner()
+    });
     let export_size = reader.size();
     handshake(&mut stream, export_size)?;
     if let Some(log) = &io_log {
@@ -309,4 +312,71 @@ where
         image_size
     );
     run_accept_loop_tcp(listener, reader, io_log).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+    #[cfg(unix)]
+    use std::os::unix::net::UnixStream;
+
+    struct ZeroImage {
+        size: u64,
+    }
+
+    impl NbdImage for ZeroImage {
+        fn size(&self) -> u64 {
+            self.size
+        }
+
+        fn read_at_offset(&mut self, _offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+            buf.fill(0);
+            Ok(buf.len())
+        }
+    }
+
+    /// A panic in one session thread poisons the reader mutex; later connections
+    /// must still be served rather than failing forever.
+    #[test]
+    #[cfg(unix)]
+    fn serve_connection_recovers_from_poisoned_reader_lock() {
+        let reader = Arc::new(Mutex::new(ZeroImage { size: 4096 }));
+
+        let poisoner = Arc::clone(&reader);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = poisoner.lock().unwrap();
+            panic!("poison the reader lock");
+        }));
+        assert!(reader.is_poisoned());
+
+        let (mut client, server_io) = UnixStream::pair().unwrap();
+        let server = std::thread::spawn(move || serve_connection(server_io, reader, None));
+
+        // EXPORT_NAME handshake: if the lock poisoning aborts the session, the
+        // NBDMAGIC greeting never arrives and these reads fail.
+        let mut magic = [0u8; 8];
+        client.read_exact(&mut magic).unwrap();
+        assert_eq!(&magic, b"NBDMAGIC");
+        let mut ihaveopt = [0u8; 8];
+        client.read_exact(&mut ihaveopt).unwrap();
+        let _hs_flags = client.read_u16::<BigEndian>().unwrap();
+        client.write_u32::<BigEndian>(0b11).unwrap(); // FIXED_NEWSTYLE | NO_ZEROES
+        client.write_u64::<BigEndian>(0x4948_4156_454F_5054).unwrap();
+        client.write_u32::<BigEndian>(1).unwrap(); // NBD_OPT_EXPORT_NAME
+        client.write_u32::<BigEndian>(0).unwrap();
+        assert_eq!(client.read_u64::<BigEndian>().unwrap(), 4096);
+        let _flags = client.read_u16::<BigEndian>().unwrap();
+
+        // NBD_CMD_DISC ends the session cleanly.
+        client.write_u32::<BigEndian>(0x2560_9513).unwrap();
+        client.write_u16::<BigEndian>(0).unwrap();
+        client.write_u16::<BigEndian>(2).unwrap();
+        client.write_u64::<BigEndian>(0).unwrap();
+        client.write_u64::<BigEndian>(0).unwrap();
+        client.write_u32::<BigEndian>(0).unwrap();
+        client.flush().unwrap();
+
+        server.join().unwrap().unwrap();
+    }
 }

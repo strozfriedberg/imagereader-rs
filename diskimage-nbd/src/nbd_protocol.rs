@@ -27,11 +27,8 @@ const NBD_CLIENT_OPT_MAGIC: u64 = 0x4948_4156_454F_5054;
 const NBD_OPT_EXPORT_NAME: u32 = 1;
 const NBD_OPT_ABORT: u32 = 2;
 const NBD_OPT_LIST: u32 = 3;
-const NBD_OPT_STARTTLS: u32 = 5;
 const NBD_OPT_INFO: u32 = 6;
 const NBD_OPT_GO: u32 = 7;
-const NBD_OPT_STRUCTURED_REPLY: u32 = 8;
-const NBD_OPT_EXTENDED_HEADERS: u32 = 11;
 
 const NBD_REP_ACK: u32 = 1;
 const NBD_REP_SERVER: u32 = 2;
@@ -50,6 +47,7 @@ const NBD_FLAG_HAS_FLAGS: u16 = 1 << 0;
 const NBD_FLAG_READ_ONLY: u16 = 1 << 1;
 
 const NBD_CMD_READ: u16 = 0;
+const NBD_CMD_WRITE: u16 = 1;
 const NBD_CMD_DISC: u16 = 2;
 const NBD_CMD_FLUSH: u16 = 3;
 
@@ -203,10 +201,12 @@ pub fn handshake(stream: &mut (impl Read + Write), export_size: u64) -> io::Resu
                     return Ok(());
                 }
             }
-            NBD_OPT_STARTTLS | NBD_OPT_STRUCTURED_REPLY | NBD_OPT_EXTENDED_HEADERS => {
+            // STARTTLS/STRUCTURED_REPLY/EXTENDED_HEADERS and any unknown option
+            // (payload already consumed above) get NBD_REP_ERR_UNSUP so
+            // negotiation can continue, per the fixed-newstyle spec.
+            _ => {
                 write_option_reply(stream, clopt, NBD_REP_ERR_UNSUP, b"")?;
             }
-            _ => return Err(io_err("invalid client option type")),
         }
     }
 }
@@ -318,9 +318,25 @@ pub fn transmission(
             NBD_CMD_FLUSH => {
                 write_simple_reply(stream, 0, handle)?;
             }
+            NBD_CMD_WRITE => {
+                // The write payload must be drained even though the export is
+                // read-only; leaving it in the stream would desync request framing.
+                drain(stream, length as u64, &mut buf)?;
+                write_simple_reply(stream, 1, handle)?; // EPERM
+            }
             _ => write_simple_reply(stream, 38, handle)?, // ENOSYS
         }
     }
+}
+
+/// Read and discard `remaining` payload bytes from the stream.
+fn drain(stream: &mut impl Read, mut remaining: u64, buf: &mut [u8]) -> io::Result<()> {
+    while remaining > 0 {
+        let want = remaining.min(buf.len() as u64) as usize;
+        stream.read_exact(&mut buf[..want])?;
+        remaining -= want as u64;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -351,6 +367,11 @@ mod tests {
         client
             .write_u32::<BigEndian>(NBD_FLAG_C_FIXED_NEWSTYLE | NBD_FLAG_C_NO_ZEROES)
             .unwrap();
+        send_go_option(client, export);
+    }
+
+    /// GO option without the leading client-flags word (for use after the first option).
+    fn send_go_option(client: &mut impl Write, export: &str) {
         client.write_u64::<BigEndian>(NBD_CLIENT_OPT_MAGIC).unwrap();
         client.write_u32::<BigEndian>(NBD_OPT_GO).unwrap();
         let mut payload = Vec::new();
@@ -510,5 +531,108 @@ mod tests {
         client.flush().unwrap();
 
         server.join().unwrap().unwrap();
+    }
+
+    fn drive_go_handshake(client: &mut (impl Read + Write), export_size: u64) {
+        let mut magic = [0u8; 8];
+        client.read_exact(&mut magic).unwrap();
+        assert_eq!(&magic, b"NBDMAGIC");
+        read_client_flags(client);
+        send_go(client, "diskimage-nbd");
+        read_info_export(client, export_size);
+        read_go_ack(client);
+    }
+
+    fn send_command(client: &mut impl Write, typ: u16, handle: u64, offset: u64, length: u32) {
+        client.write_u32::<BigEndian>(NBD_REQ_MAGIC).unwrap();
+        client.write_u16::<BigEndian>(0).unwrap();
+        client.write_u16::<BigEndian>(typ).unwrap();
+        client.write_u64::<BigEndian>(handle).unwrap();
+        client.write_u64::<BigEndian>(offset).unwrap();
+        client.write_u32::<BigEndian>(length).unwrap();
+    }
+
+    fn read_simple_reply_header(client: &mut impl Read, expect_handle: u64) -> u32 {
+        assert_eq!(
+            client.read_u32::<BigEndian>().unwrap(),
+            NBD_SIMPLE_REPLY_MAGIC
+        );
+        let error = client.read_u32::<BigEndian>().unwrap();
+        assert_eq!(client.read_u64::<BigEndian>().unwrap(), expect_handle);
+        error
+    }
+
+    /// A write command carries a payload the server must drain even though the
+    /// export is read-only; otherwise the payload bytes desync the request stream.
+    #[test]
+    #[cfg(unix)]
+    fn write_command_is_rejected_and_session_survives() {
+        let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        let export_size = data.len() as u64;
+        let (mut client, mut server_io) = UnixStream::pair().unwrap();
+
+        let server = std::thread::spawn(move || {
+            handshake(&mut server_io, export_size)?;
+            let mut img = MemImage(data);
+            transmission(&mut server_io, &mut img, export_size, None)
+        });
+
+        drive_go_handshake(&mut client, export_size);
+
+        // NBD_CMD_WRITE (type 1) with a 512-byte payload.
+        send_command(&mut client, 1, 0xBEEF, 0, 512);
+        client.write_all(&[0xAA; 512]).unwrap();
+        client.flush().unwrap();
+        let error = read_simple_reply_header(&mut client, 0xBEEF);
+        assert_eq!(error, 1); // EPERM: read-only export
+
+        // The session must still serve a valid read afterwards.
+        send_command(&mut client, NBD_CMD_READ, 0xCAFE, 1024, 512);
+        client.flush().unwrap();
+        assert_eq!(read_simple_reply_header(&mut client, 0xCAFE), 0);
+        let mut payload = vec![0u8; 512];
+        client.read_exact(&mut payload).unwrap();
+        let expected: Vec<u8> = (1024u64..1536).map(|i| (i % 251) as u8).collect();
+        assert_eq!(payload, expected);
+
+        send_command(&mut client, NBD_CMD_DISC, 0, 0, 0);
+        client.flush().unwrap();
+        server.join().unwrap().unwrap();
+    }
+
+    /// Unknown options must get NBD_REP_ERR_UNSUP and negotiation must continue,
+    /// per the fixed-newstyle spec — not a dropped connection.
+    #[test]
+    #[cfg(unix)]
+    fn unknown_option_gets_unsup_reply_and_negotiation_continues() {
+        let (mut client, mut server_io) = UnixStream::pair().unwrap();
+        let export_size = 4096;
+
+        let handle = std::thread::spawn(move || handshake(&mut server_io, export_size));
+
+        let mut magic = [0u8; 8];
+        client.read_exact(&mut magic).unwrap();
+        assert_eq!(&magic, b"NBDMAGIC");
+        read_client_flags(&mut client);
+
+        // NBD_OPT_LIST_META_CONTEXT (9), which this server does not implement.
+        client
+            .write_u32::<BigEndian>(NBD_FLAG_C_FIXED_NEWSTYLE | NBD_FLAG_C_NO_ZEROES)
+            .unwrap();
+        client.write_u64::<BigEndian>(NBD_CLIENT_OPT_MAGIC).unwrap();
+        client.write_u32::<BigEndian>(9).unwrap();
+        client.write_u32::<BigEndian>(0).unwrap();
+
+        read_reply_magic(&mut client);
+        assert_eq!(client.read_u32::<BigEndian>().unwrap(), 9);
+        assert_eq!(client.read_u32::<BigEndian>().unwrap(), NBD_REP_ERR_UNSUP);
+        assert_eq!(client.read_u32::<BigEndian>().unwrap(), 0);
+
+        // Negotiation continues: GO still completes the handshake.
+        send_go_option(&mut client, "diskimage-nbd");
+        read_info_export(&mut client, export_size);
+        read_go_ack(&mut client);
+
+        handle.join().unwrap().unwrap();
     }
 }
