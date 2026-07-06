@@ -9,12 +9,14 @@ use e01::e01_reader::{
     CacheMode as E01CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, E01Reader,
     E01ReaderOptions,
 };
+use e01::IoLog as E01IoLog;
 use std::{
     io,
     path::{Path, PathBuf},
     process::ExitCode,
 };
 use vmdkrs::vmdk_reader::{CacheMode as VmdkCacheMode, VmdkReader, VmdkReaderOptions};
+use vmdkrs::IoLog as VmdkIoLog;
 
 #[derive(Parser)]
 #[command(author, version, about = "Serve an E01 or VMDK image over NBD", long_about = None)]
@@ -101,6 +103,7 @@ impl NbdImage for Adapter {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_e01(
     path: &str,
     ignore_checksums: bool,
@@ -109,7 +112,9 @@ fn open_e01(
     cache_mem_mib: usize,
     cache_mode: E01CacheMode,
     cache_dir: Option<PathBuf>,
+    cache_trace_log: Option<&Path>,
 ) -> Result<Adapter, Box<dyn std::error::Error>> {
+    let io_log = cache_trace_log.map(E01IoLog::open).transpose()?;
     E01Reader::open_glob(
         path,
         &E01ReaderOptions {
@@ -124,15 +129,17 @@ fn open_e01(
             cache_mem_mib,
             cache_mode,
             cache_dir,
-            // S3/cache traces via e01's own IoLog are a separate concern; the
-            // --io-log flag here captures only NBD-level reads via diskimage-nbd's IoLog.
-            io_log: None,
+            // --io-log captures only NBD-level reads via diskimage-nbd's IoLog;
+            // --cache-trace-log carries e01's own per-read foyer/decoded-chunk
+            // hit/miss trace.
+            io_log,
         },
     )
     .map(|r| Adapter::E01(E01Adapter(r)))
     .map_err(Into::into)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_vmdk(
     path: &str,
     readahead: usize,
@@ -140,7 +147,10 @@ fn open_vmdk(
     cache_mem_mib: usize,
     cache_mode: VmdkCacheMode,
     cache_dir: Option<PathBuf>,
+    cache_chunk_size: usize,
+    cache_trace_log: Option<&Path>,
 ) -> Result<Adapter, Box<dyn std::error::Error>> {
+    let io_log = cache_trace_log.map(VmdkIoLog::open).transpose()?;
     VmdkReader::open_with_options(
         path,
         &VmdkReaderOptions {
@@ -149,10 +159,10 @@ fn open_vmdk(
             cache_mem_mib,
             cache_mode,
             cache_dir,
-            // S3/cache traces via vmdk's own IoLog are a separate concern; the
-            // --io-log flag here captures only NBD-level reads via diskimage-nbd's IoLog.
-            io_log: None,
-            ..VmdkReaderOptions::default()
+            // --io-log captures only NBD-level reads via diskimage-nbd's IoLog;
+            // --cache-trace-log carries vmdk's own per-read foyer hit/miss trace.
+            io_log,
+            cache_chunk_size,
         },
     )
     .map(|r| Adapter::Vmdk(VmdkAdapter(r)))
@@ -167,12 +177,14 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     } = args;
     let format = detect_format(&image_path)?;
     let io_log = open_io_log(common.io_log.as_deref())?;
-    let (readahead, s3_concurrency, cache_mem_mib) = (
+    let (readahead, s3_concurrency, cache_mem_mib, cache_chunk_size) = (
         common.readahead,
         common.s3_concurrency,
         common.cache_mem_mib,
+        common.cache_chunk_size,
     );
     let cache_dir = common.cache_dir.clone();
+    let cache_trace_log = common.cache_trace_log.clone();
     let path = image_path.clone();
     match format {
         Format::E01 => {
@@ -198,6 +210,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                         cache_mem_mib,
                         cache_mode,
                         cache_dir,
+                        cache_trace_log.as_deref(),
                     )
                 },
                 io_log,
@@ -225,6 +238,8 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                         cache_mem_mib,
                         cache_mode,
                         cache_dir,
+                        cache_chunk_size,
+                        cache_trace_log.as_deref(),
                     )
                 },
                 io_log,

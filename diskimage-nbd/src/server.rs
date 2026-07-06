@@ -64,6 +64,20 @@ pub struct CommonArgs {
     /// under this path). Defaults to the OS temp directory if unset.
     #[arg(long)]
     pub cache_dir: Option<PathBuf>,
+
+    /// Debugging lever: Foyer cache block size in bytes (VMDK only; e01 hardcodes 1 MiB). Smaller
+    /// values reduce wasted cache footprint for scattered sub-chunk metadata
+    /// access (MFT/INDX) at the cost of more cache entries and, potentially,
+    /// more distinct S3 fetches if nearby offsets would otherwise have landed
+    /// in the same larger chunk.
+    #[arg(long, default_value = "1048576")]
+    pub cache_chunk_size: usize,
+
+    /// Append JSONL per-read cache-hit/miss trace (foyer tier, and e01's
+    /// secondary decoded-chunk cache where applicable). Separate from
+    /// --io-log, which only captures NBD-protocol-level reads.
+    #[arg(long)]
+    pub cache_trace_log: Option<PathBuf>,
 }
 
 pub fn open_io_log(path: Option<&Path>) -> io::Result<Option<Arc<IoLog>>> {
