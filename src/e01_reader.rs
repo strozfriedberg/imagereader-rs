@@ -215,13 +215,11 @@ fn read_segment<T: AsRef<str>>(
 
         match section {
             Section::Volume(v) => volume = Some(v),
-            Section::Table(t) => {
-                if !t.is_empty() {
-                    chunks.extend(t);
-                    // set the end of the last chunk in the table
-                    let chunks_len = chunks.len();
-                    chunks[chunks_len - 1].end_offset = end_of_sectors;
-                }
+            Section::Table(t) if !t.is_empty() => {
+                chunks.extend(t);
+                // set the end of the last chunk in the table
+                let chunks_len = chunks.len();
+                chunks[chunks_len - 1].end_offset = end_of_sectors;
             }
             Section::Sectors(eos) => end_of_sectors = eos,
             Section::Hash(h) => md5 = Some(h),
@@ -393,9 +391,10 @@ pub const DEFAULT_S3_CONCURRENCY: usize = 8;
 pub const DEFAULT_CACHE_MEM_MIB: usize = 1024;
 
 /// How the foyer cache is structured for a session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub enum CacheMode {
     /// Local-file backing: a single memory-only cache.
+    #[default]
     SingleMemory,
     /// S3 backing: a dedicated metadata cache plus a content cache. `regular_phase`
     /// starts `false` (metadata phase) and is flipped to `true` by the SIGUSR1 handler.
@@ -405,12 +404,6 @@ pub enum CacheMode {
         metadata_disk_mib: usize,
         regular_phase: Arc<AtomicBool>,
     },
-}
-
-impl Default for CacheMode {
-    fn default() -> Self {
-        CacheMode::SingleMemory
-    }
 }
 
 #[derive(Debug, Clone)]

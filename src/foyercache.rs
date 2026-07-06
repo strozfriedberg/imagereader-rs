@@ -386,21 +386,16 @@ mod tests {
         assert_eq!(before.len(), 0);
 
         let regular = Arc::new(AtomicBool::new(false));
-        let _cache = FoyerCache::dual_hybrid(
-            64 * 1024,
-            64,
-            1,
-            64,
-            1,
-            0,
-            4,
-            regular,
-            Some(base.path()),
-        )
-        .await
-        .unwrap();
+        let _cache =
+            FoyerCache::dual_hybrid(64 * 1024, 64, 1, 64, 1, 0, 4, regular, Some(base.path()))
+                .await
+                .unwrap();
 
         let after: Vec<_> = std::fs::read_dir(base.path()).unwrap().collect();
-        assert_eq!(after.len(), 2, "expected content_dir and metadata_dir under the custom base");
+        assert_eq!(
+            after.len(),
+            2,
+            "expected content_dir and metadata_dir under the custom base"
+        );
     }
 }

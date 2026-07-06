@@ -18,10 +18,10 @@ impl WorkerSource for CacheWorkerSource {
         let mut local = ReadTrace::default();
         self.runtime
             .block_on(cache.read(self.idx, off, buf, &mut local))?;
-        if local.foyer_miss {
-            if let Some(shared) = &self.foyer_trace {
-                shared.lock().unwrap().foyer_miss = true;
-            }
+        if local.foyer_miss
+            && let Some(shared) = &self.foyer_trace
+        {
+            shared.lock().unwrap().foyer_miss = true;
         }
         Ok(())
     }
