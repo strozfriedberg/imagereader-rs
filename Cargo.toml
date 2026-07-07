@@ -67,3 +67,9 @@ url = "2.5.7"
 const_format = "0.2"
 rand = "0.9"
 test-log = { version = "0.2.18", default-features = false, features = ["trace"] }
+criterion = "0.7"
+
+[[bench]]
+name = "reader_bench"
+path = "benches/reader_bench.rs"
+harness = false
