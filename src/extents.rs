@@ -67,7 +67,6 @@ const SECTOR_SIZE: u64 = 512;
 
 fn read_grain_table_sparse<R>(
     h: &VmdkSparseMeta,
-    start_sector: u64,
     src: &mut R,
 ) -> Result<HashMap<u64, u64>, std::io::Error>
 where
@@ -83,22 +82,22 @@ where
         })
         .collect::<Result<Vec<u64>, std::io::Error>>()?;
 
-    // read level 2
+    // read level 2. Keys are grain indices within this extent (0-based).
     let mut grain_table = HashMap::new();
-    let mut cur_sector = start_sector;
-    let end_sector = start_sector + h.sectors;
+    let total_grains = h.sectors.div_ceil(h.cluster_sectors);
+    let mut cur_grain = 0u64;
 
     for l2_offset in l1_entries {
-        if cur_sector == end_sector {
-            // we've exhausted all the sectors; stop
+        if cur_grain >= total_grains {
+            // we've mapped every grain; stop
             break;
         }
 
-        let l2_len = h.l2_len.min(h.sectors - (cur_sector - start_sector));
+        let l2_len = h.l2_len.min(total_grains - cur_grain);
 
         if l2_offset == 0 {
             // the data for this entry is in the parent
-            cur_sector += l2_len;
+            cur_grain += l2_len;
             continue;
         }
 
@@ -113,10 +112,10 @@ where
                 .iter()
                 .enumerate()
                 .filter(|(_, grain)| **grain != 0)
-                .map(|(i, grain)| (cur_sector + i as u64, *grain)),
+                .map(|(i, grain)| (cur_grain + i as u64, *grain)),
         );
 
-        cur_sector += l2_len;
+        cur_grain += l2_len;
     }
 
     Ok(grain_table)
@@ -124,7 +123,6 @@ where
 
 fn read_grain_table_sesparse<R>(
     h: &VmdkSeSparseMeta,
-    start_sector: u64,
     src: &mut R,
 ) -> Result<HashMap<u64, u64>, std::io::Error>
 where
@@ -152,28 +150,28 @@ where
         .map(|_| src.read_u64::<LittleEndian>())
         .collect::<Result<Vec<u64>, std::io::Error>>()?;
 
-    // read level 2
+    // read level 2. Keys are grain indices within this extent (0-based).
     let mut grain_table = HashMap::new();
-    let mut cur_sector = start_sector;
-    let end_sector = start_sector + h.sectors;
+    let total_grains = h.sectors.div_ceil(h.cluster_sectors);
+    let mut cur_grain = 0u64;
 
     // size in bytes of an l2 table
     let l2_size = h.l2_len * 8;
 
     for l1_entry in l1_entries {
-        if cur_sector == end_sector {
-            // we've exhausted all the sectors; stop
+        if cur_grain >= total_grains {
+            // we've mapped every grain; stop
             break;
         }
 
-        let l2_len = h.l2_len.min(h.sectors - (cur_sector - start_sector));
+        let l2_len = h.l2_len.min(total_grains - cur_grain);
 
         // high nibble of l1 entries are 0 (unallocated) or 1 (allocated)
 
         if l1_entry == 0 {
             // Thank you Mario! But our princess is in another castle!
             // (the data for this entry is in the parent)
-            cur_sector += l2_len;
+            cur_grain += l2_len;
             continue;
         }
 
@@ -216,10 +214,10 @@ where
                 }
             };
 
-            grain_table.insert(cur_sector + i as u64, cluster_offset);
+            grain_table.insert(cur_grain + i as u64, cluster_offset);
         }
 
-        cur_sector += l2_len;
+        cur_grain += l2_len;
     }
 
     Ok(grain_table)
@@ -229,7 +227,7 @@ fn read_extent<R, F>(
     ed: &ExtentDescription,
     start_sector: u64,
     filename: F,
-    src: R,
+    mut src: R,
 ) -> Result<ExtentStorage, OpenError>
 where
     R: Read + Seek + Clone + Send + 'static,
@@ -240,14 +238,7 @@ where
     Ok(match &ed.kind {
         ExtentDescriptionInner::Sparse { .. } | ExtentDescriptionInner::VmfsSparse { .. } => {
             let header = read_header_sparse(src.clone())?;
-            // The L1/L2 grain tables are read one 4-byte entry at a time and
-            // can run into the tens of thousands of entries for a large
-            // sparse disk. Parse them through a buffered clone so those
-            // reads coalesce into a handful of real cache round trips
-            // instead of one per entry; `src` itself (kept as the extent's
-            // long-term data-read handle below) is left untouched.
-            let mut buffered = std::io::BufReader::with_capacity(1024 * 1024, src.clone());
-            let grain_table = read_grain_table_sparse(&header, start_sector, &mut buffered)?;
+            let grain_table = read_grain_table_sparse(&header, &mut src)?;
 
             ExtentStorage::Sparse(SparseStorage {
                 file: Box::new(src) as Box<dyn ReadSeek>,
@@ -256,12 +247,12 @@ where
                 grain_size: header.cluster_sectors,
                 has_compressed_grain: header.compressed,
                 zeroed_grain_table_entry: header.has_zero_grain,
+                start_sector,
             })
         }
         ExtentDescriptionInner::SeSparse { .. } => {
             let header = read_header_sesparse(src.clone())?;
-            let mut buffered = std::io::BufReader::with_capacity(1024 * 1024, src.clone());
-            let grain_table = read_grain_table_sesparse(&header, start_sector, &mut buffered)?;
+            let grain_table = read_grain_table_sesparse(&header, &mut src)?;
 
             ExtentStorage::Sparse(SparseStorage {
                 file: Box::new(src) as Box<dyn ReadSeek>,
@@ -270,6 +261,7 @@ where
                 grain_size: header.cluster_sectors,
                 has_compressed_grain: false,
                 zeroed_grain_table_entry: true,
+                start_sector,
             })
         }
         ExtentDescriptionInner::Vmfs { .. } => ExtentStorage::Flat(FlatStorage {

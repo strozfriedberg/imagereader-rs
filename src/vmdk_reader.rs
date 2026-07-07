@@ -595,4 +595,42 @@ mod test {
             "offset field must be added so the leading padding sector is skipped"
         );
     }
+
+    #[test]
+    fn read_multi_extent_sparse() {
+        use sha1::{Digest, Sha1};
+
+        // twoGbMaxExtentSparse-s001.vmdk decodes to the 10 MiB reference
+        // payload (sha1 dd2fade4…). Used twice as two 20480-sector extents,
+        // the image is that payload concatenated with itself.
+        let src = std::fs::read("data/twoGbMaxExtentSparse-s001.vmdk").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "a.vmdk", &src);
+        write(dir.path(), "b.vmdk", &src);
+        write(
+            dir.path(),
+            "multi.vmdk",
+            b"# Disk DescriptorFile\n# Extent description\n\
+              RW 20480 SPARSE \"a.vmdk\"\nRW 20480 SPARSE \"b.vmdk\"\n",
+        );
+
+        let path = dir.path().join("multi.vmdk");
+        let mut reader = VmdkReader::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(reader.image_size, 20 * 1024 * 1024);
+
+        let mut hasher = Sha1::new();
+        let mut buf = vec![0u8; 1024 * 1024];
+        let mut off = 0u64;
+        while off < reader.image_size {
+            let n = reader.read_at_offset(off, &mut buf).unwrap();
+            assert!(n > 0, "read made no progress at offset {off}");
+            hasher.update(&buf[..n]);
+            off += n as u64;
+        }
+        assert_eq!(
+            hex::encode(hasher.finalize()),
+            "71a47b54e7ad9f80e51c4e2f71e59d438c89d082",
+            "second extent must read its real data, not zeros"
+        );
+    }
 }

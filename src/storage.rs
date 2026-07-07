@@ -14,11 +14,12 @@ pub struct SparseStorage {
     pub file: Box<dyn ReadSeek>,
     #[allow(dead_code)]
     pub filename: String,
-    pub grain_table: HashMap<u64 /*sector*/, u64 /*real sector in file*/>,
-    // size size_grain * 512
+    pub grain_table: HashMap<u64 /*grain index in extent*/, u64 /*real sector in file*/>,
+    // grain size in sectors; grain byte size is grain_size * 512
     pub grain_size: u64,
     pub has_compressed_grain: bool,
     pub zeroed_grain_table_entry: bool,
+    pub start_sector: u64,
 }
 
 #[derive(Debug)]
@@ -120,8 +121,11 @@ fn read_and_decompress_grain(
 impl SparseStorage {
     fn read(&mut self, offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
         let grain_size = self.grain_size * SECTOR_SIZE;
-        let grain_index = offset / grain_size;
-        let grain_data_offset = (offset % grain_size) as usize;
+        // Rebase the absolute image offset to this extent; the grain table is
+        // keyed by grain index within the extent.
+        let local = offset - self.start_sector * SECTOR_SIZE;
+        let grain_index = local / grain_size;
+        let grain_data_offset = (local % grain_size) as usize;
 
         let r = (grain_size as usize - grain_data_offset).min(buf.len());
         buf = &mut buf[..r];
