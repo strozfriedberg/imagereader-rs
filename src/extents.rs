@@ -1,7 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::{
     collections::HashMap,
-    io::{Read, Seek, SeekFrom},
+    io::{BufReader, Read, Seek, SeekFrom},
     sync::Arc,
 };
 use tokio::runtime::Runtime;
@@ -227,7 +227,7 @@ fn read_extent<R, F>(
     ed: &ExtentDescription,
     start_sector: u64,
     filename: F,
-    mut src: R,
+    src: R,
 ) -> Result<ExtentStorage, OpenError>
 where
     R: Read + Seek + Clone + Send + 'static,
@@ -238,7 +238,8 @@ where
     Ok(match &ed.kind {
         ExtentDescriptionInner::Sparse { .. } | ExtentDescriptionInner::VmfsSparse { .. } => {
             let header = read_header_sparse(src.clone())?;
-            let grain_table = read_grain_table_sparse(&header, &mut src)?;
+            let mut buffered = BufReader::new(src.clone());
+            let grain_table = read_grain_table_sparse(&header, &mut buffered)?;
 
             ExtentStorage::Sparse(SparseStorage {
                 file: Box::new(src) as Box<dyn ReadSeek>,
@@ -252,7 +253,8 @@ where
         }
         ExtentDescriptionInner::SeSparse { .. } => {
             let header = read_header_sesparse(src.clone())?;
-            let grain_table = read_grain_table_sesparse(&header, &mut src)?;
+            let mut buffered = BufReader::new(src.clone());
+            let grain_table = read_grain_table_sesparse(&header, &mut buffered)?;
 
             ExtentStorage::Sparse(SparseStorage {
                 file: Box::new(src) as Box<dyn ReadSeek>,
