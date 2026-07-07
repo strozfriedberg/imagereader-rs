@@ -281,7 +281,13 @@ fn make_bytes_reader(
 
     let crs = CacheReadSeek::new(cache, runtime, idx, seg_len);
 
-    let rs = Box::new(crs) as Box<dyn ReadSeek>;
+    // Kaitai's generated struct parser issues reads a few bytes at a time
+    // (one per primitive field) while walking segment headers/tables.
+    // Buffering coalesces those into far fewer round trips through the
+    // cache, which otherwise serializes every tiny read behind a lock.
+    let buffered = std::io::BufReader::with_capacity(1024 * 1024, crs);
+
+    let rs = Box::new(buffered) as Box<dyn ReadSeek>;
 
     BytesReader::try_from(rs)
         .map_err(OpenError::from)
