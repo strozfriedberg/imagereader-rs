@@ -36,7 +36,13 @@ where
     let mut line = String::new();
 
     loop {
-        r.read_line(&mut line)?;
+        line.clear();
+        // EOF before the header line: this is not a descriptor file.
+        if r.read_line(&mut line)? == 0 {
+            return Err(OpenErrorKind::DescriptorError(
+                DescriptorError::UnrecognizedDescriptor,
+            ));
+        }
         desc += &line;
 
         match line.as_str().trim_end() {
@@ -45,7 +51,7 @@ where
                 r.read_to_string(&mut desc)?;
                 return Ok(desc);
             }
-            "" => line.clear(),
+            "" => {}
             _ => {
                 return Err(OpenErrorKind::DescriptorError(
                     DescriptorError::UnrecognizedDescriptor,
@@ -101,6 +107,16 @@ ddb.longContentID = "4b98b55ba6a6bc2e8fd6eb368f67ca74"
 Bogus crap
 "#;
 
+        assert!(matches!(
+            read_descriptor_file(desc.as_bytes()).unwrap_err(),
+            OpenErrorKind::DescriptorError(DescriptorError::UnrecognizedDescriptor)
+        ));
+    }
+
+    #[test]
+    fn test_read_descriptor_file_blank_lines_terminates() {
+        // A file of only blank lines must terminate with an error, not spin.
+        let desc = "\n\n\n\n\n\n\n\n";
         assert!(matches!(
             read_descriptor_file(desc.as_bytes()).unwrap_err(),
             OpenErrorKind::DescriptorError(DescriptorError::UnrecognizedDescriptor)
