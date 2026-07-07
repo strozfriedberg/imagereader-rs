@@ -238,7 +238,7 @@ where
     Ok(match &ed.kind {
         ExtentDescriptionInner::Sparse { .. } | ExtentDescriptionInner::VmfsSparse { .. } => {
             let header = read_header_sparse(src.clone())?;
-            let mut buffered = BufReader::new(src.clone());
+            let mut buffered = BufReader::with_capacity(1024 * 1024, src.clone());
             let grain_table = read_grain_table_sparse(&header, &mut buffered)?;
 
             ExtentStorage::Sparse(SparseStorage {
@@ -253,7 +253,7 @@ where
         }
         ExtentDescriptionInner::SeSparse { .. } => {
             let header = read_header_sesparse(src.clone())?;
-            let mut buffered = BufReader::new(src.clone());
+            let mut buffered = BufReader::with_capacity(1024 * 1024, src.clone());
             let grain_table = read_grain_table_sesparse(&header, &mut buffered)?;
 
             ExtentStorage::Sparse(SparseStorage {
