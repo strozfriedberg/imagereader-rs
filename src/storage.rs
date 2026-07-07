@@ -84,7 +84,7 @@ fn read_and_decompress_grain(
     let header: u16 = file.read_u16::<BigEndian>()?;
 
     // sanity check against expected zlib stream header values...
-    if header % 31 != 0 || header & 0x0F00 != 8 << 8 || header & 0x0020 != 0 {
+    if !header.is_multiple_of(31) || header & 0x0F00 != 8 << 8 || header & 0x0020 != 0 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             CrazyGrainIndex(grain_index),

@@ -35,37 +35,35 @@ impl FetchPool {
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<Vec<u8>, std::io::Error>> + Send + 'static,
     {
-        loop {
-            {
-                let guard = self.inflight.lock().await;
-                if let Some(shared) = guard.get(&key) {
-                    return shared.clone().await.map_err(std::io::Error::other);
-                }
+        {
+            let guard = self.inflight.lock().await;
+            if let Some(shared) = guard.get(&key) {
+                return shared.clone().await.map_err(std::io::Error::other);
             }
-
-            let sem = Arc::clone(&self.semaphore);
-            let shared = async move {
-                let _permit = sem
-                    .acquire()
-                    .await
-                    .map_err(|_| "fetch pool semaphore closed".to_string())?;
-                fetch().await.map_err(|e| e.to_string())
-            }
-            .boxed()
-            .shared();
-
-            {
-                let mut guard = self.inflight.lock().await;
-                if let Some(existing) = guard.get(&key) {
-                    return existing.clone().await.map_err(std::io::Error::other);
-                }
-                guard.insert(key, shared.clone());
-            }
-
-            let result = shared.await.map_err(std::io::Error::other);
-            self.inflight.lock().await.remove(&key);
-            return result;
         }
+
+        let sem = Arc::clone(&self.semaphore);
+        let shared = async move {
+            let _permit = sem
+                .acquire()
+                .await
+                .map_err(|_| "fetch pool semaphore closed".to_string())?;
+            fetch().await.map_err(|e| e.to_string())
+        }
+        .boxed()
+        .shared();
+
+        {
+            let mut guard = self.inflight.lock().await;
+            if let Some(existing) = guard.get(&key) {
+                return existing.clone().await.map_err(std::io::Error::other);
+            }
+            guard.insert(key, shared.clone());
+        }
+
+        let result = shared.await.map_err(std::io::Error::other);
+        self.inflight.lock().await.remove(&key);
+        result
     }
 }
 

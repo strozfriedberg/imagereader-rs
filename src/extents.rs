@@ -320,7 +320,13 @@ pub fn read_extents(
 
         cache.add_source(idx, src);
 
-        let crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, seg_len, io_log.cloned());
+        let crs = CacheReadSeek::new(
+            cache.clone(),
+            runtime.clone(),
+            idx,
+            seg_len,
+            io_log.cloned(),
+        );
 
         let storage =
             read_extent(ed, start_sector, filename, crs).map_err(|e| e.with_path(ed_url))?;

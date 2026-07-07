@@ -46,8 +46,12 @@ impl Read for CacheReadSeek {
             let timer = self.io_log.as_ref().map(|_| ReadTimer::start());
             let read_offset = self.pos;
             let mut trace = ReadTrace::default();
-            self.runtime
-                .block_on(self.cache.read(self.idx, self.pos, &mut buf[..len], &mut trace))?;
+            self.runtime.block_on(self.cache.read(
+                self.idx,
+                self.pos,
+                &mut buf[..len],
+                &mut trace,
+            ))?;
             self.pos = rend;
 
             // vmdk has no secondary decoded-chunk cache like e01's, so there's

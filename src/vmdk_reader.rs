@@ -219,7 +219,13 @@ fn handle_image(
 
     cache.add_source(idx, src);
 
-    let mut crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, seg_len, io_log.cloned());
+    let mut crs = CacheReadSeek::new(
+        cache.clone(),
+        runtime.clone(),
+        idx,
+        seg_len,
+        io_log.cloned(),
+    );
 
     idx += 1;
 
@@ -284,9 +290,10 @@ pub const DEFAULT_S3_CONCURRENCY: usize = 8;
 pub const DEFAULT_CACHE_CHUNK_SIZE: usize = 1024 * 1024;
 
 /// How the foyer cache is structured for a session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum CacheMode {
     /// Local-file backing: a single memory-only cache.
+    #[default]
     SingleMemory,
     /// S3 backing: a dedicated metadata cache plus a content cache. `regular_phase`
     /// starts `false` (metadata phase) and is flipped to `true` by the SIGUSR1 handler.
@@ -296,12 +303,6 @@ pub enum CacheMode {
         metadata_disk_mib: usize,
         regular_phase: Arc<AtomicBool>,
     },
-}
-
-impl Default for CacheMode {
-    fn default() -> Self {
-        CacheMode::SingleMemory
-    }
 }
 
 #[derive(Debug, Clone)]

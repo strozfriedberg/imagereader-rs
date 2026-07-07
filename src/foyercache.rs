@@ -20,6 +20,12 @@ use crate::{
     placeholdersource::PlaceholderSource,
 };
 
+/// A block-content cache keyed by `(source/extent index, segment-file byte offset)`.
+type BlockCache = HybridCache<(usize, u64), Vec<u8>, DefaultHasher>;
+
+/// A boxed future returned by a fetch closure passed to `FetchPool::run`.
+type FetchFuture = std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, foyer::Error>> + Send>>;
+
 struct MetadataTier<S>
 where
     S: HashBuilder + Debug,
@@ -52,7 +58,7 @@ async fn build_hybrid(
     mem_capacity: usize,
     disk_size: usize,
     dir: &TempDir,
-) -> Result<HybridCache<(usize, u64), Vec<u8>, DefaultHasher>, std::io::Error> {
+) -> Result<BlockCache, std::io::Error> {
     let builder = HybridCacheBuilder::new().memory(mem_capacity).storage();
     let builder = if disk_size > 0 {
         let device = FsDeviceBuilder::new(dir.path())
@@ -140,8 +146,7 @@ fn make_fetch(
     end: u64,
     fetch_pool: Arc<FetchPool>,
     trace: Option<Arc<AtomicBool>>,
-) -> impl FnOnce() -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, foyer::Error>> + Send>>
-{
+) -> impl FnOnce() -> FetchFuture {
     move || {
         let beg = choff;
         let fetch_end = (choff + chlen as u64).min(end);
@@ -178,7 +183,12 @@ fn fill_from_block(
     let chbeg = (off - choff) as usize;
     let chend = chbeg + buf.len();
     if chend > ch.len() {
-        return Err(short_read_error(idx, off, buf.len(), (ch.len() - chbeg) as u64));
+        return Err(short_read_error(
+            idx,
+            off,
+            buf.len(),
+            (ch.len() - chbeg) as u64,
+        ));
     }
     buf.copy_from_slice(&ch[chbeg..chend]);
     Ok(())
@@ -191,11 +201,8 @@ async fn route_block(
     choff: u64,
     source: Arc<dyn BytesSource + Send + Sync>,
     end: u64,
-    content: Arc<HybridCache<(usize, u64), Vec<u8>, DefaultHasher>>,
-    metadata: Option<(
-        Arc<HybridCache<(usize, u64), Vec<u8>, DefaultHasher>>,
-        Arc<AtomicBool>,
-    )>,
+    content: Arc<BlockCache>,
+    metadata: Option<(Arc<BlockCache>, Arc<AtomicBool>)>,
     fetch_pool: Arc<FetchPool>,
     trace: Option<Arc<AtomicBool>>,
 ) -> Result<Vec<u8>, std::io::Error> {
@@ -466,21 +473,16 @@ mod tests {
         assert_eq!(before.len(), 0);
 
         let regular = Arc::new(AtomicBool::new(false));
-        let _cache = FoyerCache::dual_hybrid(
-            64 * 1024,
-            64,
-            1,
-            64,
-            1,
-            0,
-            4,
-            regular,
-            Some(base.path()),
-        )
-        .await
-        .unwrap();
+        let _cache =
+            FoyerCache::dual_hybrid(64 * 1024, 64, 1, 64, 1, 0, 4, regular, Some(base.path()))
+                .await
+                .unwrap();
 
         let after: Vec<_> = std::fs::read_dir(base.path()).unwrap().collect();
-        assert_eq!(after.len(), 2, "expected content_dir and metadata_dir under the custom base");
+        assert_eq!(
+            after.len(),
+            2,
+            "expected content_dir and metadata_dir under the custom base"
+        );
     }
 }
