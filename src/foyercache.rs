@@ -6,7 +6,12 @@ use foyer::{
 use foyer_common::code::HashBuilder;
 use futures::future::try_join_all;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{fmt::Debug, future::Future, path::Path, sync::Arc};
+use std::{
+    fmt::Debug,
+    future::Future,
+    path::Path,
+    sync::{Arc, RwLock},
+};
 use tempfile::TempDir;
 use tracing::trace;
 
@@ -28,7 +33,7 @@ where
     S: HashBuilder + Debug,
 {
     chlen: usize,
-    sources: Vec<Arc<dyn BytesSource + Send + Sync>>,
+    sources: RwLock<Vec<Arc<dyn BytesSource + Send + Sync>>>,
     content: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
     metadata: Option<MetadataTier<S>>,
     fetch_pool: Arc<FetchPool>,
@@ -73,7 +78,7 @@ impl FoyerCache<DefaultHasher> {
         let content = Arc::new(build_hybrid(mem_capacity, 0, &dir).await?);
         Ok(Self {
             chlen,
-            sources: vec![],
+            sources: RwLock::new(vec![]),
             content,
             metadata: None,
             fetch_pool: FetchPool::new(s3_concurrency),
@@ -114,7 +119,7 @@ impl FoyerCache<DefaultHasher> {
         );
         Ok(Self {
             chlen,
-            sources: vec![],
+            sources: RwLock::new(vec![]),
             content,
             metadata: Some(MetadataTier {
                 cache: metadata,
@@ -225,17 +230,19 @@ async fn route_block(
 #[async_trait]
 impl Cache for FoyerCache<DefaultHasher> {
     async fn read(
-        &mut self,
+        &self,
         idx: usize,
         off: u64,
         buf: &mut [u8],
         trace: &mut ReadTrace,
     ) -> Result<(), std::io::Error> {
-        let source = Arc::clone(
-            self.sources
-                .get(idx)
-                .ok_or(std::io::Error::other(format!("{idx} out of bounds")))?,
-        );
+        let source = self
+            .sources
+            .read()
+            .expect("sources lock poisoned")
+            .get(idx)
+            .cloned()
+            .ok_or(std::io::Error::other(format!("{idx} out of bounds")))?;
         let end = source.end();
         let chlen = self.chlen as u64;
 
@@ -347,17 +354,19 @@ impl Cache for FoyerCache<DefaultHasher> {
 
     fn end(&self, idx: usize) -> Result<u64, std::io::Error> {
         self.sources
+            .read()
+            .expect("sources lock poisoned")
             .get(idx)
             .ok_or(std::io::Error::other(format!("{idx} out of bounds")))
             .map(|src| src.end())
     }
 
-    fn add_source(&mut self, idx: usize, src: Box<dyn BytesSource + Send + Sync>) {
-        if self.sources.len() <= idx {
-            self.sources
-                .resize_with(idx + 1, || Arc::new(PlaceholderSource));
+    fn add_source(&self, idx: usize, src: Box<dyn BytesSource + Send + Sync>) {
+        let mut sources = self.sources.write().expect("sources lock poisoned");
+        if sources.len() <= idx {
+            sources.resize_with(idx + 1, || Arc::new(PlaceholderSource));
         }
-        self.sources[idx] = Arc::from(src);
+        sources[idx] = Arc::from(src);
     }
 }
 
@@ -420,7 +429,7 @@ mod tests {
         const CHUNK64: u64 = CHUNK as u64;
 
         let regular = Arc::new(AtomicBool::new(false));
-        let mut cache = FoyerCache::dual_hybrid(CHUNK, 64, 0, 64, 0, 0, 4, regular.clone(), None)
+        let cache = FoyerCache::dual_hybrid(CHUNK, 64, 0, 64, 0, 0, 4, regular.clone(), None)
             .await
             .unwrap();
         cache.add_source(0, test_source());
@@ -495,7 +504,7 @@ mod tests {
     #[tokio::test]
     async fn short_block_from_source_is_an_error_not_silent_zeros() {
         const CHUNK: usize = 64 * 1024;
-        let mut cache = FoyerCache::single_memory(CHUNK, 16, 0, 4, None)
+        let cache = FoyerCache::single_memory(CHUNK, 16, 0, 4, None)
             .await
             .unwrap();
         cache.add_source(0, Box::new(ShortSource { len: 1024 * 1024 }));
@@ -511,5 +520,80 @@ mod tests {
         let mut buf = vec![0u8; CHUNK * 2];
         let err = cache.read(0, 0, &mut buf, &mut t).await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
+
+    /// Counts overlapping in-flight reads so the test can assert parallelism.
+    struct SlowSource {
+        len: u64,
+        active: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+    }
+
+    impl BytesSource for SlowSource {
+        fn read(
+            &self,
+            beg: u64,
+            end: u64,
+        ) -> futures::future::BoxFuture<'static, Result<Vec<u8>, std::io::Error>> {
+            let active = self.active.clone();
+            let max_active = self.max_active.clone();
+            async move {
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                max_active.fetch_max(now, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(vec![0u8; (end - beg) as usize])
+            }
+            .boxed()
+        }
+
+        fn end(&self) -> u64 {
+            self.len
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_reads_reach_the_source_in_parallel() {
+        const CHUNK: usize = 64 * 1024;
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+
+        let cache = Arc::new(
+            FoyerCache::single_memory(CHUNK, 16, 0, 8, None)
+                .await
+                .unwrap(),
+        );
+        cache.add_source(
+            0,
+            Box::new(SlowSource {
+                len: 1024 * 1024,
+                active: active.clone(),
+                max_active: max_active.clone(),
+            }),
+        );
+
+        // Four reads of four distinct blocks through the shared handle.
+        let handles: Vec<_> = (0..4u64)
+            .map(|i| {
+                let cache = cache.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let mut t = ReadTrace::default();
+                    cache
+                        .read(0, i * CHUNK as u64, &mut buf, &mut t)
+                        .await
+                        .unwrap();
+                })
+            })
+            .collect();
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let max = max_active.load(Ordering::SeqCst);
+        assert!(max >= 2, "block fetches never overlapped (max in-flight: {max})");
     }
 }

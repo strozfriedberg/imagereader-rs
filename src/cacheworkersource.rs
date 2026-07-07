@@ -6,7 +6,7 @@ use crate::io_log::ReadTrace;
 use crate::workersource::WorkerSource;
 
 pub struct CacheWorkerSource {
-    pub cache: Arc<Mutex<dyn Cache + Send>>,
+    pub cache: Arc<dyn Cache>,
     pub runtime: Arc<Runtime>,
     pub idx: usize,
     pub foyer_trace: Option<Arc<Mutex<ReadTrace>>>,
@@ -14,10 +14,9 @@ pub struct CacheWorkerSource {
 
 impl WorkerSource for CacheWorkerSource {
     fn read(&mut self, off: u64, buf: &mut [u8]) -> Result<(), std::io::Error> {
-        let mut cache = self.cache.lock().unwrap();
         let mut local = ReadTrace::default();
         self.runtime
-            .block_on(cache.read(self.idx, off, buf, &mut local))?;
+            .block_on(self.cache.read(self.idx, off, buf, &mut local))?;
         if local.foyer_miss
             && let Some(shared) = &self.foyer_trace
         {

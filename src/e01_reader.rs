@@ -265,7 +265,7 @@ fn read_segment<T: AsRef<str>>(
 fn make_bytes_reader(
     p: &str,
     idx: usize,
-    cache: Arc<Mutex<dyn Cache + Send>>,
+    cache: Arc<dyn Cache>,
     runtime: Arc<Runtime>,
     s3_auth: Option<&Arc<S3Auth>>,
     io_log: Option<Arc<IoLog>>,
@@ -277,7 +277,7 @@ fn make_bytes_reader(
     let src = source_for_url(&url, idx, &runtime, s3_auth, io_log.as_ref())?;
 
     let seg_len = src.end();
-    cache.lock().unwrap().add_source(idx, src);
+    cache.add_source(idx, src);
 
     let crs = CacheReadSeek::new(cache, runtime, idx, seg_len);
 
@@ -618,7 +618,7 @@ pub struct E01Reader {
     corrupt_chunk_policy: CorruptChunkPolicy,
 
     workers: Vec<ReadWorker>,
-    cache: Arc<Mutex<dyn Cache + Send>>,
+    cache: Arc<dyn Cache>,
     decoded_chunk_cache: Arc<Mutex<DecodedChunkCache>>,
     runtime: Arc<Runtime>,
     io_log: Option<Arc<IoLog>>,
@@ -799,7 +799,7 @@ impl E01Reader {
                 .map_err(InitError::CacheSetupFailed)?,
         };
 
-        let cache = Arc::new(Mutex::new(c));
+        let cache: Arc<dyn Cache> = Arc::new(c);
 
         let ignore_checksums =
             options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;

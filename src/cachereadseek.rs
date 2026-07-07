@@ -1,6 +1,6 @@
 use std::{
     io::{Read, Seek, SeekFrom},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 use tokio::runtime::Runtime;
 
@@ -8,7 +8,7 @@ use crate::cache::Cache;
 use crate::io_log::ReadTrace;
 
 pub struct CacheReadSeek {
-    cache: Arc<Mutex<dyn Cache + Send>>,
+    cache: Arc<dyn Cache>,
     runtime: Arc<Runtime>,
     idx: usize,
     pos: u64,
@@ -16,12 +16,7 @@ pub struct CacheReadSeek {
 }
 
 impl CacheReadSeek {
-    pub fn new(
-        cache: Arc<Mutex<dyn Cache + Send>>,
-        runtime: Arc<Runtime>,
-        idx: usize,
-        len: u64,
-    ) -> Self {
+    pub fn new(cache: Arc<dyn Cache>, runtime: Arc<Runtime>, idx: usize, len: u64) -> Self {
         Self {
             cache,
             runtime,
@@ -41,10 +36,9 @@ impl Read for CacheReadSeek {
         let n = (buf.len() as u64).min(remaining) as usize;
         let buf = &mut buf[..n];
 
-        let mut cache = self.cache.lock().expect("poisoned");
         let mut trace = ReadTrace::default();
         self.runtime
-            .block_on(cache.read(self.idx, self.pos, buf, &mut trace))?;
+            .block_on(self.cache.read(self.idx, self.pos, buf, &mut trace))?;
 
         self.pos += n as u64;
         Ok(n)
@@ -53,7 +47,7 @@ impl Read for CacheReadSeek {
 
 impl Seek for CacheReadSeek {
     fn seek(&mut self, pos: SeekFrom) -> Result<u64, std::io::Error> {
-        let end = self.cache.lock().expect("poisoned").end(self.idx)?;
+        let end = self.cache.end(self.idx)?;
 
         let (base, offset) = match pos {
             SeekFrom::Start(n) => (n, 0),
@@ -90,7 +84,7 @@ mod tests {
     #[async_trait]
     impl Cache for FixedCache {
         async fn read(
-            &mut self,
+            &self,
             _idx: usize,
             off: u64,
             buf: &mut [u8],
@@ -105,14 +99,13 @@ mod tests {
             Ok(self.data.len() as u64)
         }
 
-        fn add_source(&mut self, _idx: usize, _src: Box<dyn BytesSource + Send + Sync>) {}
+        fn add_source(&self, _idx: usize, _src: Box<dyn BytesSource + Send + Sync>) {}
     }
 
     #[test]
     fn read_clamps_to_end_and_reports_real_count() {
         let data: Vec<u8> = (0..100).map(|i| i as u8).collect();
-        let cache: Arc<Mutex<dyn Cache + Send>> =
-            Arc::new(Mutex::new(FixedCache { data: data.clone() }));
+        let cache: Arc<dyn Cache> = Arc::new(FixedCache { data: data.clone() });
         let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
         let mut crs = CacheReadSeek::new(cache, runtime, 0, data.len() as u64);
 
