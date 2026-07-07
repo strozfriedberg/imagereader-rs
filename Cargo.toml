@@ -23,6 +23,7 @@ path = "src/main.rs"
 
 [features]
 capi = []
+bench = []
 
 [dependencies]
 adler32 = "1.2"
