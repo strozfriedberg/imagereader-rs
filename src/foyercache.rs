@@ -178,7 +178,12 @@ fn fill_from_block(
     let chbeg = (off - choff) as usize;
     let chend = chbeg + buf.len();
     if chend > ch.len() {
-        return Err(short_read_error(idx, off, buf.len(), (ch.len() - chbeg) as u64));
+        return Err(short_read_error(
+            idx,
+            off,
+            buf.len(),
+            (ch.len() - chbeg) as u64,
+        ));
     }
     buf.copy_from_slice(&ch[chbeg..chend]);
     Ok(())
@@ -594,6 +599,9 @@ mod tests {
         }
 
         let max = max_active.load(Ordering::SeqCst);
-        assert!(max >= 2, "block fetches never overlapped (max in-flight: {max})");
+        assert!(
+            max >= 2,
+            "block fetches never overlapped (max in-flight: {max})"
+        );
     }
 }
