@@ -2,7 +2,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::{
     collections::HashMap,
     io::{Read, Seek, SeekFrom},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 use tokio::runtime::Runtime;
 use url::Url;
@@ -229,7 +229,7 @@ fn read_extent<R, F>(
     ed: &ExtentDescription,
     start_sector: u64,
     filename: F,
-    mut src: R,
+    src: R,
 ) -> Result<ExtentStorage, OpenError>
 where
     R: Read + Seek + Clone + Send + 'static,
@@ -240,7 +240,14 @@ where
     Ok(match &ed.kind {
         ExtentDescriptionInner::Sparse { .. } | ExtentDescriptionInner::VmfsSparse { .. } => {
             let header = read_header_sparse(src.clone())?;
-            let grain_table = read_grain_table_sparse(&header, start_sector, &mut src)?;
+            // The L1/L2 grain tables are read one 4-byte entry at a time and
+            // can run into the tens of thousands of entries for a large
+            // sparse disk. Parse them through a buffered clone so those
+            // reads coalesce into a handful of real cache round trips
+            // instead of one per entry; `src` itself (kept as the extent's
+            // long-term data-read handle below) is left untouched.
+            let mut buffered = std::io::BufReader::with_capacity(1024 * 1024, src.clone());
+            let grain_table = read_grain_table_sparse(&header, start_sector, &mut buffered)?;
 
             ExtentStorage::Sparse(SparseStorage {
                 file: Box::new(src) as Box<dyn ReadSeek>,
@@ -253,7 +260,8 @@ where
         }
         ExtentDescriptionInner::SeSparse { .. } => {
             let header = read_header_sesparse(src.clone())?;
-            let grain_table = read_grain_table_sesparse(&header, start_sector, &mut src)?;
+            let mut buffered = std::io::BufReader::with_capacity(1024 * 1024, src.clone());
+            let grain_table = read_grain_table_sesparse(&header, start_sector, &mut buffered)?;
 
             ExtentStorage::Sparse(SparseStorage {
                 file: Box::new(src) as Box<dyn ReadSeek>,
@@ -283,7 +291,7 @@ pub fn read_extents(
     image_url: &Url,
     eds: &[ExtentDescription],
     is_bin_and_singular: bool,
-    cache: Arc<Mutex<dyn Cache + Send>>,
+    cache: Arc<dyn Cache>,
     runtime: Arc<Runtime>,
     mut idx: usize,
     s3_auth: Option<&Arc<S3Auth>>,
@@ -314,9 +322,9 @@ pub fn read_extents(
 
         let seg_len = src.end();
 
-        cache.lock().expect("poisoned").add_source(idx, src);
+        cache.add_source(idx, src);
 
-        let crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, seg_len);
+        let crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, seg_len, io_log.cloned());
 
         let storage =
             read_extent(ed, start_sector, filename, crs).map_err(|e| e.with_path(ed_url))?;

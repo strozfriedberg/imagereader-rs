@@ -15,6 +15,10 @@ path = "src/lib.rs"
 name = "vmdkverify"
 path = "src/main.rs"
 
+[[bin]]
+name = "open-timing"
+path = "src/bin/open_timing.rs"
+
 [features]
 capi = []
 

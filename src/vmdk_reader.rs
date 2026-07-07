@@ -5,7 +5,7 @@ use std::{
     io::{self, Seek, SeekFrom},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex, atomic::AtomicBool},
+    sync::{Arc, atomic::AtomicBool},
 };
 use tokio::runtime::Runtime;
 use tracing::debug;
@@ -38,7 +38,7 @@ pub struct VmdkReader {
     spans: Vec<(u64, (u64, usize))>,
     extents: Vec<Extent>,
     #[allow(dead_code)]
-    cache: Arc<Mutex<dyn Cache + Send>>,
+    cache: Arc<dyn Cache>,
     #[allow(dead_code)]
     runtime: Arc<Runtime>,
 }
@@ -209,7 +209,7 @@ pub fn source_for_url(
 fn handle_image(
     current_url: &Url,
     mut idx: usize,
-    cache: Arc<Mutex<dyn Cache + Send>>,
+    cache: Arc<dyn Cache>,
     runtime: Arc<Runtime>,
     s3_auth: Option<&Arc<S3Auth>>,
     io_log: Option<&Arc<IoLog>>,
@@ -217,9 +217,9 @@ fn handle_image(
     let src = source_for_url(current_url, idx, &runtime, s3_auth, io_log)?;
     let seg_len = src.end();
 
-    cache.lock().expect("poisoned").add_source(idx, src);
+    cache.add_source(idx, src);
 
-    let mut crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, seg_len);
+    let mut crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, seg_len, io_log.cloned());
 
     idx += 1;
 
@@ -386,7 +386,7 @@ impl VmdkReader {
         .map_err(InitError::CacheSetupFailed)
         .map_err(OpenErrorKind::from)?;
 
-        let cache = Arc::new(Mutex::new(c));
+        let cache: Arc<dyn Cache> = Arc::new(c);
 
         // Resolve S3 credentials once if the image is S3-backed; the whole extent
         // chain resolves relative to the same scheme.

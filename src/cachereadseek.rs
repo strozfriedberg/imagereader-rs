@@ -1,51 +1,67 @@
 use std::{
     io::{Read, Seek, SeekFrom},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 use tokio::runtime::Runtime;
 
 use crate::cache::Cache;
-use crate::io_log::ReadTrace;
+use crate::io_log::{IoLog, ReadTimer, ReadTrace, chunk_cache_label};
 
 #[derive(Clone)]
 pub struct CacheReadSeek {
-    cache: Arc<Mutex<dyn Cache + Send>>,
+    cache: Arc<dyn Cache>,
     runtime: Arc<Runtime>,
     idx: usize,
     pos: u64,
+    io_log: Option<Arc<IoLog>>,
 }
 
 impl CacheReadSeek {
     pub fn new(
-        cache: Arc<Mutex<dyn Cache + Send>>,
+        cache: Arc<dyn Cache>,
         runtime: Arc<Runtime>,
         idx: usize,
         _len: u64,
+        io_log: Option<Arc<IoLog>>,
     ) -> Self {
         Self {
             cache,
             runtime,
             idx,
             pos: 0,
+            io_log,
         }
     }
 }
 
 impl Read for CacheReadSeek {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        let mut cache = self.cache.lock().expect("poisoned");
-
         // check that we don't read past the end of the source
-        let send = cache.end(self.idx)?;
+        let send = self.cache.end(self.idx)?;
         let rend = send.min(self.pos + buf.len() as u64);
 
         let len = (rend - self.pos) as usize;
 
         if len > 0 {
+            let timer = self.io_log.as_ref().map(|_| ReadTimer::start());
+            let read_offset = self.pos;
             let mut trace = ReadTrace::default();
             self.runtime
-                .block_on(cache.read(self.idx, self.pos, &mut buf[..len], &mut trace))?;
+                .block_on(self.cache.read(self.idx, self.pos, &mut buf[..len], &mut trace))?;
             self.pos = rend;
+
+            // vmdk has no secondary decoded-chunk cache like e01's, so there's
+            // no chunk-level hit/miss to report -- only the foyer tier.
+            if let Some(log) = &self.io_log {
+                let dur_us = timer.as_ref().map(ReadTimer::elapsed_us).unwrap_or(0);
+                log.log_read(
+                    read_offset,
+                    len,
+                    dur_us,
+                    trace.foyer_label(),
+                    chunk_cache_label(None),
+                );
+            }
         }
 
         Ok(len)
@@ -54,7 +70,7 @@ impl Read for CacheReadSeek {
 
 impl Seek for CacheReadSeek {
     fn seek(&mut self, pos: SeekFrom) -> Result<u64, std::io::Error> {
-        let end = self.cache.lock().expect("poisoned").end(self.idx)?;
+        let end = self.cache.end(self.idx)?;
 
         let (base, offset) = match pos {
             SeekFrom::Start(n) => (n, 0),

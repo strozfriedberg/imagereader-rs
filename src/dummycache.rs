@@ -1,3 +1,5 @@
+use std::sync::{Arc, RwLock};
+
 use async_trait::async_trait;
 
 use crate::{
@@ -6,42 +8,53 @@ use crate::{
 
 #[allow(dead_code)]
 pub struct DummyCache {
-    sources: Vec<Box<dyn BytesSource + Send + Sync>>,
+    sources: RwLock<Vec<Arc<dyn BytesSource + Send + Sync>>>,
 }
 
 impl DummyCache {
     #[allow(dead_code)]
     pub fn new() -> Self {
-        Self { sources: vec![] }
+        Self {
+            sources: RwLock::new(vec![]),
+        }
     }
 }
 
 #[async_trait]
 impl Cache for DummyCache {
     async fn read(
-        &mut self,
+        &self,
         idx: usize,
         off: u64,
         buf: &mut [u8],
         _trace: &mut ReadTrace,
     ) -> Result<(), std::io::Error> {
-        let b = self.sources[idx].read(off, off + buf.len() as u64).await?;
+        let source = self
+            .sources
+            .read()
+            .expect("sources lock poisoned")
+            .get(idx)
+            .cloned()
+            .ok_or(std::io::Error::other(format!("{idx} out of bounds")))?;
+        let b = source.read(off, off + buf.len() as u64).await?;
         buf.copy_from_slice(&b);
         Ok(())
     }
 
     fn end(&self, idx: usize) -> Result<u64, std::io::Error> {
         self.sources
+            .read()
+            .expect("sources lock poisoned")
             .get(idx)
             .ok_or(std::io::Error::other(format!("{idx} out of bounds")))
             .map(|src| src.end())
     }
 
-    fn add_source(&mut self, idx: usize, src: Box<dyn BytesSource + Send + Sync>) {
-        if self.sources.len() <= idx {
-            self.sources
-                .resize_with(idx + 1, || Box::new(PlaceholderSource));
+    fn add_source(&self, idx: usize, src: Box<dyn BytesSource + Send + Sync>) {
+        let mut sources = self.sources.write().expect("sources lock poisoned");
+        if sources.len() <= idx {
+            sources.resize_with(idx + 1, || Arc::new(PlaceholderSource));
         }
-        self.sources[idx] = src;
+        sources[idx] = Arc::from(src);
     }
 }
