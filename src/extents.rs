@@ -276,11 +276,13 @@ where
             file: Box::new(src) as Box<dyn ReadSeek>,
             filename,
             offset: 0,
+            start_sector,
         }),
         ExtentDescriptionInner::Flat { offset, .. } => ExtentStorage::Flat(FlatStorage {
             file: Box::new(src) as Box<dyn ReadSeek>,
             filename,
             offset: *offset,
+            start_sector,
         }),
         _ => todo!("TODO: {:?} support", ed.kind),
     })

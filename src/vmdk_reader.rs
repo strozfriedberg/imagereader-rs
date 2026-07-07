@@ -540,4 +540,59 @@ impl VmdkReader {
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    use super::*;
+
+    fn write(dir: &std::path::Path, name: &str, bytes: &[u8]) {
+        std::fs::write(dir.join(name), bytes).unwrap();
+    }
+
+    #[test]
+    fn read_multi_extent_flat() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "flat-a.vmdk", &[0xAAu8; 1024]); // 2 sectors
+        write(dir.path(), "flat-b.vmdk", &[0xBBu8; 1024]); // 2 sectors
+        write(
+            dir.path(),
+            "multi.vmdk",
+            b"# Disk DescriptorFile\n# Extent description\n\
+              RW 2 FLAT \"flat-a.vmdk\" 0\nRW 2 FLAT \"flat-b.vmdk\" 0\n",
+        );
+
+        let path = dir.path().join("multi.vmdk");
+        let mut reader = VmdkReader::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(reader.image_size, 2048);
+
+        let mut buf = vec![0u8; 2048];
+        let n = reader.read_at_offset(0, &mut buf).unwrap();
+        assert_eq!(n, 2048);
+        assert!(buf[..1024].iter().all(|&b| b == 0xAA), "first extent");
+        assert!(buf[1024..].iter().all(|&b| b == 0xBB), "second extent");
+    }
+
+    #[test]
+    fn read_flat_extent_with_nonzero_offset_field() {
+        let dir = tempfile::tempdir().unwrap();
+        // 1 sector of padding, then 2 sectors of payload.
+        let mut file = vec![0u8; 512];
+        file.extend(std::iter::repeat_n(0xCC, 1024));
+        write(dir.path(), "flat-c.vmdk", &file);
+        write(
+            dir.path(),
+            "off.vmdk",
+            b"# Disk DescriptorFile\n# Extent description\n\
+              RW 2 FLAT \"flat-c.vmdk\" 1\n",
+        );
+
+        let path = dir.path().join("off.vmdk");
+        let mut reader = VmdkReader::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(reader.image_size, 1024);
+
+        let mut buf = vec![0u8; 1024];
+        reader.read_at_offset(0, &mut buf).unwrap();
+        assert!(
+            buf.iter().all(|&b| b == 0xCC),
+            "offset field must be added so the leading padding sector is skipped"
+        );
+    }
+}

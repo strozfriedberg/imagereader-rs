@@ -27,6 +27,7 @@ pub struct FlatStorage {
     #[allow(dead_code)]
     pub filename: String,
     pub offset: u64,
+    pub start_sector: u64,
 }
 
 #[derive(Debug)]
@@ -158,10 +159,11 @@ impl SparseStorage {
 
 impl FlatStorage {
     fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, ReadError> {
-        // FLAT, VMFS
-        // NB: only ExtentKind::Flat may have nonzero extent offset
-        self.file
-            .seek(SeekFrom::Start(offset - self.offset * SECTOR_SIZE))?;
+        // FLAT, VMFS. `offset` is absolute within the image; rebase it to this
+        // extent, then add the extent file's own data offset (the descriptor's
+        // FLAT offset field, in sectors). Only Flat may have a nonzero field.
+        let file_offset = (offset - self.start_sector * SECTOR_SIZE) + self.offset * SECTOR_SIZE;
+        self.file.seek(SeekFrom::Start(file_offset))?;
         self.file.read_exact(buf)?;
         Ok(buf.len())
     }
