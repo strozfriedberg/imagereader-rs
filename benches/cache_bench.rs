@@ -1,7 +1,8 @@
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use e01::{BytesSource, Cache, FoyerCache, ReadTrace};
 use futures::future::{BoxFuture, FutureExt};
 use tokio::runtime::Runtime;
@@ -77,5 +78,65 @@ fn single_threaded_throughput(c: &mut Criterion) {
     });
 }
 
-criterion_group!(name = benches; config = Criterion::default(); targets = single_threaded_throughput);
+fn concurrent_read_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cache concurrent read scaling");
+    group.sample_size(20);
+    group.measurement_time(Duration::from_secs(3));
+
+    for concurrency in [1usize, 4, 8, 16] {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(concurrency),
+            &concurrency,
+            |b, &concurrency| {
+                let cache = RT.block_on(async {
+                    let cache = FoyerCache::single_memory(CHUNK_LEN, 64, 0, concurrency, None)
+                        .await
+                        .unwrap();
+                    cache.add_source(
+                        0,
+                        Box::new(SyntheticSource {
+                            len: NUM_BLOCKS * CHUNK_LEN as u64,
+                            latency: Duration::from_millis(5),
+                        }),
+                    );
+                    Arc::new(cache)
+                });
+                let next_block = AtomicU64::new(0);
+
+                b.iter_custom(|iters| {
+                    RT.block_on(async {
+                        let mut total = Duration::ZERO;
+                        for _ in 0..iters {
+                            let start_block =
+                                next_block.fetch_add(concurrency as u64, Ordering::SeqCst);
+                            let started = std::time::Instant::now();
+                            let handles: Vec<_> = (0..concurrency)
+                                .map(|i| {
+                                    let cache = cache.clone();
+                                    let block = start_block + i as u64;
+                                    tokio::spawn(async move {
+                                        let mut buf = vec![0u8; CHUNK_LEN];
+                                        let mut trace = ReadTrace::default();
+                                        cache
+                                            .read(0, block * CHUNK_LEN as u64, &mut buf, &mut trace)
+                                            .await
+                                            .unwrap();
+                                    })
+                                })
+                                .collect();
+                            for h in handles {
+                                h.await.unwrap();
+                            }
+                            total += started.elapsed();
+                        }
+                        total
+                    })
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(name = benches; config = Criterion::default(); targets = single_threaded_throughput, concurrent_read_scaling);
 criterion_main!(benches);
