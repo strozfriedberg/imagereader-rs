@@ -33,6 +33,13 @@ mod tracing_init;
 pub use io_log::{IoLog, ReadTimer, ReadTrace, chunk_cache_label};
 pub use tracing_init::init as init_tracing;
 
+#[cfg(feature = "bench")]
+pub use bytessource::BytesSource;
+#[cfg(feature = "bench")]
+pub use cache::Cache;
+#[cfg(feature = "bench")]
+pub use foyercache::FoyerCache;
+
 #[cfg(test)]
 mod test {
     use crate::{test_data::*, test_helper::do_hash, vmdk_reader::VmdkReader};
