@@ -74,3 +74,9 @@ criterion = "0.7"
 name = "reader_bench"
 path = "benches/reader_bench.rs"
 harness = false
+
+[[bench]]
+name = "cache_bench"
+path = "benches/cache_bench.rs"
+harness = false
+required-features = ["bench"]
