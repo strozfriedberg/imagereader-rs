@@ -966,21 +966,15 @@ name = "e01-rs"
 version = "0.1.1"
 dependencies = [
  "adler32",
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "aws-creds",
- "aws-smithy-async",
  "byteorder",
  "bytesize",
  "clap",
  "digest 0.10.7",
  "flate2",
- "foyer",
- "foyer-common",
  "futures",
  "glob",
  "hex",
+ "imagesource",
  "itertools 0.14.0",
  "kaitai",
  "md-5",
@@ -1746,6 +1740,28 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "imagesource"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "aws-creds",
+ "aws-smithy-async",
+ "foyer",
+ "foyer-common",
+ "futures",
+ "rust-s3",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -3336,19 +3352,13 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vmdk-rs"
 version = "0.1.1"
 dependencies = [
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "aws-creds",
- "aws-smithy-async",
  "byteorder",
  "bytesize",
  "clap",
  "flate2",
- "foyer",
- "foyer-common",
  "futures",
  "hex",
+ "imagesource",
  "regex",
  "rust-s3",
  "sha-1",
