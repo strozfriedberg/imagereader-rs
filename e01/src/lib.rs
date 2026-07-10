@@ -9,37 +9,17 @@ mod test_data;
 #[cfg(test)]
 mod test_helper;
 
-mod bytessource;
-mod cache;
-mod cachereadseek;
 mod cacheworkersource;
-mod dummycache;
 mod error;
-mod fetch_pool;
-mod filesource;
-mod foyercache;
 mod generated;
 pub mod hasher;
-mod io_log;
-mod placeholdersource;
 mod readworker;
-mod s3_creds;
-mod s3source;
 mod sec_read;
 mod seg_path;
 mod segment;
-mod tracing_init;
 mod workersource;
 
-pub use io_log::{IoLog, ReadTimer, ReadTrace, chunk_cache_label};
-pub use tracing_init::init as init_tracing;
-
-#[cfg(feature = "bench")]
-pub use bytessource::BytesSource;
-#[cfg(feature = "bench")]
-pub use cache::Cache;
-#[cfg(feature = "bench")]
-pub use foyercache::FoyerCache;
+pub use imagesource::{IoLog, ReadTimer, ReadTrace, chunk_cache_label, init_tracing};
 
 #[cfg(test)]
 mod test {

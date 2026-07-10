@@ -395,7 +395,8 @@ mod tests {
     use crate::bytessource::BytesSource;
     use crate::filesource::FileSource;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
 
     const MIB: u64 = 1024 * 1024;
 
@@ -510,6 +511,80 @@ mod tests {
         fn end(&self) -> u64 {
             self.len
         }
+    }
+
+    struct SlowSource {
+        len: u64,
+        active: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+    }
+
+    impl BytesSource for SlowSource {
+        fn read(
+            &self,
+            beg: u64,
+            end: u64,
+        ) -> futures::future::BoxFuture<'static, Result<Vec<u8>, std::io::Error>> {
+            let active = self.active.clone();
+            let max_active = self.max_active.clone();
+            async move {
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                max_active.fetch_max(now, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(vec![0u8; (end - beg) as usize])
+            }
+            .boxed()
+        }
+
+        fn end(&self) -> u64 {
+            self.len
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_reads_reach_the_source_in_parallel() {
+        const CHUNK: usize = 64 * 1024;
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+
+        let cache = Arc::new(
+            FoyerCache::single_memory(CHUNK, 16, 0, 8, None)
+                .await
+                .unwrap(),
+        );
+        cache.add_source(
+            0,
+            Box::new(SlowSource {
+                len: 1024 * 1024,
+                active: active.clone(),
+                max_active: max_active.clone(),
+            }),
+        );
+
+        // Four reads of four distinct blocks through the shared handle.
+        let handles: Vec<_> = (0..4u64)
+            .map(|i| {
+                let cache = cache.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let mut t = ReadTrace::default();
+                    cache
+                        .read(0, i * CHUNK as u64, &mut buf, &mut t)
+                        .await
+                        .unwrap();
+                })
+            })
+            .collect();
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let max = max_active.load(Ordering::SeqCst);
+        assert!(
+            max >= 2,
+            "block fetches never overlapped (max in-flight: {max})"
+        );
     }
 
     #[tokio::test]

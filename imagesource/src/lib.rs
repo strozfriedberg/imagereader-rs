@@ -36,4 +36,4 @@ pub use readseek::ReadSeek;
 pub use s3_creds::{S3Auth, resolve_s3_auth, s3_region_name, snapshot_credentials_sync};
 pub use s3source::S3Source;
 pub use tracing_init::init as init_tracing;
-pub use urlsource::{path_or_url_to_url, source_for_url};
+pub use urlsource::{path_or_url_to_url, s3_bucket, source_for_url};

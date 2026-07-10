@@ -52,7 +52,7 @@ fn s3_region_for_host(name: &str, auth: Option<&S3Auth>) -> Region {
     s3_region_for_host_in_region(name, &region_name)
 }
 
-fn s3_bucket(
+pub fn s3_bucket(
     name: &str,
     ctx: &str,
     runtime: &Runtime,
@@ -145,5 +145,30 @@ pub fn source_for_url(
             )))
         }
         _ => Err(OpenErrorKind::UnsupportedScheme(url.to_string()).into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use s3::creds::Credentials;
+
+    #[test]
+    fn s3_access_point_alias_uses_accesspoint_domain() {
+        let region = s3_region_for_host_in_region("foo-s3alias", "us-east-1");
+        match &region {
+            Region::Custom { region, endpoint } => {
+                assert_eq!(region, "us-east-1");
+                assert_eq!(endpoint, "s3-accesspoint.us-east-1.amazonaws.com");
+            }
+            _ => panic!("expected custom access point region"),
+        }
+
+        let bucket =
+            *Bucket::new("foo-s3alias", region, Credentials::anonymous().unwrap()).unwrap();
+        assert_eq!(
+            bucket.host(),
+            "foo-s3alias.s3-accesspoint.us-east-1.amazonaws.com"
+        );
     }
 }

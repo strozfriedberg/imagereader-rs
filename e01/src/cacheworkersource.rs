@@ -1,8 +1,7 @@
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
-use crate::cache::Cache;
-use crate::io_log::ReadTrace;
+use imagesource::{Cache, ReadTrace};
 use crate::workersource::WorkerSource;
 
 pub struct CacheWorkerSource {
