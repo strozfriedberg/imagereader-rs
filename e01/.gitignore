@@ -1,0 +1,4 @@
+.*.swp
+target/
+/session*/
+artifacts/

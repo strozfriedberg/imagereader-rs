@@ -1,0 +1,188 @@
+use bytesize::ByteSize;
+use clap::Parser;
+use e01::{
+    e01_reader::{CorruptChunkPolicy, CorruptSectionPolicy, E01Error, E01Reader, E01ReaderOptions},
+    hasher::{HashType, MultiHasher},
+    init_tracing,
+};
+use std::{
+    collections::HashSet,
+    iter::FromIterator,
+    process::ExitCode,
+    time::{Duration, Instant},
+};
+
+#[derive(Parser)]
+#[command(author, version, about, long_about)]
+struct Args {
+    /// Path to input file.
+    input: String,
+
+    /// Calculate additional digest (hash) types
+    #[arg(short = 'd', long = "digest", value_enum, name = "hash")]
+    extra_hashes: Vec<HashType>,
+
+    /// Ignore all checksums during read, default value is false
+    #[arg(short, long, default_value = "false")]
+    ignore_checksums: bool,
+}
+
+fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
+    htype: HashType,
+    hash_act: Option<H1>,
+    hash_exp: Option<H2>,
+) -> Option<bool> {
+    match hash_act {
+        Some(hash_act) => match hash_exp {
+            Some(hash_exp) if hash_act.as_ref() != hash_exp.as_ref() => {
+                println!(
+                    "{} {} != {}",
+                    htype,
+                    hex::encode(hash_act),
+                    hex::encode(hash_exp)
+                );
+                Some(false)
+            }
+            _ => {
+                println!("{} {} ok", htype, hex::encode(hash_act));
+                Some(true)
+            }
+        },
+        None => None,
+    }
+}
+
+fn display_progress(
+    offset: u64,
+    image_size: u64,
+    image_size_bs_disp: &bytesize::Display,
+    start: Instant,
+) {
+    let offset_bs = ByteSize::b(offset);
+    eprintln!(
+        "{:.1}/{:.1} = {:.1}%, {:.1}MiB/s",
+        offset_bs.display().iec(),
+        image_size_bs_disp,
+        offset as f32 / image_size as f32 * 100.0,
+        offset_bs.as_mib() / start.elapsed().as_secs_f64()
+    );
+}
+
+fn run(args: Args) -> Result<ExitCode, E01Error> {
+    let mut e01_reader = E01Reader::open_glob(
+        &args.input,
+        &E01ReaderOptions {
+            corrupt_section_policy: CorruptSectionPolicy::Error,
+            corrupt_chunk_policy: if args.ignore_checksums {
+                CorruptChunkPolicy::Zero
+            } else {
+                CorruptChunkPolicy::Error
+            },
+            ..Default::default()
+        },
+    )?;
+
+    let mut htypes: HashSet<HashType> = HashSet::from_iter(args.extra_hashes);
+
+    // compute MD5 if we have one stored
+    if e01_reader.stored_md5.is_some() {
+        htypes.insert(HashType::MD5);
+    }
+
+    // compute SHA1 if we have one stored
+    if e01_reader.stored_sha1.is_some() {
+        htypes.insert(HashType::SHA1);
+    }
+
+    let hasher = MultiHasher::new(htypes, vec![0; 1024 * 1024]);
+
+    // read through the image
+    let mut buf = vec![0; 1024 * 1024];
+    let mut offset = 0;
+
+    let image_size_bs_disp = ByteSize::b(e01_reader.image_size).display().iec();
+
+    let mut prev_prog = Instant::now();
+    let start = prev_prog;
+    while offset < e01_reader.image_size {
+        let read = e01_reader.read_at_offset(offset, &mut buf)?;
+        buf = hasher.update(buf, read);
+        offset += read as u64;
+
+        if prev_prog.elapsed() > Duration::from_secs(2) {
+            display_progress(offset, e01_reader.image_size, &image_size_bs_disp, start);
+            prev_prog = Instant::now();
+        }
+    }
+
+    display_progress(offset, e01_reader.image_size, &image_size_bs_disp, start);
+
+    let hashes = hasher.finalize();
+
+    // verify and output hashes
+    let md5_check = check_hash(
+        HashType::MD5,
+        hashes.get(&HashType::MD5),
+        e01_reader.stored_md5,
+    );
+
+    let sha1_check = check_hash(
+        HashType::SHA1,
+        hashes.get(&HashType::SHA1),
+        e01_reader.stored_sha1,
+    );
+
+    if let Some(sha256) = hashes.get(&HashType::SHA256) {
+        println!("{} {}", HashType::SHA256, hex::encode(sha256));
+    }
+
+    /*
+       There is some tool which computes only the MD5 but instead of storing
+       that in a hash section like it ought to, it incorreclty stores the real
+       MD5 and a zero SHA1 in a digest section. If the stored SHA1 is zero
+       and the computed SHA1 is also zero, that's either a real stored SHA1
+       or a cosmically improbable coincidence; but either way it's correct
+       so no problem. We warn when there's a likely spurious mismatch.
+    */
+    if sha1_check == Some(false)
+        && let Some(stored_sha1) = e01_reader.stored_sha1
+        && stored_sha1 == [0; 20]
+    {
+        eprintln!("Stored SHA1 is zero; possibly not intended as a stored SHA1");
+    }
+
+    // combine the results and report
+    let check = [md5_check, sha1_check]
+        .into_iter()
+        .flatten()
+        .reduce(|l, r| l && r);
+
+    Ok(match check {
+        Some(false) => {
+            println!("Hash verification: FAILURE");
+            ExitCode::FAILURE
+        }
+        None => {
+            println!("No hash verification performed");
+            ExitCode::SUCCESS
+        }
+        Some(true) => {
+            println!("Hash verification: SUCCESS");
+            ExitCode::SUCCESS
+        }
+    })
+}
+
+fn main() -> ExitCode {
+    init_tracing();
+
+    let args = Args::parse();
+
+    match run(args) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("{}", e);
+            ExitCode::FAILURE
+        }
+    }
+}

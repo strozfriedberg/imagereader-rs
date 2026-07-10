@@ -1,0 +1,46 @@
+use rand::Rng;
+use std::collections::HashMap;
+use tracing::trace;
+
+use crate::hasher::{HashType, MultiHasher};
+
+pub fn do_hash<RF>(
+    mut reader: RF,
+    image_size: u64,
+    random_buf_size: bool,
+) -> HashMap<HashType, String>
+where
+    RF: FnMut(u64, &mut [u8]) -> usize,
+{
+    let htypes = [HashType::MD5, HashType::SHA1, HashType::SHA256];
+
+    let hasher = MultiHasher::new(htypes, vec![0; 1024 * 1024]);
+
+    let mut buf: Vec<u8> = vec![0; 1024 * 1024];
+    let mut offset = 0;
+
+    while offset < image_size {
+        let buf_size = if random_buf_size {
+            rand::rng().random_range(0..buf.len())
+        } else {
+            buf.len()
+        };
+
+        let read = reader(offset, &mut buf[..buf_size]);
+
+        if read == 0 {
+            break;
+        }
+
+        buf = hasher.update(buf, read);
+
+        offset += read as u64;
+        trace!("hashed to {offset}");
+    }
+
+    hasher
+        .finalize()
+        .into_iter()
+        .map(|(k, v)| (k, hex::encode(v)))
+        .collect()
+}
