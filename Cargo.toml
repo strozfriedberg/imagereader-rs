@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["vmdk", "e01"]
+
+[profile.release]
+debug = false
+lto = true
