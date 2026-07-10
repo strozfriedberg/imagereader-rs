@@ -9,10 +9,6 @@ exclude = [
     "/artifacts/",
 ]
 
-[profile.release]
-debug = false
-lto = true
-
 [lib]
 name = "e01"
 path = "src/lib.rs"
