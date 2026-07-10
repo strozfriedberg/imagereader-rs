@@ -1,0 +1,69 @@
+[package]
+name = "vmdk-rs"
+version = "0.1.1"
+authors = ["LevelBlue"]
+edition = "2024"
+[profile.release]
+debug = false
+lto = true
+
+[lib]
+name = "vmdkrs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vmdkverify"
+path = "src/main.rs"
+
+[[bin]]
+name = "open-timing"
+path = "src/bin/open_timing.rs"
+
+[features]
+capi = []
+bench = []
+
+[dependencies]
+async-trait = "0.1.89"
+byteorder = "1.5"
+bytesize = "2.3.1"
+clap = { version = "4.1.7", features = ["derive"] }
+foyer = { version = "0.22", features = [ "serde" ] }
+foyer-common = "0.22"
+flate2 = "1"
+futures = "0.3.31"
+hex = "0.4.3"
+regex = "1"
+rust-s3 = { version = "0.37.1", features = ["tokio-rustls-tls"] }
+aws-config = { version = "1.8", default-features = false, features = [
+    "behavior-version-latest",
+    "credentials-process",
+    "sso",
+    "rustls",
+] }
+aws-credential-types = "1.2"
+aws-creds = { version = "0.39", default-features = false }
+aws-smithy-async = { version = "1.2", features = ["rt-tokio"] }
+sha-1 = "^0.10"
+tempfile = "3.23.0"
+thiserror = "2.0.12"
+time = "0.3"
+tokio = { version = "1.47.1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json", "time"] }
+url = "2.5.7"
+
+[dev-dependencies]
+rand = "0.10"
+criterion = "0.7"
+
+[[bench]]
+name = "reader_bench"
+path = "benches/reader_bench.rs"
+harness = false
+
+[[bench]]
+name = "cache_bench"
+path = "benches/cache_bench.rs"
+harness = false
+required-features = ["bench"]
