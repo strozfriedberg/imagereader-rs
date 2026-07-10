@@ -6,17 +6,14 @@ use crate::{
     bytessource::BytesSource, cache::Cache, io_log::ReadTrace, placeholdersource::PlaceholderSource,
 };
 
-#[allow(dead_code)]
+#[derive(Default)]
 pub struct DummyCache {
     sources: RwLock<Vec<Arc<dyn BytesSource + Send + Sync>>>,
 }
 
 impl DummyCache {
-    #[allow(dead_code)]
     pub fn new() -> Self {
-        Self {
-            sources: RwLock::new(vec![]),
-        }
+        Self::default()
     }
 }
 

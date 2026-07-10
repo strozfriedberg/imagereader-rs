@@ -5,7 +5,8 @@ use std::{
     io::{Read, SeekFrom},
 };
 
-use crate::{readseek::ReadSeek, vmdk_reader::ReadError};
+use crate::vmdk_reader::ReadError;
+use imagesource::ReadSeek;
 
 const SECTOR_SIZE: u64 = 512;
 

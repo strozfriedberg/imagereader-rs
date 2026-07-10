@@ -8,17 +8,13 @@ use tokio::runtime::Runtime;
 use url::Url;
 
 use crate::{
-    cache::Cache,
-    cachereadseek::CacheReadSeek,
     errors::{OpenError, OpenErrorKind},
     extent_description::{ExtentDescription, ExtentDescriptionInner},
     header::{VmdkSeSparseMeta, VmdkSparseMeta, read_header_sesparse, read_header_sparse},
-    io_log::IoLog,
-    readseek::ReadSeek,
-    s3_creds::S3Auth,
     storage::{ExtentStorage, FlatStorage, SparseStorage},
     vmdk_reader::source_for_url,
 };
+use imagesource::{Cache, CacheReadSeek, IoLog, ReadSeek, s3_creds::S3Auth};
 
 /*
 RW 8323072 FLAT "CentOS 3-f001.vmdk" 0

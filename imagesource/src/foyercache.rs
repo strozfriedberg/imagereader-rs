@@ -399,13 +399,17 @@ mod tests {
 
     const MIB: u64 = 1024 * 1024;
 
-    fn test_source() -> Box<dyn BytesSource + Send + Sync> {
-        let path = "data/monolithicFlat-flat.vmdk";
-        let len = std::fs::metadata(path).unwrap().len();
-        Box::new(FileSource {
-            path: path.into(),
-            len,
-        })
+    /// A 1 MiB patterned temp file; the TempDir keeps it alive for the test.
+    fn test_source() -> (tempfile::TempDir, Box<dyn BytesSource + Send + Sync>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.bin");
+        let data: Vec<u8> = (0..MIB).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &data).unwrap();
+        let src = Box::new(FileSource {
+            path: path.to_str().unwrap().into(),
+            len: MIB,
+        });
+        (dir, src)
     }
 
     #[test]
@@ -438,7 +442,8 @@ mod tests {
         let cache = FoyerCache::dual_hybrid(CHUNK, 64, 0, 64, 0, 0, 4, regular.clone(), None)
             .await
             .unwrap();
-        cache.add_source(0, test_source());
+        let (_dir, src) = test_source();
+        cache.add_source(0, src);
 
         // Metadata phase: block 0 (offset 0)
         let mut a = vec![0u8; 4096];
@@ -484,5 +489,47 @@ mod tests {
             2,
             "expected content_dir and metadata_dir under the custom base"
         );
+    }
+
+    use futures::FutureExt;
+
+    /// Simulates a truncated backing store: returns half the requested range.
+    struct ShortSource {
+        len: u64,
+    }
+
+    impl BytesSource for ShortSource {
+        fn read(
+            &self,
+            beg: u64,
+            end: u64,
+        ) -> futures::future::BoxFuture<'static, Result<Vec<u8>, std::io::Error>> {
+            async move { Ok(vec![0u8; ((end - beg) / 2) as usize]) }.boxed()
+        }
+
+        fn end(&self) -> u64 {
+            self.len
+        }
+    }
+
+    #[tokio::test]
+    async fn short_block_from_source_is_an_error_not_silent_zeros() {
+        const CHUNK: usize = 64 * 1024;
+        let cache = FoyerCache::single_memory(CHUNK, 16, 0, 4, None)
+            .await
+            .unwrap();
+        cache.add_source(0, Box::new(ShortSource { len: 1024 * 1024 }));
+
+        // Request exactly one full block; the source returns only half of it.
+        let mut buf = vec![0u8; CHUNK];
+        let mut t = ReadTrace::default();
+        let err = cache.read(0, 0, &mut buf, &mut t).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+
+        // A short block in the middle of a multi-block read must also error
+        // (this is the case that underflows `(off + bbeg) - choff` today).
+        let mut buf = vec![0u8; CHUNK * 2];
+        let err = cache.read(0, 0, &mut buf, &mut t).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 }

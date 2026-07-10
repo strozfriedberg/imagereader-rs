@@ -1861,6 +1861,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "imagesource"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "aws-creds",
+ "aws-smithy-async",
+ "criterion",
+ "foyer",
+ "foyer-common",
+ "futures",
+ "rust-s3",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3579,20 +3602,14 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vmdk-rs"
 version = "0.1.1"
 dependencies = [
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "aws-creds",
- "aws-smithy-async",
  "byteorder",
  "bytesize",
  "clap",
  "criterion",
  "flate2",
- "foyer",
- "foyer-common",
  "futures",
  "hex",
+ "imagesource",
  "rand 0.10.2",
  "regex",
  "rust-s3",

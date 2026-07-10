@@ -5,7 +5,7 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use futures::future::{BoxFuture, FutureExt};
 use tokio::runtime::Runtime;
-use vmdkrs::{BytesSource, Cache, FoyerCache, ReadTrace};
+use imagesource::{BytesSource, Cache, FoyerCache, ReadTrace};
 
 static RT: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().unwrap());
 

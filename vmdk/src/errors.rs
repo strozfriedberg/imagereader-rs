@@ -1,3 +1,5 @@
+pub use imagesource::errors::InitError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum DescriptorError {
     #[error("failed to parse '{0}' as a u64")]
@@ -15,14 +17,6 @@ pub enum DescriptorError {
 pub struct DeserializationError(pub &'static str, pub std::io::Error);
 
 #[derive(Debug, thiserror::Error)]
-pub enum InitError {
-    #[error("Failed to start tokio Runtime: {0}")]
-    TokioRuntimeFailed(std::io::Error),
-    #[error("{0}")]
-    CacheSetupFailed(std::io::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
 pub enum OpenErrorKind {
     #[error("{0}")]
     IoError(#[from] std::io::Error),
@@ -38,8 +32,8 @@ pub enum OpenErrorKind {
     InitializationFailed(#[from] InitError),
     #[error("Malformed path or URL: {0}")]
     BadPath(String),
-    #[error("Unsupported URL scheme: {0}")]
-    UnsupportedScheme(String),
+    #[error("{0}")]
+    Source(imagesource::OpenErrorKind),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -82,6 +76,24 @@ impl From<std::io::Error> for OpenError {
         Self {
             path: "".into(), // set using with_path()
             kind: OpenErrorKind::IoError(e),
+        }
+    }
+}
+
+impl From<imagesource::OpenError> for OpenError {
+    fn from(e: imagesource::OpenError) -> Self {
+        Self {
+            path: e.path,
+            kind: OpenErrorKind::Source(e.kind),
+        }
+    }
+}
+
+impl From<InitError> for OpenError {
+    fn from(e: InitError) -> Self {
+        Self {
+            path: "".into(), // set using with_path()
+            kind: OpenErrorKind::InitializationFailed(e),
         }
     }
 }

@@ -1,0 +1,31 @@
+[package]
+name = "imagesource"
+version = "0.1.0"
+authors = ["LevelBlue"]
+edition = "2024"
+
+[dependencies]
+async-trait.workspace = true
+foyer.workspace = true
+foyer-common.workspace = true
+futures.workspace = true
+rust-s3.workspace = true
+aws-config.workspace = true
+aws-credential-types.workspace = true
+aws-creds.workspace = true
+aws-smithy-async.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+criterion = "0.7"
+
+[[bench]]
+name = "cache_bench"
+path = "benches/cache_bench.rs"
+harness = false

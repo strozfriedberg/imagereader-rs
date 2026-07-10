@@ -1,6 +1,30 @@
 [workspace]
 resolver = "2"
-members = ["vmdk", "e01"]
+members = ["imagesource", "vmdk", "e01"]
+
+[workspace.dependencies]
+imagesource = { path = "imagesource" }
+async-trait = "0.1.89"
+foyer = { version = "0.22", features = ["serde"] }
+foyer-common = "0.22"
+futures = "0.3.31"
+rust-s3 = { version = "0.37.1", features = ["tokio-rustls-tls"] }
+aws-config = { version = "1.8", default-features = false, features = [
+    "behavior-version-latest",
+    "credentials-process",
+    "sso",
+    "rustls",
+] }
+aws-credential-types = "1.2"
+aws-creds = { version = "0.39", default-features = false }
+aws-smithy-async = { version = "1.2", features = ["rt-tokio"] }
+tempfile = "3.23.0"
+thiserror = "2.0.12"
+time = "0.3"
+tokio = { version = "1.47.1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json", "time"] }
+url = "2.5.7"
 
 [profile.release]
 debug = false

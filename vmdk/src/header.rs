@@ -1,10 +1,8 @@
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Read, Seek, SeekFrom};
 
-use crate::{
-    errors::{DeserializationError, OpenErrorKind},
-    readseek::ReadSeek,
-};
+use crate::errors::{DeserializationError, OpenErrorKind};
+use imagesource::ReadSeek;
 
 const SECTOR_SIZE: u64 = 512;
 
