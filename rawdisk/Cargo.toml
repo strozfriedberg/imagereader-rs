@@ -1,0 +1,42 @@
+[package]
+name = "rawdisk-rs"
+version = "0.1.0"
+authors = ["LevelBlue"]
+edition = "2024"
+
+[lib]
+name = "rawdisk"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rawdiskverify"
+path = "src/main.rs"
+
+[[bin]]
+name = "open-timing"
+path = "src/bin/open_timing.rs"
+
+[features]
+capi = []
+
+[dependencies]
+imagesource.workspace = true
+bytesize = "2.3.1"
+clap = { version = "4.1.7", features = ["derive"] }
+hex = "0.4.3"
+sha-1 = "^0.10"
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+rand = "0.10"
+criterion = "0.7"
+tempfile.workspace = true
+
+[[bench]]
+name = "reader_bench"
+path = "benches/reader_bench.rs"
+harness = false

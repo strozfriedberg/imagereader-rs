@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["imagesource", "vmdk", "e01"]
+members = ["imagesource", "vmdk", "e01", "rawdisk"]
 
 [workspace.dependencies]
 imagesource = { path = "imagesource" }

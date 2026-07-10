@@ -2596,6 +2596,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rawdisk-rs"
+version = "0.1.0"
+dependencies = [
+ "bytesize",
+ "clap",
+ "criterion",
+ "hex",
+ "imagesource",
+ "rand 0.10.2",
+ "sha-1",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "rayon"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
