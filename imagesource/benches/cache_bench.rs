@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, SamplingMode, criterion_group, criterion_main};
 use futures::future::{BoxFuture, FutureExt};
 use imagesource::{BytesSource, Cache, FoyerCache, ReadTrace};
 use tokio::runtime::Runtime;
@@ -62,7 +62,15 @@ fn single_threaded_throughput(c: &mut Criterion) {
         }
     });
 
-    c.bench_function("cache single-threaded warm read", |b| {
+    // A group rather than a bare bench_function, so this can opt into flat
+    // sampling: each iteration reads 32 MiB out of the warm cache and takes
+    // milliseconds, which is what triggered criterion's "unable to complete 100
+    // samples in 5.0s" warning under the default linear mode.
+    let mut group = c.benchmark_group("imagesource cache warm read");
+    group.sampling_mode(SamplingMode::Flat);
+    group.measurement_time(Duration::from_secs(10));
+
+    group.bench_function("32x1MiB", |b| {
         let mut buf = vec![0u8; CHUNK_LEN];
         let mut trace = ReadTrace::default();
         b.iter(|| {
@@ -76,12 +84,14 @@ fn single_threaded_throughput(c: &mut Criterion) {
             });
         });
     });
+    group.finish();
 }
 
 fn concurrent_read_scaling(c: &mut Criterion) {
-    let mut group = c.benchmark_group("cache concurrent read scaling");
+    let mut group = c.benchmark_group("imagesource cache concurrent scaling");
+    group.sampling_mode(SamplingMode::Flat);
     group.sample_size(20);
-    group.measurement_time(Duration::from_secs(3));
+    group.measurement_time(Duration::from_secs(10));
 
     for concurrency in [1usize, 4, 8, 16] {
         group.bench_with_input(
@@ -138,5 +148,5 @@ fn concurrent_read_scaling(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(name = benches; config = Criterion::default(); targets = single_threaded_throughput, concurrent_read_scaling);
+criterion_group!(name = benches; config = Criterion::default().noise_threshold(0.05); targets = single_threaded_throughput, concurrent_read_scaling);
 criterion_main!(benches);
