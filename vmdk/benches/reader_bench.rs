@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use vmdkrs::vmdk_reader::VmdkReader;
 
 fn full_sequential_read(c: &mut Criterion) {
@@ -29,7 +29,7 @@ fn full_sequential_read(c: &mut Criterion) {
 }
 
 fn random_offset_reads(c: &mut Criterion) {
-    use rand::{rngs::StdRng, RngExt, SeedableRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     const BUF_SIZE: usize = 4096;
     const NUM_OFFSETS: usize = 500;
@@ -55,5 +55,5 @@ fn random_offset_reads(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(name = benches; config = Criterion::default(); targets = full_sequential_read, random_offset_reads);
-criterion_main!(benches);
+criterion_group!(name = vmdk_benches; config = Criterion::default(); targets = full_sequential_read, random_offset_reads);
+criterion_main!(vmdk_benches);

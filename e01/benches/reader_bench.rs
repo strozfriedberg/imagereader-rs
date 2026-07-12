@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use e01::e01_reader::{E01Reader, E01ReaderOptions};
 
 fn full_sequential_read(c: &mut Criterion) {
@@ -30,7 +30,7 @@ fn full_sequential_read(c: &mut Criterion) {
 }
 
 fn random_offset_reads(c: &mut Criterion) {
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{Rng, SeedableRng, rngs::StdRng};
 
     const BUF_SIZE: usize = 4096;
     const NUM_OFFSETS: usize = 500;
@@ -57,5 +57,5 @@ fn random_offset_reads(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(name = benches; config = Criterion::default(); targets = full_sequential_read, random_offset_reads);
-criterion_main!(benches);
+criterion_group!(name = e01_benches; config = Criterion::default(); targets = full_sequential_read, random_offset_reads);
+criterion_main!(e01_benches);
