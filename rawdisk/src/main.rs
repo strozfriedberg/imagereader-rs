@@ -58,12 +58,22 @@ where
         offset += read as u64;
 
         if prev_prog.elapsed() > Duration::from_secs(2) {
-            display_progress(offset, rawdisk_reader.image_size, &image_size_bs_disp, start);
+            display_progress(
+                offset,
+                rawdisk_reader.image_size,
+                &image_size_bs_disp,
+                start,
+            );
             prev_prog = Instant::now();
         }
     }
 
-    display_progress(offset, rawdisk_reader.image_size, &image_size_bs_disp, start);
+    display_progress(
+        offset,
+        rawdisk_reader.image_size,
+        &image_size_bs_disp,
+        start,
+    );
 
     Ok(hasher.finalize().to_vec())
 }

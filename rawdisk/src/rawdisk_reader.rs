@@ -63,7 +63,7 @@ pub struct RawdiskReaderOptions {
     /// Base directory for foyer's on-disk cache (created as a random subdir
     /// under this path). `None` uses the OS default temp directory.
     pub cache_dir: Option<PathBuf>,
-    /// When set, append JSONL read/S3 traces (see [`IoLog`]).
+    /// When set, generate JSONL I/O logging (see [`IoLog`]). This will hose performance; only enable it as a diagnostic.
     pub io_log: Option<Arc<IoLog>>,
     /// Foyer block size in bytes.
     pub cache_chunk_size: usize,
@@ -155,11 +155,7 @@ impl RawdiskReader {
         })
     }
 
-    pub fn read_at_offset(
-        &mut self,
-        offset: u64,
-        mut buf: &mut [u8],
-    ) -> Result<usize, ReadError> {
+    pub fn read_at_offset(&mut self, offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
         // don't start reading past the end
         if offset > self.image_size {
             return Err(ReadError::OffsetBeyondEnd(offset, self.image_size));

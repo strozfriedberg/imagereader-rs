@@ -2,10 +2,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use futures::future::{BoxFuture, FutureExt};
-use tokio::runtime::Runtime;
 use imagesource::{BytesSource, Cache, FoyerCache, ReadTrace};
+use tokio::runtime::Runtime;
 
 static RT: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().unwrap());
 

@@ -421,7 +421,7 @@ pub struct E01ReaderOptions {
     /// Base directory for foyer's on-disk cache (created as a random subdir
     /// under this path). `None` uses the OS default temp directory.
     pub cache_dir: Option<PathBuf>,
-    /// When set, append JSONL read/S3 traces (see [`IoLog`]).
+    /// When set, generate JSONL I/O logging (see [`IoLog`]). This will hose performance; only enable it as a diagnostic.
     pub io_log: Option<Arc<IoLog>>,
 }
 

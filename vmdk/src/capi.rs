@@ -1,5 +1,7 @@
 use std::{
+    any::Any,
     ffi::{CStr, CString, c_char},
+    panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     slice,
 };
@@ -15,19 +17,44 @@ impl Drop for VmdkError {
     fn drop(&mut self) {
         unsafe {
             if !self.message.is_null() {
-                drop(Box::from_raw(self.message));
+                drop(CString::from_raw(self.message));
             }
+        }
+    }
+}
+
+fn panic_message(p: Box<dyn Any + Send>) -> String {
+    let what = p
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown cause".into());
+
+    format!("Panic while reading image: {what}")
+}
+
+/// Rust aborts the process when a panic unwinds across an `extern "C"` boundary,
+/// so every entry point runs its body here. Malformed images can panic deep in
+/// the parser; a C caller must get an error back instead of losing the process.
+fn guard<T>(err: *mut *mut VmdkError, fallback: T, f: impl FnOnce() -> T) -> T {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(v) => v,
+        Err(p) => {
+            fill_error(panic_message(p), err);
+            fallback
         }
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmdk_free_error(err: *mut VmdkError) {
-    if !err.is_null() {
-        unsafe {
-            drop(Box::from_raw(err));
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if !err.is_null() {
+            unsafe {
+                drop(Box::from_raw(err));
+            }
         }
-    }
+    }));
 }
 
 #[repr(C)]
@@ -92,40 +119,44 @@ pub unsafe extern "C" fn vmdk_open(
     image_path: *const c_char,
     err: *mut *mut VmdkError,
 ) -> *mut VmdkHandle {
-    // convert path
-    if image_path.is_null() {
-        fill_error("image_path is null", err);
-        return std::ptr::null_mut();
-    }
+    guard(err, std::ptr::null_mut(), || {
+        // convert path
+        if image_path.is_null() {
+            fill_error("image_path is null", err);
+            return std::ptr::null_mut();
+        }
 
-    let p = unsafe { CStr::from_ptr(image_path) };
+        let p = unsafe { CStr::from_ptr(image_path) };
 
-    let Ok(ip) = p.to_str() else {
-        fill_error("image_path is not UTF-8", err);
-        return std::ptr::null_mut();
-    };
+        let Ok(ip) = p.to_str() else {
+            fill_error("image_path is not UTF-8", err);
+            return std::ptr::null_mut();
+        };
 
-    // do the open
-    match VmdkReader::open(ip) {
-        Ok(reader) => match VmdkHandle::new(reader) {
-            Ok(handle) => Box::into_raw(Box::new(handle)),
+        // do the open
+        match VmdkReader::open(ip) {
+            Ok(reader) => match VmdkHandle::new(reader) {
+                Ok(handle) => Box::into_raw(Box::new(handle)),
+                Err(e) => {
+                    fill_error(e, err);
+                    std::ptr::null_mut()
+                }
+            },
             Err(e) => {
                 fill_error(e, err);
                 std::ptr::null_mut()
             }
-        },
-        Err(e) => {
-            fill_error(e, err);
-            std::ptr::null_mut()
         }
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmdk_close(reader: *mut VmdkHandle) {
-    if !reader.is_null() {
-        drop(unsafe { Box::from_raw(reader) });
-    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if !reader.is_null() {
+            drop(unsafe { Box::from_raw(reader) });
+        }
+    }));
 }
 
 #[unsafe(no_mangle)]
@@ -136,23 +167,25 @@ pub unsafe extern "C" fn vmdk_read(
     buflen: usize,
     err: *mut *mut VmdkError,
 ) -> usize {
-    if handle.is_null() {
-        fill_error("handle is null", err);
-        return 0;
-    }
+    guard(err, 0, || {
+        if handle.is_null() {
+            fill_error("handle is null", err);
+            return 0;
+        }
 
-    if buf.is_null() {
-        fill_error("buf is null", err);
-        return 0;
-    }
+        if buf.is_null() {
+            fill_error("buf is null", err);
+            return 0;
+        }
 
-    let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-    unsafe { &mut *(*handle).reader }
-        .read_at_offset(offset, buf)
-        .unwrap_or_else(|e| {
-            fill_error(e, err);
-            0
-        })
+        let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
+        unsafe { &mut *(*handle).reader }
+            .read_at_offset(offset, buf)
+            .unwrap_or_else(|e| {
+                fill_error(e, err);
+                0
+            })
+    })
 }
 
 #[cfg(test)]
@@ -192,6 +225,32 @@ mod test {
 
         assert!(!err.message.is_null());
         assert_eq!(unsafe { CStr::from_ptr(&*err.message) }, message);
+    }
+
+    #[test]
+    fn panic_in_ffi_body_becomes_an_error() {
+        let mut err = std::ptr::null_mut();
+        let r = guard(&mut err, 0usize, || panic!("boom"));
+
+        assert_eq!(r, 0);
+        assert_err_starts_with(err, c"Panic while reading image: boom");
+    }
+
+    #[test]
+    fn panic_with_null_err_does_not_abort() {
+        let r = guard(std::ptr::null_mut(), 0usize, || panic!("boom"));
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn free_error_releases_the_message() {
+        let mut err = std::ptr::null_mut();
+        fill_error("kaboom", &mut err);
+        assert!(!err.is_null());
+
+        // The message is a CString::into_raw pointer; freeing it as a Box
+        // deallocates with the wrong layout. Run under Miri/ASan to catch it.
+        unsafe { vmdk_free_error(err) };
     }
 
     #[track_caller]

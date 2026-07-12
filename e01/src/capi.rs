@@ -1,6 +1,8 @@
 use std::{
+    any::Any,
     ffi::{CStr, CString, c_char},
     mem::ManuallyDrop,
+    panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     slice,
 };
@@ -16,19 +18,44 @@ impl Drop for E01Error {
     fn drop(&mut self) {
         unsafe {
             if !self.message.is_null() {
-                drop(Box::from_raw(self.message));
+                drop(CString::from_raw(self.message));
             }
+        }
+    }
+}
+
+fn panic_message(p: Box<dyn Any + Send>) -> String {
+    let what = p
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown cause".into());
+
+    format!("Panic while reading image: {what}")
+}
+
+/// Rust aborts the process when a panic unwinds across an `extern "C"` boundary,
+/// so every entry point runs its body here. Malformed images can panic deep in
+/// the parser; a C caller must get an error back instead of losing the process.
+fn guard<T>(err: *mut *mut E01Error, fallback: T, f: impl FnOnce() -> T) -> T {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(v) => v,
+        Err(p) => {
+            fill_error(panic_message(p), err);
+            fallback
         }
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_free_error(err: *mut E01Error) {
-    if !err.is_null() {
-        unsafe {
-            drop(Box::from_raw(err));
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if !err.is_null() {
+            unsafe {
+                drop(Box::from_raw(err));
+            }
         }
-    }
+    }));
 }
 
 #[repr(C)]
@@ -225,58 +252,60 @@ pub unsafe extern "C" fn e01_open(
     options: *const E01ReaderOptions,
     err: *mut *mut E01Error,
 ) -> *mut E01Handle {
-    // convert options
-    if options.is_null() {
-        fill_error("options is null", err);
-        return std::ptr::null_mut();
-    }
-
-    let options = unsafe { (*options).into() };
-
-    // convert paths
-    if segment_paths.is_null() {
-        fill_error("segment_paths is null", err);
-        return std::ptr::null_mut();
-    }
-
-    if segment_paths_count == 0 {
-        fill_error("segment_paths_count is zero", err);
-        return std::ptr::null_mut();
-    }
-
-    let sl = unsafe { slice::from_raw_parts(segment_paths, segment_paths_count) };
-    let mut segment_paths = Vec::with_capacity(sl.len());
-
-    for (i, p) in sl.iter().enumerate() {
-        if p.is_null() {
-            fill_error(format!("segment_paths[{i}] is null"), err);
+    guard(err, std::ptr::null_mut(), || {
+        // convert options
+        if options.is_null() {
+            fill_error("options is null", err);
             return std::ptr::null_mut();
         }
 
-        let p = unsafe { CStr::from_ptr(*p) };
+        let options = unsafe { (*options).into() };
 
-        let Ok(sp) = p.to_str() else {
-            fill_error(format!("segment_paths[{i}] is not UTF-8"), err);
+        // convert paths
+        if segment_paths.is_null() {
+            fill_error("segment_paths is null", err);
             return std::ptr::null_mut();
-        };
+        }
 
-        segment_paths.push(sp);
-    }
+        if segment_paths_count == 0 {
+            fill_error("segment_paths_count is zero", err);
+            return std::ptr::null_mut();
+        }
 
-    // do the open
-    match E01Reader::open(segment_paths, &options) {
-        Ok(reader) => match E01Handle::new(reader) {
-            Ok(handle) => Box::into_raw(Box::new(handle)),
+        let sl = unsafe { slice::from_raw_parts(segment_paths, segment_paths_count) };
+        let mut segment_paths = Vec::with_capacity(sl.len());
+
+        for (i, p) in sl.iter().enumerate() {
+            if p.is_null() {
+                fill_error(format!("segment_paths[{i}] is null"), err);
+                return std::ptr::null_mut();
+            }
+
+            let p = unsafe { CStr::from_ptr(*p) };
+
+            let Ok(sp) = p.to_str() else {
+                fill_error(format!("segment_paths[{i}] is not UTF-8"), err);
+                return std::ptr::null_mut();
+            };
+
+            segment_paths.push(sp);
+        }
+
+        // do the open
+        match E01Reader::open(segment_paths, &options) {
+            Ok(reader) => match E01Handle::new(reader) {
+                Ok(handle) => Box::into_raw(Box::new(handle)),
+                Err(e) => {
+                    fill_error(e, err);
+                    std::ptr::null_mut()
+                }
+            },
             Err(e) => {
                 fill_error(e, err);
                 std::ptr::null_mut()
             }
-        },
-        Err(e) => {
-            fill_error(e, err);
-            std::ptr::null_mut()
         }
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -285,48 +314,52 @@ pub unsafe extern "C" fn e01_open_glob(
     options: *const E01ReaderOptions,
     err: *mut *mut E01Error,
 ) -> *mut E01Handle {
-    // convert options
-    if options.is_null() {
-        fill_error("options is null", err);
-        return std::ptr::null_mut();
-    }
+    guard(err, std::ptr::null_mut(), || {
+        // convert options
+        if options.is_null() {
+            fill_error("options is null", err);
+            return std::ptr::null_mut();
+        }
 
-    let options = unsafe { (*options).into() };
+        let options = unsafe { (*options).into() };
 
-    // convert path
-    if example_segment_path.is_null() {
-        fill_error("example_segment_path is null", err);
-        return std::ptr::null_mut();
-    }
+        // convert path
+        if example_segment_path.is_null() {
+            fill_error("example_segment_path is null", err);
+            return std::ptr::null_mut();
+        }
 
-    let p = unsafe { CStr::from_ptr(example_segment_path) };
+        let p = unsafe { CStr::from_ptr(example_segment_path) };
 
-    let Ok(sp) = p.to_str() else {
-        fill_error("example_segment_path is not UTF-8", err);
-        return std::ptr::null_mut();
-    };
+        let Ok(sp) = p.to_str() else {
+            fill_error("example_segment_path is not UTF-8", err);
+            return std::ptr::null_mut();
+        };
 
-    // do the open
-    match E01Reader::open_glob(sp, &options) {
-        Ok(reader) => match E01Handle::new(reader) {
-            Ok(handle) => Box::into_raw(Box::new(handle)),
+        // do the open
+        match E01Reader::open_glob(sp, &options) {
+            Ok(reader) => match E01Handle::new(reader) {
+                Ok(handle) => Box::into_raw(Box::new(handle)),
+                Err(e) => {
+                    fill_error(e, err);
+                    std::ptr::null_mut()
+                }
+            },
             Err(e) => {
                 fill_error(e, err);
                 std::ptr::null_mut()
             }
-        },
-        Err(e) => {
-            fill_error(e, err);
-            std::ptr::null_mut()
         }
-    }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
-    if !reader.is_null() {
-        drop(unsafe { Box::from_raw(reader) });
-    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if !reader.is_null() {
+            drop(unsafe { Box::from_raw(reader) });
+        }
+    }));
 }
 
 #[unsafe(no_mangle)]
@@ -337,23 +370,25 @@ pub unsafe extern "C" fn e01_read(
     buflen: usize,
     err: *mut *mut E01Error,
 ) -> usize {
-    if handle.is_null() {
-        fill_error("handle is null", err);
-        return 0;
-    }
+    guard(err, 0, || {
+        if handle.is_null() {
+            fill_error("handle is null", err);
+            return 0;
+        }
 
-    if buf.is_null() {
-        fill_error("buf is null", err);
-        return 0;
-    }
+        if buf.is_null() {
+            fill_error("buf is null", err);
+            return 0;
+        }
 
-    let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-    unsafe { &mut *(*handle).reader }
-        .read_at_offset(offset, buf)
-        .unwrap_or_else(|e| {
-            fill_error(e, err);
-            0
-        })
+        let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
+        unsafe { &mut *(*handle).reader }
+            .read_at_offset(offset, buf)
+            .unwrap_or_else(|e| {
+                fill_error(e, err);
+                0
+            })
+    })
 }
 
 #[cfg(test)]
@@ -442,6 +477,32 @@ mod test {
     fn assert_err_null(err: *mut E01Error) {
         let err = Holder::new(err);
         assert!(err.ptr.is_null());
+    }
+
+    #[test]
+    fn panic_in_ffi_body_becomes_an_error() {
+        let mut err = std::ptr::null_mut();
+        let r = guard(&mut err, 0usize, || panic!("boom"));
+
+        assert_eq!(r, 0);
+        assert_err_starts_with(err, c"Panic while reading image: boom");
+    }
+
+    #[test]
+    fn panic_with_null_err_does_not_abort() {
+        let r = guard(std::ptr::null_mut(), 0usize, || panic!("boom"));
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn free_error_releases_the_message() {
+        let mut err = std::ptr::null_mut();
+        fill_error("kaboom", &mut err);
+        assert!(!err.is_null());
+
+        // The message is a CString::into_raw pointer; freeing it as a Box
+        // deallocates with the wrong layout. Run under Miri/ASan to catch it.
+        unsafe { e01_free_error(err) };
     }
 
     fn ptr_to_opt_hash<const N: usize>(ptr: *const u8) -> Option<String> {

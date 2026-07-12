@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
-use imagesource::{Cache, ReadTrace};
 use crate::workersource::WorkerSource;
+use imagesource::{Cache, ReadTrace};
 
 pub struct CacheWorkerSource {
     pub cache: Arc<dyn Cache>,
