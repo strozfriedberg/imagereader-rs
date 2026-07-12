@@ -53,13 +53,27 @@ impl SourceSlots {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filesource::FileSource;
+    use futures::future::{BoxFuture, FutureExt};
+
+    /// These tests are about slot bookkeeping, not about reading anything.
+    struct StubSource;
+
+    impl BytesSource for StubSource {
+        fn read(
+            &self,
+            _beg: u64,
+            _end: u64,
+        ) -> BoxFuture<'static, Result<Vec<u8>, std::io::Error>> {
+            async { Ok(vec![]) }.boxed()
+        }
+
+        fn end(&self) -> u64 {
+            42
+        }
+    }
 
     fn a_source() -> Box<dyn BytesSource + Send + Sync> {
-        Box::new(FileSource {
-            path: "/nonexistent".into(),
-            len: 42,
-        })
+        Box::new(StubSource)
     }
 
     #[test]

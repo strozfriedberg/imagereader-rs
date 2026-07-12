@@ -826,9 +826,10 @@ impl E01Reader {
         // resize is needed and the template is dropped unused.
         if end_chunk_index - beg_chunk_index > self.workers.len() {
             let (chunk_size, policy) = (self.chunk_size, self.corrupt_chunk_policy);
-            self.workers.resize_with(end_chunk_index - beg_chunk_index, || {
-                ReadWorker::new(chunk_size, image_end, policy)
-            });
+            self.workers
+                .resize_with(end_chunk_index - beg_chunk_index, || {
+                    ReadWorker::new(chunk_size, image_end, policy)
+                });
         }
 
         let mut tasks = Vec::with_capacity(end_chunk_index - beg_chunk_index);

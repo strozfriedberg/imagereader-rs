@@ -107,14 +107,10 @@ pub fn source_for_url(
                 url.path()
             };
 
-            let len = std::fs::metadata(p)
+            let src = FileSource::open(p)
                 .map_err(OpenError::from)
-                .map_err(|e| e.with_path(p))?
-                .len();
-            Ok(Box::new(FileSource {
-                path: p.into(),
-                len,
-            }))
+                .map_err(|e| e.with_path(p))?;
+            Ok(Box::new(src))
         }
         "s3" => {
             let auth = s3_auth.ok_or_else(|| {

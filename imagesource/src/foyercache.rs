@@ -451,10 +451,7 @@ mod tests {
         let path = dir.path().join("source.bin");
         let data: Vec<u8> = (0..MIB).map(|i| (i % 251) as u8).collect();
         std::fs::write(&path, &data).unwrap();
-        let src = Box::new(FileSource {
-            path: path.to_str().unwrap().into(),
-            len: MIB,
-        });
+        let src = Box::new(FileSource::open(&path).unwrap());
         (dir, src)
     }
 
