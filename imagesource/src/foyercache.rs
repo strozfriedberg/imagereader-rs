@@ -6,12 +6,7 @@ use foyer::{
 use foyer_common::code::HashBuilder;
 use futures::future::try_join_all;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{
-    fmt::Debug,
-    future::Future,
-    path::Path,
-    sync::{Arc, RwLock},
-};
+use std::{fmt::Debug, future::Future, path::Path, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::OwnedSemaphorePermit;
 use tracing::trace;
@@ -21,7 +16,7 @@ use crate::{
     cache::Cache,
     fetch_limit::FetchLimiter,
     io_log::{IoLog, ReadTrace},
-    placeholdersource::PlaceholderSource,
+    source_slot::SourceSlots,
 };
 
 /// A block-content cache keyed by `(source/extent index, segment-file byte offset)`.
@@ -52,7 +47,7 @@ where
     S: HashBuilder + Debug,
 {
     chlen: usize,
-    sources: RwLock<Vec<Arc<dyn BytesSource + Send + Sync>>>,
+    sources: SourceSlots,
     content: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
     metadata: Option<MetadataTier<S>>,
     fetch_limit: Arc<FetchLimiter>,
@@ -109,7 +104,7 @@ impl FoyerCache<DefaultHasher> {
         let content = Arc::new(build_hybrid(mem_capacity, 0, &dir).await?);
         Ok(Self {
             chlen,
-            sources: RwLock::new(vec![]),
+            sources: SourceSlots::default(),
             content,
             metadata: None,
             fetch_limit: FetchLimiter::new(s3_concurrency),
@@ -151,7 +146,7 @@ impl FoyerCache<DefaultHasher> {
         );
         Ok(Self {
             chlen,
-            sources: RwLock::new(vec![]),
+            sources: SourceSlots::default(),
             content,
             metadata: Some(MetadataTier {
                 cache: metadata,
@@ -274,13 +269,7 @@ impl Cache for FoyerCache<DefaultHasher> {
         buf: &mut [u8],
         trace: &mut ReadTrace,
     ) -> Result<(), std::io::Error> {
-        let source = self
-            .sources
-            .read()
-            .expect("sources lock poisoned")
-            .get(idx)
-            .cloned()
-            .ok_or(std::io::Error::other(format!("{idx} out of bounds")))?;
+        let source = self.sources.get(idx)?;
         let end = source.end();
         let chlen = self.chlen as u64;
 
@@ -425,20 +414,11 @@ impl Cache for FoyerCache<DefaultHasher> {
     }
 
     fn end(&self, idx: usize) -> Result<u64, std::io::Error> {
-        self.sources
-            .read()
-            .expect("sources lock poisoned")
-            .get(idx)
-            .ok_or(std::io::Error::other(format!("{idx} out of bounds")))
-            .map(|src| src.end())
+        self.sources.get(idx).map(|src| src.end())
     }
 
     fn add_source(&self, idx: usize, src: Box<dyn BytesSource + Send + Sync>) {
-        let mut sources = self.sources.write().expect("sources lock poisoned");
-        if sources.len() <= idx {
-            sources.resize_with(idx + 1, || Arc::new(PlaceholderSource));
-        }
-        sources[idx] = Arc::from(src);
+        self.sources.set(idx, src);
     }
 }
 

@@ -1,14 +1,10 @@
-use std::sync::{Arc, RwLock};
-
 use async_trait::async_trait;
 
-use crate::{
-    bytessource::BytesSource, cache::Cache, io_log::ReadTrace, placeholdersource::PlaceholderSource,
-};
+use crate::{bytessource::BytesSource, cache::Cache, io_log::ReadTrace, source_slot::SourceSlots};
 
 #[derive(Default)]
 pub struct DummyCache {
-    sources: RwLock<Vec<Arc<dyn BytesSource + Send + Sync>>>,
+    sources: SourceSlots,
 }
 
 impl DummyCache {
@@ -26,32 +22,17 @@ impl Cache for DummyCache {
         buf: &mut [u8],
         _trace: &mut ReadTrace,
     ) -> Result<(), std::io::Error> {
-        let source = self
-            .sources
-            .read()
-            .expect("sources lock poisoned")
-            .get(idx)
-            .cloned()
-            .ok_or(std::io::Error::other(format!("{idx} out of bounds")))?;
+        let source = self.sources.get(idx)?;
         let b = source.read(off, off + buf.len() as u64).await?;
         buf.copy_from_slice(&b);
         Ok(())
     }
 
     fn end(&self, idx: usize) -> Result<u64, std::io::Error> {
-        self.sources
-            .read()
-            .expect("sources lock poisoned")
-            .get(idx)
-            .ok_or(std::io::Error::other(format!("{idx} out of bounds")))
-            .map(|src| src.end())
+        self.sources.get(idx).map(|src| src.end())
     }
 
     fn add_source(&self, idx: usize, src: Box<dyn BytesSource + Send + Sync>) {
-        let mut sources = self.sources.write().expect("sources lock poisoned");
-        if sources.len() <= idx {
-            sources.resize_with(idx + 1, || Arc::new(PlaceholderSource));
-        }
-        sources[idx] = Arc::from(src);
+        self.sources.set(idx, src);
     }
 }

@@ -115,7 +115,7 @@ fn cold_sequential_read(c: &mut Criterion) {
             |b, &buf_size| {
                 let mut buf = vec![0u8; buf_size];
                 b.iter_batched(
-                    || open(),
+                    open,
                     |mut reader| read_all(&mut reader, &mut buf),
                     BatchSize::PerIteration,
                 );
@@ -135,7 +135,7 @@ fn cold_random_read(c: &mut Criterion) {
     group.bench_function("4KiB_x500", |b| {
         let mut buf = vec![0u8; RANDOM_BUF_SIZE];
         b.iter_batched(
-            || open(),
+            open,
             |mut reader| {
                 for &offset in &offsets {
                     reader.read_at_offset(offset, &mut buf).unwrap();

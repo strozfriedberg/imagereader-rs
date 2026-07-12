@@ -359,9 +359,12 @@ impl VmdkReader {
 
         let mut i = match self.spans.binary_search_by_key(&beg, |e| e.0) {
             Ok(i) => i,
-            // 0 is impossible as an insertion point because
-            // there must be a span staring at 0
-            Err(0) => unreachable!(),
+            // Insertion point 0 means nothing starts at or before `beg`, which
+            // should be impossible: the zero-fill pass in `open` covers every
+            // gap, so a span always starts at 0. But the span map is built from
+            // the image's own metadata, so report it rather than assert it -- a
+            // read must not be able to abort the process.
+            Err(0) => return Err(ReadError::OffsetNotFound(beg)),
             Err(i) => i - 1,
         };
 

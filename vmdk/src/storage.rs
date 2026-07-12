@@ -2,7 +2,7 @@ use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use flate2::read::DeflateDecoder;
 use std::{
     collections::HashMap,
-    io::{Read, SeekFrom},
+    io::{self, Read, SeekFrom},
 };
 
 use crate::vmdk_reader::ReadError;
@@ -121,6 +121,16 @@ fn read_and_decompress_grain(
 
 impl SparseStorage {
     fn read(&mut self, offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
+        // `grain_size` is taken from the image's own sparse header, so a
+        // corrupt or crafted image can declare it as zero.
+        if self.grain_size == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{}: grain size is zero", self.filename),
+            )
+            .into());
+        }
+
         let grain_size = self.grain_size * SECTOR_SIZE;
         // Rebase the absolute image offset to this extent; the grain table is
         // keyed by grain index within the extent.
@@ -131,12 +141,18 @@ impl SparseStorage {
         let r = (grain_size as usize - grain_data_offset).min(buf.len());
         buf = &mut buf[..r];
 
-        // NB: we know there is a grain for this index because we
-        // registered it in the span map
-        let sector_num = *self
-            .grain_table
-            .get(&grain_index)
-            .expect("index must exist");
+        // The span map is built from the grain table, so a grain should exist
+        // for any offset routed here -- but both come from the image, and a
+        // read must not be able to take the process down if they disagree.
+        let sector_num = *self.grain_table.get(&grain_index).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{}: no grain {grain_index} for offset {offset}",
+                    self.filename
+                ),
+            )
+        })?;
 
         if self.zeroed_grain_table_entry && sector_num == 1 {
             // handle zeroed GTE
@@ -177,4 +193,44 @@ impl FlatStorage {
 fn read_zero(buf: &mut [u8]) -> usize {
     buf.fill(0);
     buf.len()
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::io::Cursor;
+
+    fn sparse(grain_size: u64, grain_table: HashMap<u64, u64>) -> SparseStorage {
+        SparseStorage {
+            file: Box::new(Cursor::new(vec![0u8; 4096])),
+            filename: "crafted.vmdk".into(),
+            grain_table,
+            grain_size,
+            has_compressed_grain: false,
+            zeroed_grain_table_entry: false,
+            start_sector: 0,
+        }
+    }
+
+    /// `grain_size` comes straight out of the sparse header, so a crafted image
+    /// can set it to zero. `local / grain_size` then divides by zero.
+    #[test]
+    fn zero_grain_size_is_an_error_not_a_divide_by_zero() {
+        let mut storage = sparse(0, HashMap::from([(0, 1)]));
+        let mut buf = [0u8; 16];
+
+        let err = storage.read(0, &mut buf).unwrap_err();
+        assert!(matches!(err, ReadError::IoError(_)), "got {err:?}");
+    }
+
+    /// The grain table is built from the image's own metadata; a read whose
+    /// grain is missing from it must not take the whole process down.
+    #[test]
+    fn missing_grain_is_an_error_not_a_panic() {
+        let mut storage = sparse(8, HashMap::new());
+        let mut buf = [0u8; 16];
+
+        let err = storage.read(0, &mut buf).unwrap_err();
+        assert!(matches!(err, ReadError::IoError(_)), "got {err:?}");
+    }
 }

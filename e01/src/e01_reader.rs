@@ -35,6 +35,13 @@ pub enum OpenError {
     NoSegmentFiles,
     #[error("Missing volume section in {0}")]
     MissingVolumeSection(PathBuf),
+    #[error(
+        "Invalid volume geometry: {sectors_per_chunk} sectors per chunk, {bytes_per_sector} bytes per sector"
+    )]
+    InvalidVolumeGeometry {
+        sectors_per_chunk: u32,
+        bytes_per_sector: u32,
+    },
     #[error("Too many chunks found: actual {0}, expected {1}")]
     TooManyChunks(usize, usize),
     #[error("Too few chunks found: actual {0}, expected {1}")]
@@ -385,6 +392,20 @@ fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
     })
 }
 
+/// `sectors_per_chunk` and `bytes_per_sector` are read straight out of the
+/// image's volume section, and `read_at_offset` divides by their product. A
+/// crafted image declaring either as zero would otherwise panic the reader with
+/// a divide-by-zero on the first read.
+fn validate_volume(volume: &VolumeSection) -> Result<(), OpenError> {
+    if volume.chunk_size() == 0 {
+        return Err(OpenError::InvalidVolumeGeometry {
+            sectors_per_chunk: volume.sectors_per_chunk,
+            bytes_per_sector: volume.bytes_per_sector,
+        });
+    }
+    Ok(())
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CorruptSectionPolicy {
     #[default]
@@ -670,6 +691,8 @@ impl E01Reader {
         // process segment metadata
         let meta = process_segments(segs)?;
 
+        validate_volume(&meta.volume)?;
+
         let exp_chunk_count = meta.volume.chunk_count as usize;
         let chunk_count = meta.chunks.len();
 
@@ -928,6 +951,37 @@ mod test {
         reader.read_at_offset(base + 8192, &mut again).unwrap();
 
         assert_eq!(&again[..], &cross[8192..8192 + 4096]);
+    }
+
+    #[test]
+    fn open_rejects_zero_volume_geometry() {
+        // read_at_offset divides by chunk_size (sectors_per_chunk * bytes_per_sector),
+        // so a volume section declaring either as zero must be rejected at open
+        // rather than dividing by zero on the first read.
+        for (sectors_per_chunk, bytes_per_sector) in [(0, 512), (64, 0), (0, 0)] {
+            let volume = VolumeSection {
+                chunk_count: 1,
+                sectors_per_chunk,
+                bytes_per_sector,
+                total_sector_count: 1,
+            };
+
+            match validate_volume(&volume) {
+                Err(OpenError::InvalidVolumeGeometry { .. }) => {}
+                other => panic!("expected InvalidVolumeGeometry, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn validate_volume_accepts_a_sane_geometry() {
+        let volume = VolumeSection {
+            chunk_count: 1,
+            sectors_per_chunk: 64,
+            bytes_per_sector: 512,
+            total_sector_count: 64,
+        };
+        assert!(validate_volume(&volume).is_ok());
     }
 
     #[test]

@@ -132,7 +132,26 @@ pub fn source_for_url(
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(url))?;
 
-            let len = h.content_length.unwrap().try_into().unwrap();
+            // Whatever the endpoint returns, not something we control: a HEAD
+            // with no Content-Length, or a negative one, must not panic.
+            let len: u64 = h
+                .content_length
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "S3 HEAD returned no Content-Length",
+                    )
+                })
+                .and_then(|len| {
+                    len.try_into().map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("S3 HEAD returned a negative Content-Length: {len}"),
+                        )
+                    })
+                })
+                .map_err(OpenError::from)
+                .map_err(|e| e.with_path(url))?;
             debug!("content-length: {len}");
 
             Ok(Box::new(S3Source::new(
