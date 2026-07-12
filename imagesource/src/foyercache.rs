@@ -16,14 +16,14 @@ use tempfile::TempDir;
 use tracing::trace;
 
 use crate::{
-    bytessource::BytesSource, cache::Cache, fetch_pool::FetchPool, io_log::ReadTrace,
+    bytessource::BytesSource, cache::Cache, fetch_limit::FetchLimiter, io_log::ReadTrace,
     placeholdersource::PlaceholderSource,
 };
 
 /// A block-content cache keyed by `(source/extent index, segment-file byte offset)`.
 type BlockCache = HybridCache<(usize, u64), Vec<u8>, DefaultHasher>;
 
-/// A boxed future returned by a fetch closure passed to `FetchPool::run`.
+/// A boxed future returned by a fetch closure passed to `FetchLimiter::run`.
 type FetchFuture = std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, foyer::Error>> + Send>>;
 
 struct MetadataTier<S>
@@ -42,7 +42,7 @@ where
     sources: RwLock<Vec<Arc<dyn BytesSource + Send + Sync>>>,
     content: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
     metadata: Option<MetadataTier<S>>,
-    fetch_pool: Arc<FetchPool>,
+    fetch_limit: Arc<FetchLimiter>,
     _dirs: Vec<TempDir>,
     readahead: usize,
 }
@@ -87,7 +87,7 @@ impl FoyerCache<DefaultHasher> {
             sources: RwLock::new(vec![]),
             content,
             metadata: None,
-            fetch_pool: FetchPool::new(s3_concurrency),
+            fetch_limit: FetchLimiter::new(s3_concurrency),
             _dirs: vec![dir],
             readahead,
         })
@@ -131,7 +131,7 @@ impl FoyerCache<DefaultHasher> {
                 cache: metadata,
                 regular_phase,
             }),
-            fetch_pool: FetchPool::new(s3_concurrency),
+            fetch_limit: FetchLimiter::new(s3_concurrency),
             _dirs: vec![content_dir, metadata_dir],
             readahead,
         })
@@ -140,11 +140,10 @@ impl FoyerCache<DefaultHasher> {
 
 fn make_fetch(
     chlen: usize,
-    idx: usize,
     choff: u64,
     source: Arc<dyn BytesSource + Send + Sync>,
     end: u64,
-    fetch_pool: Arc<FetchPool>,
+    fetch_limit: Arc<FetchLimiter>,
     trace: Option<Arc<AtomicBool>>,
 ) -> impl FnOnce() -> FetchFuture {
     move || {
@@ -154,8 +153,8 @@ fn make_fetch(
             if let Some(trace) = trace {
                 trace.store(true, Ordering::Relaxed);
             }
-            fetch_pool
-                .run((idx, choff), move || source.read(beg, fetch_end))
+            fetch_limit
+                .run(move || source.read(beg, fetch_end))
                 .await
                 .map_err(foyer::Error::io_error)
         })
@@ -203,7 +202,7 @@ async fn route_block(
     end: u64,
     content: Arc<BlockCache>,
     metadata: Option<(Arc<BlockCache>, Arc<AtomicBool>)>,
-    fetch_pool: Arc<FetchPool>,
+    fetch_limit: Arc<FetchLimiter>,
     trace: Option<Arc<AtomicBool>>,
 ) -> Result<Vec<u8>, std::io::Error> {
     let key = (idx, choff);
@@ -212,21 +211,21 @@ async fn route_block(
             if let Some(entry) = md_cache.get(&key).await.map_err(std::io::Error::other)? {
                 return Ok(entry.value().clone());
             }
-            let fetch = make_fetch(chlen, idx, choff, source, end, fetch_pool, trace);
+            let fetch = make_fetch(chlen, choff, source, end, fetch_limit, trace);
             let entry = content
                 .get_or_fetch(&key, fetch)
                 .await
                 .map_err(std::io::Error::other)?;
             return Ok(entry.value().clone());
         }
-        let fetch = make_fetch(chlen, idx, choff, source, end, fetch_pool, trace);
+        let fetch = make_fetch(chlen, choff, source, end, fetch_limit, trace);
         let entry = md_cache
             .get_or_fetch(&key, fetch)
             .await
             .map_err(std::io::Error::other)?;
         return Ok(entry.value().clone());
     }
-    let fetch = make_fetch(chlen, idx, choff, source, end, fetch_pool, trace);
+    let fetch = make_fetch(chlen, choff, source, end, fetch_limit, trace);
     let entry = content
         .get_or_fetch(&key, fetch)
         .await
@@ -282,7 +281,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                     end,
                     self.content.clone(),
                     md.clone(),
-                    self.fetch_pool.clone(),
+                    self.fetch_limit.clone(),
                     Some(trace_cell.clone()),
                 )
                 .await?;
@@ -301,7 +300,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                         end,
                         self.content.clone(),
                         md.clone(),
-                        self.fetch_pool.clone(),
+                        self.fetch_limit.clone(),
                         Some(trace_cell.clone()),
                     )
                 });
@@ -348,7 +347,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                 end,
                 self.content.clone(),
                 md.clone(),
-                self.fetch_pool.clone(),
+                self.fetch_limit.clone(),
                 None,
             );
             tokio::spawn(async move {
@@ -511,6 +510,77 @@ mod tests {
         fn end(&self) -> u64 {
             self.len
         }
+    }
+
+    /// Counts how many times the backing store is actually hit.
+    struct CountingSource {
+        len: u64,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl BytesSource for CountingSource {
+        fn read(
+            &self,
+            beg: u64,
+            end: u64,
+        ) -> futures::future::BoxFuture<'static, Result<Vec<u8>, std::io::Error>> {
+            let reads = self.reads.clone();
+            async move {
+                reads.fetch_add(1, Ordering::SeqCst);
+                // Wide enough that the other readers pile up behind this one.
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok(vec![0u8; (end - beg) as usize])
+            }
+            .boxed()
+        }
+
+        fn end(&self) -> u64 {
+            self.len
+        }
+    }
+
+    /// We deliberately do not dedupe fetches ourselves -- foyer's `get_or_fetch`
+    /// coalesces concurrent misses for the same key. This pins that down: if
+    /// foyer ever stopped single-flighting, we'd silently start issuing N S3
+    /// GETs for one block.
+    #[tokio::test]
+    async fn concurrent_misses_of_one_block_hit_the_source_once() {
+        const CHUNK: usize = 64 * 1024;
+        let reads = Arc::new(AtomicUsize::new(0));
+
+        let cache = Arc::new(
+            FoyerCache::single_memory(CHUNK, 16, 0, 8, None)
+                .await
+                .unwrap(),
+        );
+        cache.add_source(
+            0,
+            Box::new(CountingSource {
+                len: MIB,
+                reads: reads.clone(),
+            }),
+        );
+
+        // Eight readers, all wanting different bytes of the *same* block.
+        let handles: Vec<_> = (0..8u64)
+            .map(|i| {
+                let cache = cache.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 512];
+                    let mut t = ReadTrace::default();
+                    cache.read(0, i * 512, &mut buf, &mut t).await.unwrap();
+                })
+            })
+            .collect();
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            1,
+            "concurrent misses of one block must coalesce into a single fetch"
+        );
     }
 
     struct SlowSource {

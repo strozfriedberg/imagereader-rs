@@ -8,7 +8,7 @@ pub mod cachemode;
 pub mod cachereadseek;
 pub mod dummycache;
 pub mod errors;
-pub mod fetch_pool;
+pub mod fetch_limit;
 pub mod filesource;
 pub mod foyercache;
 pub mod io_log;
@@ -27,7 +27,7 @@ pub use cachemode::{
 pub use cachereadseek::CacheReadSeek;
 pub use dummycache::DummyCache;
 pub use errors::{InitError, OpenError, OpenErrorKind};
-pub use fetch_pool::FetchPool;
+pub use fetch_limit::FetchLimiter;
 pub use filesource::FileSource;
 pub use foyercache::FoyerCache;
 pub use io_log::{IoLog, ReadTimer, ReadTrace, chunk_cache_label};
