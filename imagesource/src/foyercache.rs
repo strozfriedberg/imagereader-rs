@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use foyer::{
     BlockEngineConfig, DefaultHasher, DeviceBuilder, FsDeviceBuilder, HybridCache,
-    HybridCacheBuilder,
+    HybridCacheBuilder, HybridCacheEntry,
 };
 use foyer_common::code::HashBuilder;
 use futures::future::try_join_all;
@@ -26,6 +26,15 @@ use crate::{
 
 /// A block-content cache keyed by `(source/extent index, segment-file byte offset)`.
 type BlockCache = HybridCache<(usize, u64), Vec<u8>, DefaultHasher>;
+
+/// A refcounted handle to a cached block, handed back by `route_block`.
+///
+/// Deliberately not a `Vec<u8>`: a block is `chlen` bytes (1 MiB by default), so
+/// copying one out of the cache to serve a 4 KiB read would move 256x more bytes
+/// than the caller asked for -- on every read, including cache hits. Foyer's
+/// entries are already refcounted; this keeps that property instead of throwing
+/// it away. Derefs to the block's bytes.
+type BlockEntry = HybridCacheEntry<(usize, u64), Vec<u8>, DefaultHasher>;
 
 /// A boxed future returned by a fetch closure passed to `FetchLimiter::run`.
 type FetchFuture = std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, foyer::Error>> + Send>>;
@@ -230,33 +239,30 @@ async fn route_block(
     fetch_limit: Arc<FetchLimiter>,
     permit: Option<OwnedSemaphorePermit>,
     trace: Option<Arc<AtomicBool>>,
-) -> Result<Vec<u8>, std::io::Error> {
+) -> Result<BlockEntry, std::io::Error> {
     let key = (idx, choff);
     if let Some((md_cache, regular_phase)) = metadata {
         if regular_phase.load(Ordering::Acquire) {
             if let Some(entry) = md_cache.get(&key).await.map_err(std::io::Error::other)? {
-                return Ok(entry.value().clone());
+                return Ok(entry);
             }
             let fetch = make_fetch(chlen, choff, source, end, fetch_limit, permit, trace);
-            let entry = content
+            return content
                 .get_or_fetch(&key, fetch)
                 .await
-                .map_err(std::io::Error::other)?;
-            return Ok(entry.value().clone());
+                .map_err(std::io::Error::other);
         }
         let fetch = make_fetch(chlen, choff, source, end, fetch_limit, permit, trace);
-        let entry = md_cache
+        return md_cache
             .get_or_fetch(&key, fetch)
             .await
-            .map_err(std::io::Error::other)?;
-        return Ok(entry.value().clone());
+            .map_err(std::io::Error::other);
     }
     let fetch = make_fetch(chlen, choff, source, end, fetch_limit, permit, trace);
-    let entry = content
+    content
         .get_or_fetch(&key, fetch)
         .await
-        .map_err(std::io::Error::other)?;
-    Ok(entry.value().clone())
+        .map_err(std::io::Error::other)
 }
 
 #[async_trait]
