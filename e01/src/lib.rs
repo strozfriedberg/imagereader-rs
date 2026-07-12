@@ -128,6 +128,7 @@ mod test {
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
+            parallel_chunk_reads: true,
         }
     }
 
@@ -141,6 +142,7 @@ mod test {
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
+            parallel_chunk_reads: true,
         }
     }
 

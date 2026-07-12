@@ -67,6 +67,12 @@ pub struct ReadWorker {
     decoder: ZlibDecoder<Cursor<Vec<u8>>>,
 }
 
+impl Clone for ReadWorker {
+    fn clone(&self) -> Self {
+        Self::new(self.chunk_size, self.image_end, self.corrupt_chunk_policy)
+    }
+}
+
 impl ReadWorker {
     pub fn new(
         chunk_size: usize,

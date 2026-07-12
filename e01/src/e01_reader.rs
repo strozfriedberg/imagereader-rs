@@ -444,6 +444,15 @@ pub struct E01ReaderOptions {
     pub cache_dir: Option<PathBuf>,
     /// When set, generate JSONL I/O logging (see [`IoLog`]). This will hose performance; only enable it as a diagnostic.
     pub io_log: Option<Arc<IoLog>>,
+    /// Fan a multi-chunk read out over rayon, decompressing its chunks in
+    /// parallel.
+    ///
+    /// Worth ~9% of wall-clock on a whole-image verify of a 28 GiB compressed
+    /// image (342 vs 315 MiB/s), at ~4.5x the CPU: the win is real but it is
+    /// bought with cores. A server already serving reads concurrently has no
+    /// spare cores to buy it with, and should turn this off; `e01verify`, which
+    /// reads one image on one thread, wants it on.
+    pub parallel_chunk_reads: bool,
 }
 
 impl Default for E01ReaderOptions {
@@ -457,6 +466,7 @@ impl Default for E01ReaderOptions {
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
+            parallel_chunk_reads: true,
         }
     }
 }
@@ -479,15 +489,57 @@ pub struct E01Reader {
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy,
 
-    /// One worker, reused across reads: it owns the zlib decoder and its buffer.
-    worker: ReadWorker,
+    workers: Vec<ReadWorker>,
     cache: Arc<dyn Cache>,
     decoded_chunk_cache: Arc<Mutex<DecodedChunkCache>>,
     runtime: Arc<Runtime>,
     io_log: Option<Arc<IoLog>>,
+    parallel_chunk_reads: bool,
 }
 
 const DECODED_CHUNK_CACHE_CHUNKS: usize = 1024;
+
+/// One chunk's worth of work: which chunk, where to read it from, and where its
+/// bytes go in the caller's buffer.
+#[allow(clippy::type_complexity)]
+type ChunkTask<'a> = (
+    usize,
+    &'a Chunk,
+    CacheWorkerSource,
+    Arc<Mutex<DecodedChunkCache>>,
+    &'a mut [u8],
+    usize,
+    usize,
+    &'a String,
+    &'a mut ReadWorker,
+);
+
+fn run_chunk_task(task: ChunkTask<'_>) -> Result<(), ReadError> {
+    let (
+        chunk_index,
+        chunk,
+        mut src,
+        decoded_chunk_cache,
+        sbuf,
+        beg_in_chunk,
+        end_in_chunk,
+        seg_path,
+        worker,
+    ) = task;
+
+    worker
+        .read_cached(
+            chunk,
+            &mut src,
+            chunk_index,
+            sbuf,
+            beg_in_chunk,
+            end_in_chunk,
+            &decoded_chunk_cache,
+        )
+        .map_err(ReadError::from)
+        .map_err(|e| e.with_path(seg_path))
+}
 
 impl Debug for E01Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -721,13 +773,14 @@ impl E01Reader {
             segment_paths: meta.segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
-            worker: ReadWorker::new(chunk_size, image_size, options.corrupt_chunk_policy),
+            workers: vec![],
             cache,
             decoded_chunk_cache: Arc::new(Mutex::new(DecodedChunkCache::new(
                 DECODED_CHUNK_CACHE_CHUNKS,
             ))),
             runtime,
             io_log: options.io_log.clone(),
+            parallel_chunk_reads: options.parallel_chunk_reads,
         })
     }
 
@@ -766,6 +819,21 @@ impl E01Reader {
 
         let foyer_trace = Arc::new(Mutex::new(ReadTrace::default()));
 
+        // TODO: Number of workers should have some fixed/configured maximum,
+        // should not scale with the number of chunks to be fetched.
+        // resize_with, not resize: the latter eagerly builds a template ReadWorker
+        // -- allocating a chunk_size+4 buffer -- on every call, even when no
+        // resize is needed and the template is dropped unused.
+        if end_chunk_index - beg_chunk_index > self.workers.len() {
+            let (chunk_size, policy) = (self.chunk_size, self.corrupt_chunk_policy);
+            self.workers.resize_with(end_chunk_index - beg_chunk_index, || {
+                ReadWorker::new(chunk_size, image_end, policy)
+            });
+        }
+
+        let mut tasks = Vec::with_capacity(end_chunk_index - beg_chunk_index);
+        let mut w = &mut self.workers[..];
+
         while offset < buf_end {
             // get the next chunk
             let chunk_index = (offset / chunk_size) as usize;
@@ -785,27 +853,39 @@ impl E01Reader {
             let (bleft, bright) = buf.split_at_mut((end_in_buf - beg_in_buf) as usize);
             buf = bright;
 
-            let mut src = CacheWorkerSource {
+            let (wleft, wright) = w.split_at_mut(1);
+            w = wright;
+
+            let src = CacheWorkerSource {
                 cache: self.cache.clone(),
                 runtime: self.runtime.clone(),
                 idx: chunk.segment,
                 foyer_trace: Some(foyer_trace.clone()),
             };
-
-            self.worker
-                .read_cached(
-                    chunk,
-                    &mut src,
-                    chunk_index,
-                    bleft,
-                    beg_in_chunk,
-                    end_in_chunk,
-                    &self.decoded_chunk_cache,
-                )
-                .map_err(ReadError::from)
-                .map_err(|e| e.with_path(&seg.path))?;
+            let decoded_chunk_cache = self.decoded_chunk_cache.clone();
+            tasks.push((
+                chunk_index,
+                chunk,
+                src,
+                decoded_chunk_cache,
+                bleft,
+                beg_in_chunk,
+                end_in_chunk,
+                &seg.path,
+                &mut wleft[0],
+            ));
 
             offset += end_in_buf - beg_in_buf;
+        }
+
+        // One chunk is driven inline either way. Beyond that, `parallel_chunk_reads`
+        // decides: rayon buys ~9% of wall-clock on a whole-image verify at ~4.5x
+        // the CPU, which is a good trade for e01verify and a bad one for a server
+        // that is already using its cores to serve other reads.
+        if self.parallel_chunk_reads && tasks.len() > 1 {
+            tasks.into_par_iter().try_for_each(run_chunk_task)?;
+        } else {
+            tasks.into_iter().try_for_each(run_chunk_task)?;
         }
 
         let read_len = (offset - buf_beg) as usize;
@@ -840,6 +920,7 @@ mod test {
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
+            parallel_chunk_reads: true,
         };
         let mut reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
@@ -872,6 +953,7 @@ mod test {
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
+            parallel_chunk_reads: true,
         };
         let mut reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();

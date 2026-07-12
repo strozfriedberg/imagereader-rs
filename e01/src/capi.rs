@@ -114,6 +114,7 @@ impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
             cache_mode: e01_reader::CacheMode::default(),
             cache_dir: None,
             io_log: None,
+            parallel_chunk_reads: true,
         }
     }
 }
