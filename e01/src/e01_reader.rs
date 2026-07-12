@@ -640,7 +640,7 @@ impl E01Reader {
                 .map_err(InitError::CacheSetupFailed)?,
         };
 
-        let cache: Arc<dyn Cache> = Arc::new(c);
+        let cache: Arc<dyn Cache> = Arc::new(c.with_io_log(options.io_log.clone()));
 
         let ignore_checksums =
             options.corrupt_section_policy == CorruptSectionPolicy::DamnTheTorpedoes;

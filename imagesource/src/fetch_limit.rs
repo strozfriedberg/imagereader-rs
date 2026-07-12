@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Bounds how many backing-store reads (S3 range GETs, file reads) are in
 /// flight at once.
@@ -14,7 +14,7 @@ use tokio::sync::Semaphore;
 /// critical section as the cache lookup, and it drives the winning fetch on its
 /// own spawned task so a dropped caller can't cancel it or strand the entry.
 pub struct FetchLimiter {
-    semaphore: Semaphore,
+    semaphore: Arc<Semaphore>,
 }
 
 impl FetchLimiter {
@@ -22,10 +22,20 @@ impl FetchLimiter {
     pub fn new(max_inflight: usize) -> Arc<Self> {
         let permits = if max_inflight == 0 { 1 } else { max_inflight };
         Arc::new(Self {
-            semaphore: Semaphore::new(permits),
+            semaphore: Arc::new(Semaphore::new(permits)),
         })
     }
 
+    /// Take a permit only if one is free right now, never waiting for one.
+    ///
+    /// This is the readahead path. Speculation must not delay a demand read, so
+    /// a prefetch that can't get spare capacity is dropped rather than queued
+    /// ahead of the reads a client is actually waiting on.
+    pub fn try_permit(&self) -> Option<OwnedSemaphorePermit> {
+        self.semaphore.clone().try_acquire_owned().ok()
+    }
+
+    /// Wait for a permit, then fetch. This is the demand path.
     pub async fn run<F, Fut>(&self, fetch: F) -> Result<Vec<u8>, std::io::Error>
     where
         F: FnOnce() -> Fut + Send + 'static,

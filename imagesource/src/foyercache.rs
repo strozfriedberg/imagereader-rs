@@ -13,10 +13,14 @@ use std::{
     sync::{Arc, RwLock},
 };
 use tempfile::TempDir;
+use tokio::sync::OwnedSemaphorePermit;
 use tracing::trace;
 
 use crate::{
-    bytessource::BytesSource, cache::Cache, fetch_limit::FetchLimiter, io_log::ReadTrace,
+    bytessource::BytesSource,
+    cache::Cache,
+    fetch_limit::FetchLimiter,
+    io_log::{IoLog, ReadTrace},
     placeholdersource::PlaceholderSource,
 };
 
@@ -45,6 +49,18 @@ where
     fetch_limit: Arc<FetchLimiter>,
     _dirs: Vec<TempDir>,
     readahead: usize,
+    io_log: Option<Arc<IoLog>>,
+}
+
+impl<S> FoyerCache<S>
+where
+    S: HashBuilder + Debug,
+{
+    /// Attach a trace log, so prefetch decisions show up in the JSONL trace.
+    pub fn with_io_log(mut self, io_log: Option<Arc<IoLog>>) -> Self {
+        self.io_log = io_log;
+        self
+    }
 }
 
 fn make_tempdir(base: Option<&Path>) -> std::io::Result<TempDir> {
@@ -90,6 +106,7 @@ impl FoyerCache<DefaultHasher> {
             fetch_limit: FetchLimiter::new(s3_concurrency),
             _dirs: vec![dir],
             readahead,
+            io_log: None,
         })
     }
 
@@ -134,6 +151,7 @@ impl FoyerCache<DefaultHasher> {
             fetch_limit: FetchLimiter::new(s3_concurrency),
             _dirs: vec![content_dir, metadata_dir],
             readahead,
+            io_log: None,
         })
     }
 }
@@ -144,6 +162,7 @@ fn make_fetch(
     source: Arc<dyn BytesSource + Send + Sync>,
     end: u64,
     fetch_limit: Arc<FetchLimiter>,
+    permit: Option<OwnedSemaphorePermit>,
     trace: Option<Arc<AtomicBool>>,
 ) -> impl FnOnce() -> FetchFuture {
     move || {
@@ -153,10 +172,16 @@ fn make_fetch(
             if let Some(trace) = trace {
                 trace.store(true, Ordering::Relaxed);
             }
-            fetch_limit
-                .run(move || source.read(beg, fetch_end))
-                .await
-                .map_err(foyer::Error::io_error)
+            let result = match permit {
+                // Readahead already took a permit with `try_permit`; hold it for
+                // the duration of the read instead of queueing for a second one.
+                Some(permit) => {
+                    let _permit = permit;
+                    source.read(beg, fetch_end).await
+                }
+                None => fetch_limit.run(move || source.read(beg, fetch_end)).await,
+            };
+            result.map_err(foyer::Error::io_error)
         })
     }
 }
@@ -203,6 +228,7 @@ async fn route_block(
     content: Arc<BlockCache>,
     metadata: Option<(Arc<BlockCache>, Arc<AtomicBool>)>,
     fetch_limit: Arc<FetchLimiter>,
+    permit: Option<OwnedSemaphorePermit>,
     trace: Option<Arc<AtomicBool>>,
 ) -> Result<Vec<u8>, std::io::Error> {
     let key = (idx, choff);
@@ -211,21 +237,21 @@ async fn route_block(
             if let Some(entry) = md_cache.get(&key).await.map_err(std::io::Error::other)? {
                 return Ok(entry.value().clone());
             }
-            let fetch = make_fetch(chlen, choff, source, end, fetch_limit, trace);
+            let fetch = make_fetch(chlen, choff, source, end, fetch_limit, permit, trace);
             let entry = content
                 .get_or_fetch(&key, fetch)
                 .await
                 .map_err(std::io::Error::other)?;
             return Ok(entry.value().clone());
         }
-        let fetch = make_fetch(chlen, choff, source, end, fetch_limit, trace);
+        let fetch = make_fetch(chlen, choff, source, end, fetch_limit, permit, trace);
         let entry = md_cache
             .get_or_fetch(&key, fetch)
             .await
             .map_err(std::io::Error::other)?;
         return Ok(entry.value().clone());
     }
-    let fetch = make_fetch(chlen, choff, source, end, fetch_limit, trace);
+    let fetch = make_fetch(chlen, choff, source, end, fetch_limit, permit, trace);
     let entry = content
         .get_or_fetch(&key, fetch)
         .await
@@ -282,6 +308,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                     self.content.clone(),
                     md.clone(),
                     self.fetch_limit.clone(),
+                    None,
                     Some(trace_cell.clone()),
                 )
                 .await?;
@@ -301,6 +328,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                         self.content.clone(),
                         md.clone(),
                         self.fetch_limit.clone(),
+                        None,
                         Some(trace_cell.clone()),
                     )
                 });
@@ -338,7 +366,30 @@ impl Cache for FoyerCache<DefaultHasher> {
         };
         trace.foyer_miss = miss;
 
+        let mut prefetched = vec![];
+
         for choff in (rabeg..raend).step_by(self.chlen) {
+            let key = (idx, choff);
+
+            // Don't spawn work for blocks we already hold. Without this, a
+            // sequential scan re-spawns a prefetch for every resident block on
+            // every read, so task churn tracks read rate rather than miss rate.
+            if self.content.contains(&key)
+                || md
+                    .as_ref()
+                    .is_some_and(|(md_cache, _)| md_cache.contains(&key))
+            {
+                continue;
+            }
+
+            // Speculation gets only spare capacity. A prefetch that would have
+            // to queue for a permit is dropped instead: it must never make a
+            // demand read -- one a client is actually blocked on -- wait behind
+            // blocks nobody asked for.
+            let Some(permit) = self.fetch_limit.try_permit() else {
+                break;
+            };
+
             let fut = route_block(
                 self.chlen,
                 idx,
@@ -348,11 +399,20 @@ impl Cache for FoyerCache<DefaultHasher> {
                 self.content.clone(),
                 md.clone(),
                 self.fetch_limit.clone(),
+                Some(permit),
                 None,
             );
             tokio::spawn(async move {
                 let _ = fut.await;
             });
+
+            prefetched.push(choff);
+        }
+
+        // Only the blocks we actually enqueued: resident ones and ones dropped
+        // for lack of spare capacity are deliberately not counted.
+        if let Some(log) = &self.io_log {
+            log.log_prefetch(idx, csbeg, &prefetched);
         }
 
         Ok(())
@@ -580,6 +640,161 @@ mod tests {
             reads.load(Ordering::SeqCst),
             1,
             "concurrent misses of one block must coalesce into a single fetch"
+        );
+    }
+
+    /// Readahead must still do its job: the blocks after the one we read get
+    /// pulled in, so a following sequential read is served without a fetch.
+    #[tokio::test]
+    async fn readahead_warms_following_blocks() {
+        const CHUNK: usize = 64 * 1024;
+        const CHUNK64: u64 = CHUNK as u64;
+        let reads = Arc::new(AtomicUsize::new(0));
+
+        // Plenty of spare capacity (8 permits) for a readahead depth of 2.
+        let cache = FoyerCache::single_memory(CHUNK, 16, 2, 8, None)
+            .await
+            .unwrap();
+        cache.add_source(
+            0,
+            Box::new(CountingSource {
+                len: MIB,
+                reads: reads.clone(),
+            }),
+        );
+
+        let mut buf = vec![0u8; 512];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+
+        // Let the two spawned prefetches (blocks 1 and 2) land.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            3,
+            "expected the demand block plus 2 prefetched blocks"
+        );
+
+        // Block 1 was prefetched, so reading it is a cache hit, not a fetch.
+        cache.read(0, CHUNK64, &mut buf, &mut t).await.unwrap();
+        assert!(!t.foyer_miss, "prefetched block must be served from cache");
+
+        // That read slides the window to blocks 2 and 3. Block 2 is already
+        // resident and must be skipped, so only block 3 is newly fetched.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            4,
+            "only the one block outside the cache should be prefetched"
+        );
+
+        // Re-reading block 0 prefetches nothing: every block in its window is
+        // already resident. Without suppression this would re-spawn fetches.
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            4,
+            "resident blocks must not be prefetched again"
+        );
+    }
+
+    /// Speculation only gets spare capacity. With a single permit, the demand
+    /// read consumes it and at most one prefetch can claim it afterwards -- the
+    /// rest are dropped rather than queued ahead of future demand reads.
+    #[tokio::test]
+    async fn readahead_takes_only_spare_capacity() {
+        const CHUNK: usize = 64 * 1024;
+        let reads = Arc::new(AtomicUsize::new(0));
+
+        // One permit, but a readahead depth of 4.
+        let cache = FoyerCache::single_memory(CHUNK, 16, 4, 1, None)
+            .await
+            .unwrap();
+        cache.add_source(
+            0,
+            Box::new(CountingSource {
+                len: MIB,
+                reads: reads.clone(),
+            }),
+        );
+
+        let mut buf = vec![0u8; 512];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+
+        // Long enough that all 4 prefetches would have completed if they had
+        // queued for the permit instead of being dropped.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            2,
+            "the demand block plus at most one prefetch holding the only permit; \
+             queued-up prefetches would make this 5"
+        );
+    }
+
+    /// The trace records the prefetches actually issued -- not the ones skipped
+    /// as resident or dropped for lack of spare capacity.
+    #[tokio::test]
+    async fn prefetch_trace_counts_only_enqueued_blocks() {
+        const CHUNK: usize = 64 * 1024;
+        const CHUNK64: u64 = CHUNK as u64;
+
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("io.jsonl");
+        let io_log = IoLog::open(&log_path).unwrap();
+        io_log.begin_serving().unwrap();
+
+        let reads = Arc::new(AtomicUsize::new(0));
+        let cache = FoyerCache::single_memory(CHUNK, 16, 2, 8, None)
+            .await
+            .unwrap()
+            .with_io_log(Some(io_log.clone()));
+        cache.add_source(
+            0,
+            Box::new(CountingSource {
+                len: MIB,
+                reads: reads.clone(),
+            }),
+        );
+
+        let mut buf = vec![0u8; 512];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let lines = std::fs::read_to_string(&log_path).unwrap();
+        let prefetches: Vec<_> = lines
+            .lines()
+            .filter(|l| l.contains(r#""kind":"prefetch""#))
+            .collect();
+
+        assert_eq!(prefetches.len(), 1, "one read, one prefetch record");
+        assert!(
+            prefetches[0].contains(r#""count":2"#),
+            "expected 2 enqueued blocks, got: {}",
+            prefetches[0]
+        );
+        assert!(
+            prefetches[0].contains(&format!("[{},{}]", CHUNK64, 2 * CHUNK64)),
+            "expected the two blocks after the demand block, got: {}",
+            prefetches[0]
+        );
+
+        // Re-reading block 0 enqueues nothing: its whole window is resident.
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let lines = std::fs::read_to_string(&log_path).unwrap();
+        let prefetches = lines
+            .lines()
+            .filter(|l| l.contains(r#""kind":"prefetch""#))
+            .count();
+        assert_eq!(
+            prefetches, 1,
+            "a read that enqueues no prefetches must not emit a record"
         );
     }
 

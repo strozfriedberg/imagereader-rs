@@ -233,7 +233,7 @@ impl VmdkReader {
         .map_err(InitError::CacheSetupFailed)
         .map_err(OpenErrorKind::from)?;
 
-        let cache: Arc<dyn Cache> = Arc::new(c);
+        let cache: Arc<dyn Cache> = Arc::new(c.with_io_log(opts.io_log.clone()));
 
         // Resolve S3 credentials once if the image is S3-backed; the whole extent
         // chain resolves relative to the same scheme.

@@ -132,7 +132,7 @@ impl RawdiskReader {
         .map_err(InitError::CacheSetupFailed)
         .map_err(OpenErrorKind::from)?;
 
-        let cache: Arc<dyn Cache> = Arc::new(c);
+        let cache: Arc<dyn Cache> = Arc::new(c.with_io_log(opts.io_log.clone()));
 
         let s3_auth = if url.scheme() == "s3" {
             Some(Arc::new(
