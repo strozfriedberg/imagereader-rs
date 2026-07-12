@@ -479,7 +479,8 @@ pub struct E01Reader {
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy,
 
-    workers: Vec<ReadWorker>,
+    /// One worker, reused across reads: it owns the zlib decoder and its buffer.
+    worker: ReadWorker,
     cache: Arc<dyn Cache>,
     decoded_chunk_cache: Arc<Mutex<DecodedChunkCache>>,
     runtime: Arc<Runtime>,
@@ -720,7 +721,7 @@ impl E01Reader {
             segment_paths: meta.segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
-            workers: vec![],
+            worker: ReadWorker::new(chunk_size, image_size, options.corrupt_chunk_policy),
             cache,
             decoded_chunk_cache: Arc::new(Mutex::new(DecodedChunkCache::new(
                 DECODED_CHUNK_CACHE_CHUNKS,
@@ -765,18 +766,6 @@ impl E01Reader {
 
         let foyer_trace = Arc::new(Mutex::new(ReadTrace::default()));
 
-        // TODO: Number of workers should have some fixed/configured maximum,
-        // should not scale with the number of chunks to be fetched.
-        if end_chunk_index - beg_chunk_index > self.workers.len() {
-            self.workers.resize(
-                end_chunk_index - beg_chunk_index,
-                ReadWorker::new(self.chunk_size, image_end, self.corrupt_chunk_policy),
-            );
-        }
-
-        let mut tasks = Vec::with_capacity(end_chunk_index - beg_chunk_index);
-        let mut w = &mut self.workers[..];
-
         while offset < buf_end {
             // get the next chunk
             let chunk_index = (offset / chunk_size) as usize;
@@ -796,82 +785,27 @@ impl E01Reader {
             let (bleft, bright) = buf.split_at_mut((end_in_buf - beg_in_buf) as usize);
             buf = bright;
 
-            let (wleft, wright) = w.split_at_mut(1);
-            w = wright;
-
-            let src = CacheWorkerSource {
+            let mut src = CacheWorkerSource {
                 cache: self.cache.clone(),
                 runtime: self.runtime.clone(),
                 idx: chunk.segment,
                 foyer_trace: Some(foyer_trace.clone()),
             };
-            let decoded_chunk_cache = self.decoded_chunk_cache.clone();
-            tasks.push((
-                chunk_index,
-                chunk,
-                src,
-                decoded_chunk_cache,
-                bleft,
-                beg_in_chunk,
-                end_in_chunk,
-                &seg.path,
-                &mut wleft[0],
-            ));
 
-            offset += end_in_buf - beg_in_buf;
-        }
-
-        if tasks.len() == 1 {
-            let (
-                chunk_index,
-                chunk,
-                mut src,
-                decoded_chunk_cache,
-                sbuf,
-                beg_in_chunk,
-                end_in_chunk,
-                seg_path,
-                worker,
-            ) = tasks.into_iter().next().expect("one task");
-            worker
+            self.worker
                 .read_cached(
                     chunk,
                     &mut src,
                     chunk_index,
-                    sbuf,
+                    bleft,
                     beg_in_chunk,
                     end_in_chunk,
-                    &decoded_chunk_cache,
+                    &self.decoded_chunk_cache,
                 )
                 .map_err(ReadError::from)
-                .map_err(|e| e.with_path(seg_path))?;
-        } else {
-            tasks.into_par_iter().try_for_each(
-                |(
-                    chunk_index,
-                    chunk,
-                    mut src,
-                    decoded_chunk_cache,
-                    sbuf,
-                    beg_in_chunk,
-                    end_in_chunk,
-                    seg_path,
-                    worker,
-                )| {
-                    worker
-                        .read_cached(
-                            chunk,
-                            &mut src,
-                            chunk_index,
-                            sbuf,
-                            beg_in_chunk,
-                            end_in_chunk,
-                            &decoded_chunk_cache,
-                        )
-                        .map_err(ReadError::from)
-                        .map_err(|e| e.with_path(seg_path))
-                },
-            )?;
+                .map_err(|e| e.with_path(&seg.path))?;
+
+            offset += end_in_buf - beg_in_buf;
         }
 
         let read_len = (offset - buf_beg) as usize;
