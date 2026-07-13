@@ -133,6 +133,11 @@ fn open_e01(
             // --cache-trace-log carries e01's own per-read foyer/decoded-chunk
             // hit/miss trace.
             io_log,
+            // Defaults, for now: parallel_chunk_reads/_threads bound the rayon
+            // pool that decompresses a read's chunks, and decoded_chunk_cache is
+            // the LRU of decompressed chunks. Both are worth revisiting for a
+            // server -- see docs/perf-notes.md -- but keep behaviour unchanged here.
+            ..Default::default()
         },
     )
     .map(|r| Adapter::E01(E01Adapter(r)))
