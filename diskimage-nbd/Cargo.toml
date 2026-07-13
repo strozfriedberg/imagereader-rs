@@ -1,0 +1,24 @@
+[package]
+name = "diskimage-nbd"
+version = "0.1.0"
+edition = "2024"
+description = "NBD server for disk image formats (E01, VMDK, …)"
+autobins = false
+
+[profile.release]
+debug = false
+lto = true
+
+[[bin]]
+name = "diskimage-nbd"
+path = "src/bin/diskimage-nbd.rs"
+
+[dependencies]
+byteorder = "1.5"
+clap = { version = "4.1.7", features = ["derive"] }
+e01-rs = { path = "../../../imagereader-rs/e01" }
+vmdk-rs = { path = "../../../imagereader-rs/vmdk" }
+signal-hook = "0.3"
+time = "0.3"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json", "time"] }
