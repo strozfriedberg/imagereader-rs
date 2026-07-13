@@ -2,9 +2,10 @@ use kaitai::{BytesReader, KError, ReadSeek};
 use rayon::prelude::*;
 use s3::{bucket::Bucket, region::Region};
 use std::{
+    collections::HashMap,
     fmt::Debug,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex, Weak},
 };
 use tokio::runtime::Runtime;
 use tracing::{debug, warn};
@@ -469,6 +470,11 @@ pub struct E01ReaderOptions {
     /// to one thread per core gives each ~30us of work and then parks them all
     /// again; the park/unpark futexes cost more than the inflate does. See
     /// [`DEFAULT_PARALLEL_CHUNK_THREADS`] for the sweep.
+    ///
+    /// Capped by `available_parallelism()`, so a pinned or cgroup-limited
+    /// process doesn't oversubscribe its cores. The pool is shared between
+    /// readers asking for the same count, so opening many images doesn't spawn
+    /// many pools.
     pub parallel_chunk_threads: usize,
 
     /// Keep a secondary LRU of *decompressed* chunks, in front of the foyer
@@ -557,18 +563,50 @@ type ChunkTask<'a> = (
     &'a mut ReadWorker,
 );
 
-/// A bounded pool for chunk decompression, or `None` to use rayon's global one.
-fn build_chunk_pool(threads: usize) -> Result<Option<Arc<rayon::ThreadPool>>, OpenError> {
-    if threads == 0 {
+/// Threads this process may actually use.
+///
+/// Respects `sched_setaffinity` (`taskset`) and cgroup CPU quotas, which is the
+/// whole point: a fixed thread count oversubscribes a pinned or containerised
+/// process and thrashes. Pinned to 2 CPUs, a 4-thread pool made e01's benches
+/// 5x slower.
+fn available_parallelism() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+}
+
+/// Chunk-decompression pools, shared across readers and keyed by thread count.
+///
+/// A thread pool is a process-level resource, so building one per `E01Reader`
+/// spawns N OS threads on every open and holds them idle for the reader's life.
+/// A server that opens an image per client would pay that every time. Held by
+/// `Weak`, so a pool goes away once the last reader using it does.
+static CHUNK_POOLS: LazyLock<Mutex<HashMap<usize, Weak<rayon::ThreadPool>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The shared pool for `requested` threads, or `None` to use rayon's global one.
+fn chunk_pool(requested: usize) -> Result<Option<Arc<rayon::ThreadPool>>, OpenError> {
+    if requested == 0 {
         return Ok(None);
     }
 
-    rayon::ThreadPoolBuilder::new()
+    let threads = requested.min(available_parallelism()).max(1);
+
+    let mut pools = CHUNK_POOLS.lock().expect("chunk pool registry poisoned");
+
+    if let Some(pool) = pools.get(&threads).and_then(Weak::upgrade) {
+        return Ok(Some(pool));
+    }
+
+    let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .thread_name(|i| format!("e01-chunk-{i}"))
         .build()
-        .map(|p| Some(Arc::new(p)))
-        .map_err(|e| OpenError::from(std::io::Error::other(e)))
+        .map(Arc::new)
+        .map_err(|e| OpenError::from(std::io::Error::other(e)))?;
+
+    pools.insert(threads, Arc::downgrade(&pool));
+    Ok(Some(pool))
 }
 
 fn run_chunk_task(task: ChunkTask<'_>) -> Result<(), ReadError> {
@@ -842,7 +880,7 @@ impl E01Reader {
             runtime,
             io_log: options.io_log.clone(),
             parallel_chunk_reads: options.parallel_chunk_reads,
-            chunk_pool: build_chunk_pool(options.parallel_chunk_threads)?,
+            chunk_pool: chunk_pool(options.parallel_chunk_threads)?,
         })
     }
 
@@ -1036,6 +1074,36 @@ mod test {
         reader.read_at_offset(base + 8192, &mut again).unwrap();
 
         assert_eq!(&again[..], &cross[8192..8192 + 4096]);
+    }
+
+    /// A pool is a process-level resource. Building one per reader spawns N OS
+    /// threads on every open -- which is why the cold benches, which construct a
+    /// fresh reader per iteration, regressed 66-193% when the pool was added.
+    #[test]
+    fn readers_asking_for_the_same_thread_count_share_a_pool() {
+        let a = chunk_pool(2).unwrap().expect("a pool");
+        let b = chunk_pool(2).unwrap().expect("a pool");
+
+        assert!(Arc::ptr_eq(&a, &b), "each reader built its own pool");
+    }
+
+    /// A fixed thread count oversubscribes a pinned or cgroup-limited process:
+    /// 4 threads on the 2 CPUs of `taskset -c 2,3` made the benches 5x slower.
+    #[test]
+    fn the_pool_never_exceeds_available_parallelism() {
+        let pool = chunk_pool(1024).unwrap().expect("a pool");
+
+        assert!(
+            pool.current_num_threads() <= available_parallelism(),
+            "{} threads on {} available CPUs",
+            pool.current_num_threads(),
+            available_parallelism(),
+        );
+    }
+
+    #[test]
+    fn zero_threads_means_rayons_global_pool() {
+        assert!(chunk_pool(0).unwrap().is_none());
     }
 
     #[test]
