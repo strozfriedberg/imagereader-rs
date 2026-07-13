@@ -2,6 +2,7 @@ use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use flate2::read::DeflateDecoder;
 use std::{
     collections::HashMap,
+    fmt::Debug,
     io::{self, Read, SeekFrom},
 };
 
@@ -10,9 +11,32 @@ use imagesource::ReadSeek;
 
 const SECTOR_SIZE: u64 = 512;
 
+/// Something that can hand out a fresh cursor over an extent's bytes.
+///
+/// The storages used to hold one `Box<dyn ReadSeek>` and seek it, which meant
+/// `read` needed `&mut self` -- and that `&mut` propagated all the way up to
+/// `VmdkReader::read_at_offset`, forcing a server to put the whole reader behind
+/// one lock. A file position cannot be shared between threads; a cursor per read
+/// can. Minting one is cheap (a `CacheReadSeek` is three `Arc` clones and an
+/// offset -- no I/O).
+pub trait ReadSeekSource: Debug + Send + Sync {
+    fn cursor(&self) -> Box<dyn ReadSeek>;
+}
+
+/// Anything cloneable that can be read and seeked can mint cursors: cloning a
+/// `CacheReadSeek` is three `Arc` clones and an offset.
+impl<R> ReadSeekSource for R
+where
+    R: ReadSeek + Clone + Debug + Sync + 'static,
+{
+    fn cursor(&self) -> Box<dyn ReadSeek> {
+        Box::new(self.clone())
+    }
+}
+
 #[derive(Debug)]
 pub struct SparseStorage {
-    pub file: Box<dyn ReadSeek>,
+    pub source: Box<dyn ReadSeekSource>,
     #[allow(dead_code)]
     pub filename: String,
     pub grain_table: HashMap<u64 /*grain index in extent*/, u64 /*real sector in file*/>,
@@ -25,7 +49,7 @@ pub struct SparseStorage {
 
 #[derive(Debug)]
 pub struct FlatStorage {
-    pub file: Box<dyn ReadSeek>,
+    pub source: Box<dyn ReadSeekSource>,
     #[allow(dead_code)]
     pub filename: String,
     pub offset: u64,
@@ -40,7 +64,7 @@ pub enum ExtentStorage {
 }
 
 impl ExtentStorage {
-    pub fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, ReadError> {
+    pub fn read(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ReadError> {
         match self {
             ExtentStorage::Sparse(storage) => storage.read(offset, buf),
             ExtentStorage::Flat(storage) => storage.read(offset, buf),
@@ -61,7 +85,7 @@ struct CompressedGrainHeader {
 }
 
 fn read_and_decompress_grain(
-    file: &mut Box<dyn ReadSeek>,
+    file: &mut dyn ReadSeek,
     grain_index: u64,
     grain_size: u64,
 ) -> std::io::Result<Vec<u8>> {
@@ -120,7 +144,7 @@ fn read_and_decompress_grain(
 }
 
 impl SparseStorage {
-    fn read(&mut self, offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
+    fn read(&self, offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
         // `grain_size` is taken from the image's own sparse header, so a
         // corrupt or crafted image can declare it as zero.
         if self.grain_size == 0 {
@@ -160,17 +184,19 @@ impl SparseStorage {
         } else {
             let grain_start = sector_num * SECTOR_SIZE;
 
-            if self.has_compressed_grain {
-                self.file.seek(SeekFrom::Start(grain_start))?;
+            // A cursor of our own, so concurrent reads cannot move each other's
+            // file position.
+            let mut file = self.source.cursor();
 
-                let grain_data =
-                    read_and_decompress_grain(&mut self.file, grain_index, grain_size)?;
+            if self.has_compressed_grain {
+                file.seek(SeekFrom::Start(grain_start))?;
+
+                let grain_data = read_and_decompress_grain(&mut *file, grain_index, grain_size)?;
 
                 buf.clone_from_slice(&grain_data[grain_data_offset..grain_data_offset + r]);
             } else {
-                self.file
-                    .seek(SeekFrom::Start(grain_start + grain_data_offset as u64))?;
-                self.file.read_exact(buf)?;
+                file.seek(SeekFrom::Start(grain_start + grain_data_offset as u64))?;
+                file.read_exact(buf)?;
             }
         }
 
@@ -179,13 +205,15 @@ impl SparseStorage {
 }
 
 impl FlatStorage {
-    fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, ReadError> {
+    fn read(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ReadError> {
         // FLAT, VMFS. `offset` is absolute within the image; rebase it to this
         // extent, then add the extent file's own data offset (the descriptor's
         // FLAT offset field, in sectors). Only Flat may have a nonzero field.
         let file_offset = (offset - self.start_sector * SECTOR_SIZE) + self.offset * SECTOR_SIZE;
-        self.file.seek(SeekFrom::Start(file_offset))?;
-        self.file.read_exact(buf)?;
+
+        let mut file = self.source.cursor();
+        file.seek(SeekFrom::Start(file_offset))?;
+        file.read_exact(buf)?;
         Ok(buf.len())
     }
 }
@@ -202,7 +230,7 @@ mod test {
 
     fn sparse(grain_size: u64, grain_table: HashMap<u64, u64>) -> SparseStorage {
         SparseStorage {
-            file: Box::new(Cursor::new(vec![0u8; 4096])),
+            source: Box::new(Cursor::new(vec![0u8; 4096])),
             filename: "crafted.vmdk".into(),
             grain_table,
             grain_size,

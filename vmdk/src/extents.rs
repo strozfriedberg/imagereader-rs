@@ -11,7 +11,7 @@ use crate::{
     errors::{OpenError, OpenErrorKind},
     extent_description::{ExtentDescription, ExtentDescriptionInner},
     header::{VmdkSeSparseMeta, VmdkSparseMeta, read_header_sesparse, read_header_sparse},
-    storage::{ExtentStorage, FlatStorage, SparseStorage},
+    storage::{ExtentStorage, FlatStorage, ReadSeekSource, SparseStorage},
     vmdk_reader::source_for_url,
 };
 use imagesource::{Cache, CacheReadSeek, IoLog, ReadSeek, s3_creds::S3Auth};
@@ -226,7 +226,7 @@ fn read_extent<R, F>(
     src: R,
 ) -> Result<ExtentStorage, OpenError>
 where
-    R: Read + Seek + Clone + Send + 'static,
+    R: ReadSeek + Clone + std::fmt::Debug + Sync + 'static,
     F: Into<String>,
 {
     let filename = filename.into();
@@ -238,7 +238,7 @@ where
             let grain_table = read_grain_table_sparse(&header, &mut buffered)?;
 
             ExtentStorage::Sparse(SparseStorage {
-                file: Box::new(src) as Box<dyn ReadSeek>,
+                source: Box::new(src) as Box<dyn ReadSeekSource>,
                 filename,
                 grain_table,
                 grain_size: header.cluster_sectors,
@@ -253,7 +253,7 @@ where
             let grain_table = read_grain_table_sesparse(&header, &mut buffered)?;
 
             ExtentStorage::Sparse(SparseStorage {
-                file: Box::new(src) as Box<dyn ReadSeek>,
+                source: Box::new(src) as Box<dyn ReadSeekSource>,
                 filename,
                 grain_table,
                 grain_size: header.cluster_sectors,
@@ -263,13 +263,13 @@ where
             })
         }
         ExtentDescriptionInner::Vmfs { .. } => ExtentStorage::Flat(FlatStorage {
-            file: Box::new(src) as Box<dyn ReadSeek>,
+            source: Box::new(src) as Box<dyn ReadSeekSource>,
             filename,
             offset: 0,
             start_sector,
         }),
         ExtentDescriptionInner::Flat { offset, .. } => ExtentStorage::Flat(FlatStorage {
-            file: Box::new(src) as Box<dyn ReadSeek>,
+            source: Box::new(src) as Box<dyn ReadSeekSource>,
             filename,
             offset: *offset,
             start_sector,

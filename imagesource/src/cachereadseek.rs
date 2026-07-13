@@ -34,6 +34,15 @@ impl CacheReadSeek {
     }
 }
 
+impl std::fmt::Debug for CacheReadSeek {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CacheReadSeek")
+            .field("idx", &self.idx)
+            .field("pos", &self.pos)
+            .finish()
+    }
+}
+
 impl Read for CacheReadSeek {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
         // check that we don't read past the end of the source

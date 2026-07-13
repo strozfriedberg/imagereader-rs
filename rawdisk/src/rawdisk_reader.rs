@@ -155,7 +155,9 @@ impl RawdiskReader {
         })
     }
 
-    pub fn read_at_offset(&mut self, offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
+    /// Takes `&self`: nothing on the read path is mutable, so a reader can serve
+    /// concurrent reads without a lock.
+    pub fn read_at_offset(&self, offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
         // don't start reading past the end
         if offset > self.image_size {
             return Err(ReadError::OffsetBeyondEnd(offset, self.image_size));

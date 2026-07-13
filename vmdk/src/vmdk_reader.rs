@@ -337,8 +337,11 @@ impl VmdkReader {
         })
     }
 
+    /// Takes `&self`: a reader can serve concurrent reads without a lock around
+    /// it. Each read mints its own cursor over an extent, so no two threads
+    /// share a file position.
     pub fn read_at_offset(
-        &mut self,
+        &self,
         mut offset: u64,
         mut buf: &mut [u8],
     ) -> Result<usize, ReadError> {
@@ -372,7 +375,7 @@ impl VmdkReader {
             let span = self.spans[i];
             let span_end = span.1.0;
             let r = ((span_end - offset) as usize).min(buf.len());
-            let ex = &mut self.extents[span.1.1];
+            let ex = &self.extents[span.1.1];
 
             let r = ex.storage.read(offset, &mut buf[..r])?;
 
