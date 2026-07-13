@@ -12,7 +12,7 @@
 //! limitation of the harness: `read_at_offset` takes `&mut self`, so a server
 //! serving concurrent reads from one image has no other option today.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 
 use bytesize::ByteSize;
@@ -38,9 +38,19 @@ struct Args {
     #[arg(long)]
     sequential: bool,
 
-    /// Concurrent readers, sharing one reader behind a Mutex (see module docs).
+    /// Concurrent client threads.
     #[arg(long, default_value_t = 1)]
     threads: usize,
+
+    /// Give each thread its own E01Reader instead of sharing one behind a Mutex.
+    ///
+    /// This is the control for measuring what `read_at_offset(&mut self)` costs.
+    /// A server cannot do this today -- one image means one reader means one
+    /// lock, so every client serialises. Per-thread readers approximate what a
+    /// non-serialising API would allow. They do not share a block cache, so each
+    /// thread warms its own; that is the price of the comparison.
+    #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+    reader_per_thread: bool,
 
     /// Confine random offsets to the first N bytes of the image.
     ///
@@ -103,6 +113,15 @@ fn offsets(args: &Args, image_size: u64) -> Vec<u64> {
     }
 }
 
+fn reader_options(args: &Args) -> E01ReaderOptions {
+    E01ReaderOptions {
+        parallel_chunk_reads: args.parallel_chunks,
+        parallel_chunk_threads: args.parallel_threads,
+        decoded_chunk_cache: args.decoded_chunk_cache,
+        ..Default::default()
+    }
+}
+
 fn percentile(sorted: &[Duration], p: f64) -> Duration {
     if sorted.is_empty() {
         return Duration::ZERO;
@@ -114,15 +133,7 @@ fn percentile(sorted: &[Duration], p: f64) -> Duration {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let reader = E01Reader::open_glob(
-        &args.image,
-        &E01ReaderOptions {
-            parallel_chunk_reads: args.parallel_chunks,
-            parallel_chunk_threads: args.parallel_threads,
-            decoded_chunk_cache: args.decoded_chunk_cache,
-            ..Default::default()
-        },
-    )?;
+    let reader = E01Reader::open_glob(&args.image, &reader_options(&args))?;
 
     let image_size = reader.image_size;
     let chunk_size = reader.chunk_size;
@@ -169,45 +180,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     );
 
-    let mut reader = reader;
-
-    if args.warmup {
-        let warm_start = Instant::now();
-        let mut buf = vec![0u8; args.size];
-        for &offset in &offsets {
-            reader.read_at_offset(offset, &mut buf).expect("read failed");
+    println!(
+        "readers    : {}",
+        if args.reader_per_thread {
+            "one per thread (no shared lock)"
+        } else {
+            "one, shared behind a Mutex (what a server must do today)"
         }
-        println!(
-            "warmup     : {:.2}s (untimed; page cache is now in the same state for every config)",
-            warm_start.elapsed().as_secs_f64()
-        );
-    }
+    );
 
-    let reader = Arc::new(Mutex::new(reader));
     let offsets = Arc::new(offsets);
+    let shared = (!args.reader_per_thread).then(|| Arc::new(Mutex::new(reader)));
 
-    let start = Instant::now();
+    // Every thread warms up, then waits here, so the timed window starts with
+    // all threads ready and all caches in the same state.
+    let gate = Arc::new(Barrier::new(args.threads));
+    let timer = Arc::new(Mutex::new(None::<Instant>));
 
     let mut handles = vec![];
     for t in 0..args.threads {
-        let reader = reader.clone();
         let offsets = offsets.clone();
+        let shared = shared.clone();
+        let gate = gate.clone();
+        let timer = timer.clone();
         let size = args.size;
         let threads = args.threads;
+        let warmup = args.warmup;
+        let image = args.image.clone();
+        let options = reader_options(&args);
 
         handles.push(std::thread::spawn(move || {
+            // Each thread takes every Nth offset, so together they issue the
+            // offset list exactly once.
+            let mine: Vec<u64> = offsets.iter().skip(t).step_by(threads).copied().collect();
             let mut buf = vec![0u8; size];
-            let mut latencies = Vec::with_capacity(offsets.len() / threads + 1);
 
-            // Each thread takes every Nth offset, so together they issue exactly
-            // the offset list once.
-            for &offset in offsets.iter().skip(t).step_by(threads) {
+            let mut own = shared
+                .is_none()
+                .then(|| E01Reader::open_glob(&image, &options).expect("open failed"));
+
+            let mut read = |offset: u64, buf: &mut [u8]| -> usize {
+                match (&shared, &mut own) {
+                    (Some(shared), _) => shared
+                        .lock()
+                        .expect("reader lock poisoned")
+                        .read_at_offset(offset, buf)
+                        .expect("read failed"),
+                    (None, Some(own)) => own.read_at_offset(offset, buf).expect("read failed"),
+                    _ => unreachable!("a thread has either a shared reader or its own"),
+                }
+            };
+
+            if warmup {
+                for &offset in &mine {
+                    read(offset, &mut buf);
+                }
+            }
+
+            gate.wait();
+            if t == 0 {
+                *timer.lock().expect("timer poisoned") = Some(Instant::now());
+            }
+            gate.wait();
+
+            let mut latencies = Vec::with_capacity(mine.len());
+            for &offset in &mine {
                 let read_start = Instant::now();
-                let n = reader
-                    .lock()
-                    .expect("reader lock poisoned")
-                    .read_at_offset(offset, &mut buf)
-                    .expect("read failed");
+                let n = read(offset, &mut buf);
                 latencies.push(read_start.elapsed());
                 std::hint::black_box(&buf[..n]);
             }
@@ -219,6 +258,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for h in handles {
         latencies.extend(h.join().expect("reader thread panicked"));
     }
+
+    let start = timer
+        .lock()
+        .expect("timer poisoned")
+        .expect("the gate must have started the timer");
 
     let elapsed = start.elapsed();
     let bytes = (latencies.len() * args.size) as u64;
