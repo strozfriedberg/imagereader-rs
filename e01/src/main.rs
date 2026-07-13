@@ -25,6 +25,17 @@ struct Args {
     /// Ignore all checksums during read, default value is false
     #[arg(short, long, default_value = "false")]
     ignore_checksums: bool,
+
+    /// Decompress a read's chunks in parallel over rayon.
+    ///
+    /// Worth ~24% of wall-clock on a whole-image verify, for 3.3x the CPU.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    parallel_chunks: bool,
+
+    /// Threads for chunk decompression. 0 = rayon's global pool (one per core).
+    #[arg(long, default_value_t = e01::e01_reader::DEFAULT_PARALLEL_CHUNK_THREADS)]
+    parallel_threads: usize,
+
 }
 
 fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
@@ -78,6 +89,8 @@ fn run(args: Args) -> Result<ExitCode, E01Error> {
             } else {
                 CorruptChunkPolicy::Error
             },
+            parallel_chunk_reads: args.parallel_chunks,
+            parallel_chunk_threads: args.parallel_threads,
             ..Default::default()
         },
     )?;

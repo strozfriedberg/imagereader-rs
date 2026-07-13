@@ -424,6 +424,24 @@ pub enum CorruptChunkPolicy {
 /// Default concurrent S3 segment fetches (foyer cache misses).
 pub const DEFAULT_S3_CONCURRENCY: usize = 8;
 
+/// Threads for the chunk-decompression pool.
+///
+/// Measured by sweeping `e01verify --parallel-threads N` over a 28 GiB image on
+/// a 32-core machine (wall / total CPU):
+///
+/// ```text
+///   32 (one per core)   64.4s / 484s      2 threads   63.5s / 152s
+///   16                  62.6s / 303s      serial      81.9s / 148s
+///    8                  61.0s / 193s
+///    4                  60.7s / 162s   <-- fastest, and 3x less CPU than 32
+/// ```
+///
+/// Four threads beat thirty-two on wall clock *and* used a third of the CPU. A
+/// 1 MiB read is only ~1-2ms of inflate; splitting it 32 ways gives each worker
+/// ~30us of work, and waking and parking them costs more than the work does
+/// (sys time: 2m58 at 32 threads, 13s at 4).
+pub const DEFAULT_PARALLEL_CHUNK_THREADS: usize = 4;
+
 /// Default foyer memory cache capacity (~1 MiB entries when chunk size is 1 MiB).
 pub const DEFAULT_CACHE_MEM_MIB: usize = 1024;
 
@@ -444,14 +462,22 @@ pub struct E01ReaderOptions {
     pub cache_dir: Option<PathBuf>,
     /// When set, generate JSONL I/O logging (see [`IoLog`]). This will hose performance; only enable it as a diagnostic.
     pub io_log: Option<Arc<IoLog>>,
-    /// Fan a multi-chunk read out over rayon, decompressing its chunks in
-    /// parallel.
+    /// Threads to use for `parallel_chunk_reads`. 0 uses rayon's global pool
+    /// (one thread per core).
     ///
-    /// Worth ~9% of wall-clock on a whole-image verify of a 28 GiB compressed
-    /// image (342 vs 315 MiB/s), at ~4.5x the CPU: the win is real but it is
-    /// bought with cores. A server already serving reads concurrently has no
-    /// spare cores to buy it with, and should turn this off; `e01verify`, which
-    /// reads one image on one thread, wants it on.
+    /// A 1 MiB read is 32 chunks of ~1-2ms of total decompression. Handing that
+    /// to one thread per core gives each ~30us of work and then parks them all
+    /// again; the park/unpark futexes cost more than the inflate does. See
+    /// [`DEFAULT_PARALLEL_CHUNK_THREADS`] for the sweep.
+    pub parallel_chunk_threads: usize,
+
+    /// Decompress a multi-chunk read's chunks in parallel, over rayon.
+    ///
+    /// With [`DEFAULT_PARALLEL_CHUNK_THREADS`], a whole-image verify of a 28 GiB
+    /// image takes 60.7s using 162s of CPU, against 81.9s and 148s serially --
+    /// 26% off the wall clock for 9% more CPU. (Before the pool was bounded this
+    /// was 3.3x the CPU, nearly all of it kernel time spent waking and parking
+    /// 32 threads to do 30us of work each.)
     pub parallel_chunk_reads: bool,
 }
 
@@ -467,6 +493,7 @@ impl Default for E01ReaderOptions {
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
+            parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
         }
     }
 }
@@ -495,6 +522,8 @@ pub struct E01Reader {
     runtime: Arc<Runtime>,
     io_log: Option<Arc<IoLog>>,
     parallel_chunk_reads: bool,
+    /// `None` uses rayon's global pool.
+    chunk_pool: Option<Arc<rayon::ThreadPool>>,
 }
 
 const DECODED_CHUNK_CACHE_CHUNKS: usize = 1024;
@@ -513,6 +542,20 @@ type ChunkTask<'a> = (
     &'a String,
     &'a mut ReadWorker,
 );
+
+/// A bounded pool for chunk decompression, or `None` to use rayon's global one.
+fn build_chunk_pool(threads: usize) -> Result<Option<Arc<rayon::ThreadPool>>, OpenError> {
+    if threads == 0 {
+        return Ok(None);
+    }
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|i| format!("e01-chunk-{i}"))
+        .build()
+        .map(|p| Some(Arc::new(p)))
+        .map_err(|e| OpenError::from(std::io::Error::other(e)))
+}
 
 fn run_chunk_task(task: ChunkTask<'_>) -> Result<(), ReadError> {
     let (
@@ -781,6 +824,7 @@ impl E01Reader {
             runtime,
             io_log: options.io_log.clone(),
             parallel_chunk_reads: options.parallel_chunk_reads,
+            chunk_pool: build_chunk_pool(options.parallel_chunk_threads)?,
         })
     }
 
@@ -879,12 +923,16 @@ impl E01Reader {
             offset += end_in_buf - beg_in_buf;
         }
 
-        // One chunk is driven inline either way. Beyond that, `parallel_chunk_reads`
-        // decides: rayon buys ~9% of wall-clock on a whole-image verify at ~4.5x
-        // the CPU, which is a good trade for e01verify and a bad one for a server
-        // that is already using its cores to serve other reads.
-        if self.parallel_chunk_reads && tasks.len() > 1 {
-            tasks.into_par_iter().try_for_each(run_chunk_task)?;
+        // A single chunk is driven inline either way; there is nothing to fan out.
+        let fan_out = self.parallel_chunk_reads && tasks.len() > 1;
+
+        if fan_out {
+            match &self.chunk_pool {
+                Some(pool) => {
+                    pool.install(|| tasks.into_par_iter().try_for_each(run_chunk_task))?
+                }
+                None => tasks.into_par_iter().try_for_each(run_chunk_task)?,
+            }
         } else {
             tasks.into_iter().try_for_each(run_chunk_task)?;
         }
@@ -922,6 +970,7 @@ mod test {
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
+            parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
         };
         let mut reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
@@ -955,6 +1004,7 @@ mod test {
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
+            parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
         };
         let mut reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();

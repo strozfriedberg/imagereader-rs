@@ -26,7 +26,7 @@ mod test {
     use crate::{
         e01_reader::{
             CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, DEFAULT_CACHE_MEM_MIB,
-            DEFAULT_S3_CONCURRENCY, E01Reader, E01ReaderOptions,
+            DEFAULT_PARALLEL_CHUNK_THREADS, DEFAULT_S3_CONCURRENCY, E01Reader, E01ReaderOptions,
         },
         hasher::HashType,
         test_data::*,
@@ -129,6 +129,7 @@ mod test {
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
+            parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
         }
     }
 
@@ -143,6 +144,7 @@ mod test {
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
+            parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
         }
     }
 
