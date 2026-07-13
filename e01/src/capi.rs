@@ -116,6 +116,7 @@ impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: e01_reader::DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         }
     }
 }

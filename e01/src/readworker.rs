@@ -11,10 +11,6 @@ use crate::e01_reader::{CorruptChunkPolicy, ReadErrorKind};
 use crate::sec_read::Chunk;
 use crate::workersource::WorkerSource;
 
-// Secondary decoded-chunk LRU cache (full decompressed chunks).
-// Toggle off to A/B test against backing-byte cache (FoyerCache) alone.
-pub const ENABLE_DECODED_CHUNK_CACHE: bool = true;
-
 #[derive(Debug)]
 pub struct DecodedChunkCache {
     capacity: usize,
@@ -310,10 +306,6 @@ impl ReadWorker {
         end_in_chunk: usize,
         cache: &Mutex<DecodedChunkCache>,
     ) -> Result<(), ReadErrorKind> {
-        if !ENABLE_DECODED_CHUNK_CACHE {
-            return self.read(chunk, src, chunk_index, buf, beg_in_chunk, end_in_chunk);
-        }
-
         let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
         let chunk_off = chunk.data_offset;
 

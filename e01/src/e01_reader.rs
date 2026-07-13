@@ -471,6 +471,16 @@ pub struct E01ReaderOptions {
     /// [`DEFAULT_PARALLEL_CHUNK_THREADS`] for the sweep.
     pub parallel_chunk_threads: usize,
 
+    /// Keep a secondary LRU of *decompressed* chunks, in front of the foyer
+    /// block cache.
+    ///
+    /// It only pays when a chunk is read more than once -- e.g. a filesystem
+    /// issuing 4 KiB reads inside a 32 KiB chunk. On a sequential whole-image
+    /// scan every chunk is touched exactly once, so the hit rate is zero and it
+    /// is pure overhead: an Arc<Vec<u8>> allocation, an insert and an eviction
+    /// per chunk, for a lookup that never comes.
+    pub decoded_chunk_cache: bool,
+
     /// Decompress a multi-chunk read's chunks in parallel, over rayon.
     ///
     /// With [`DEFAULT_PARALLEL_CHUNK_THREADS`], a whole-image verify of a 28 GiB
@@ -494,6 +504,7 @@ impl Default for E01ReaderOptions {
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         }
     }
 }
@@ -518,7 +529,10 @@ pub struct E01Reader {
 
     workers: Vec<ReadWorker>,
     cache: Arc<dyn Cache>,
-    decoded_chunk_cache: Arc<Mutex<DecodedChunkCache>>,
+    /// `None` disables the decoded-chunk cache entirely -- there is then no
+    /// lock to take and no chunk to insert, rather than a cache that is merely
+    /// never asked for anything.
+    decoded_chunk_cache: Option<Arc<Mutex<DecodedChunkCache>>>,
     runtime: Arc<Runtime>,
     io_log: Option<Arc<IoLog>>,
     parallel_chunk_reads: bool,
@@ -535,7 +549,7 @@ type ChunkTask<'a> = (
     usize,
     &'a Chunk,
     CacheWorkerSource,
-    Arc<Mutex<DecodedChunkCache>>,
+    Option<Arc<Mutex<DecodedChunkCache>>>,
     &'a mut [u8],
     usize,
     usize,
@@ -570,18 +584,20 @@ fn run_chunk_task(task: ChunkTask<'_>) -> Result<(), ReadError> {
         worker,
     ) = task;
 
-    worker
-        .read_cached(
+    match decoded_chunk_cache {
+        Some(cache) => worker.read_cached(
             chunk,
             &mut src,
             chunk_index,
             sbuf,
             beg_in_chunk,
             end_in_chunk,
-            &decoded_chunk_cache,
-        )
-        .map_err(ReadError::from)
-        .map_err(|e| e.with_path(seg_path))
+            &cache,
+        ),
+        None => worker.read(chunk, &mut src, chunk_index, sbuf, beg_in_chunk, end_in_chunk),
+    }
+    .map_err(ReadError::from)
+    .map_err(|e| e.with_path(seg_path))
 }
 
 impl Debug for E01Reader {
@@ -818,9 +834,11 @@ impl E01Reader {
             corrupt_chunk_policy: options.corrupt_chunk_policy,
             workers: vec![],
             cache,
-            decoded_chunk_cache: Arc::new(Mutex::new(DecodedChunkCache::new(
-                DECODED_CHUNK_CACHE_CHUNKS,
-            ))),
+            decoded_chunk_cache: options.decoded_chunk_cache.then(|| {
+                Arc::new(Mutex::new(DecodedChunkCache::new(
+                    DECODED_CHUNK_CACHE_CHUNKS,
+                )))
+            }),
             runtime,
             io_log: options.io_log.clone(),
             parallel_chunk_reads: options.parallel_chunk_reads,
@@ -854,12 +872,10 @@ impl E01Reader {
         let beg_chunk_index = (buf_beg / chunk_size) as usize;
         let end_chunk_index = (buf_end / chunk_size + (buf_end % chunk_size).min(1)) as usize;
 
-        let chunk_hit = if crate::readworker::ENABLE_DECODED_CHUNK_CACHE {
-            let mut cache = self.decoded_chunk_cache.lock().unwrap();
-            Some((beg_chunk_index..end_chunk_index).all(|idx| cache.get(idx).is_some()))
-        } else {
-            None
-        };
+        let chunk_hit = self.decoded_chunk_cache.as_ref().map(|cache| {
+            let mut cache = cache.lock().unwrap();
+            (beg_chunk_index..end_chunk_index).all(|idx| cache.get(idx).is_some())
+        });
 
         let foyer_trace = Arc::new(Mutex::new(ReadTrace::default()));
 
@@ -971,6 +987,7 @@ mod test {
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         };
         let mut reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
@@ -1005,6 +1022,7 @@ mod test {
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         };
         let mut reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();

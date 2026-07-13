@@ -130,6 +130,7 @@ mod test {
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         }
     }
 
@@ -145,6 +146,7 @@ mod test {
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         }
     }
 

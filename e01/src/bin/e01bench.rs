@@ -42,6 +42,19 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     threads: usize,
 
+    /// Confine random offsets to the first N bytes of the image.
+    ///
+    /// Uniform random reads over a whole 28 GiB image touch 922k distinct 32 KiB
+    /// chunks and essentially never re-read one, so they cannot show whether a
+    /// cache of *decompressed* chunks is worth anything. Real clients have
+    /// locality -- a filesystem re-reads metadata and issues several 4 KiB reads
+    /// inside one chunk. A working set smaller than the image models that: with
+    /// 20k reads over 256 MiB (8k chunks) each chunk is read ~2.4 times.
+    ///
+    /// 0 = the whole image.
+    #[arg(long, default_value_t = 0)]
+    working_set: u64,
+
     /// Seed for the random offsets, so runs are comparable.
     #[arg(long, default_value_t = 42)]
     seed: u64,
@@ -64,10 +77,19 @@ struct Args {
     #[arg(long, default_value_t = e01::e01_reader::DEFAULT_PARALLEL_CHUNK_THREADS)]
     parallel_threads: usize,
 
+    /// Keep an LRU of decompressed chunks in front of the block cache. Only pays
+    /// if chunks are re-read; a sequential scan never re-reads one.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    decoded_chunk_cache: bool,
+
 }
 
 fn offsets(args: &Args, image_size: u64) -> Vec<u64> {
-    let last = image_size.saturating_sub(args.size as u64);
+    let span = match args.working_set {
+        0 => image_size,
+        n => n.min(image_size),
+    };
+    let last = span.saturating_sub(args.size as u64);
 
     if args.sequential {
         (0..args.reads as u64)
@@ -97,6 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &E01ReaderOptions {
             parallel_chunk_reads: args.parallel_chunks,
             parallel_chunk_threads: args.parallel_threads,
+            decoded_chunk_cache: args.decoded_chunk_cache,
             ..Default::default()
         },
     )?;
@@ -124,6 +147,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "fan-out    : {}",
         if args.parallel_chunks { "on" } else { "off" }
     );
+    if !args.sequential {
+        let span = match args.working_set {
+            0 => image_size,
+            n => n.min(image_size),
+        };
+        let chunks = span.div_ceil(chunk_size as u64);
+        println!(
+            "working set: {} ({} chunks; {:.1} reads per chunk)",
+            ByteSize::b(span).display().iec(),
+            chunks,
+            args.reads as f64 / chunks as f64,
+        );
+    }
     println!(
         "            {}",
         if args.sequential {
