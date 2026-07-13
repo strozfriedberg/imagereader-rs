@@ -17,6 +17,10 @@ path = "src/lib.rs"
 name = "e01verify"
 path = "src/main.rs"
 
+[[bin]]
+name = "e01bench"
+path = "src/bin/e01bench.rs"
+
 [features]
 capi = []
 
@@ -35,6 +39,7 @@ itertools = "0.14.0"
 #kaitai = { git = "https://github.com/kaitai-io/kaitai_struct_rust_runtime.git", branch = "master" }
 kaitai = { git = "https://github.com/uckelman-sf/kaitai_struct_rust_runtime.git", branch = "master" }
 md-5 = "0.10"
+rand = "0.9"
 rayon = "1.11.0"
 rust-s3.workspace = true
 sha1 = "0.10"
@@ -50,7 +55,6 @@ url.workspace = true
 
 [dev-dependencies]
 const_format = "0.2"
-rand = "0.9"
 test-log = { version = "0.2.18", default-features = false, features = ["trace"] }
 criterion = "0.7"
 
