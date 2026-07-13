@@ -52,6 +52,12 @@ struct Args {
     #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
     reader_per_thread: bool,
 
+    /// Put the shared reader behind a Mutex, as a server had to before
+    /// `read_at_offset` took `&self`. This is the *old* design, kept so the two
+    /// can be compared in one binary.
+    #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+    lock_reader: bool,
+
     /// Confine random offsets to the first N bytes of the image.
     ///
     /// Uniform random reads over a whole 28 GiB image touch 922k distinct 32 KiB
@@ -182,15 +188,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "readers    : {}",
-        if args.reader_per_thread {
-            "one per thread (no shared lock)"
-        } else {
-            "one, shared behind a Mutex (what a server must do today)"
+        match (args.reader_per_thread, args.lock_reader) {
+            (true, _) => "one per thread (no shared lock)",
+            (false, true) => "one, behind a Mutex (the old &mut self design)",
+            (false, false) => "one, shared (&self, no lock)",
         }
     );
 
     let offsets = Arc::new(offsets);
-    let shared = (!args.reader_per_thread).then(|| Arc::new(Mutex::new(reader)));
+
+    // Exactly one of these is populated; `reader` moves into whichever it is.
+    let (shared, locked) = match (args.reader_per_thread, args.lock_reader) {
+        (true, _) => (None, None),
+        (false, true) => (None, Some(Arc::new(Mutex::new(reader)))),
+        (false, false) => (Some(Arc::new(reader)), None),
+    };
 
     // Every thread warms up, then waits here, so the timed window starts with
     // all threads ready and all caches in the same state.
@@ -201,6 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for t in 0..args.threads {
         let offsets = offsets.clone();
         let shared = shared.clone();
+        let locked = locked.clone();
         let gate = gate.clone();
         let timer = timer.clone();
         let size = args.size;
@@ -215,19 +228,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mine: Vec<u64> = offsets.iter().skip(t).step_by(threads).copied().collect();
             let mut buf = vec![0u8; size];
 
-            let mut own = shared
-                .is_none()
+            let own = (shared.is_none() && locked.is_none())
                 .then(|| E01Reader::open_glob(&image, &options).expect("open failed"));
 
-            let mut read = |offset: u64, buf: &mut [u8]| -> usize {
-                match (&shared, &mut own) {
-                    (Some(shared), _) => shared
+            let read = |offset: u64, buf: &mut [u8]| -> usize {
+                match (&shared, &locked, &own) {
+                    // &self: no lock at all.
+                    (Some(shared), _, _) => {
+                        shared.read_at_offset(offset, buf).expect("read failed")
+                    }
+                    // The old design: every client serialises here.
+                    (_, Some(locked), _) => locked
                         .lock()
                         .expect("reader lock poisoned")
                         .read_at_offset(offset, buf)
                         .expect("read failed"),
-                    (None, Some(own)) => own.read_at_offset(offset, buf).expect("read failed"),
-                    _ => unreachable!("a thread has either a shared reader or its own"),
+                    (_, _, Some(own)) => own.read_at_offset(offset, buf).expect("read failed"),
+                    _ => unreachable!("a thread has exactly one reader"),
                 }
             };
 

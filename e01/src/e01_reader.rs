@@ -533,7 +533,17 @@ pub struct E01Reader {
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy,
 
-    workers: Vec<ReadWorker>,
+    /// Decoder scratch, checked out per read.
+    ///
+    /// This is the *only* thing `read_at_offset` ever needed `&mut self` for --
+    /// and that `&mut` forced a server to put the whole reader behind one lock,
+    /// so every client serialised on it: 8 concurrent clients got *less*
+    /// throughput than one (34 vs 38 MiB/s) with a p99 of 28ms against 0.35ms.
+    ///
+    /// A ReadWorker is a zlib decoder plus a `chunk_size + 4` buffer (~32 KiB),
+    /// so pooling them costs a little memory per concurrent read and nothing
+    /// else. The lock is held only to pop and push, never across a read.
+    worker_pool: Mutex<Vec<ReadWorker>>,
     cache: Arc<dyn Cache>,
     /// `None` disables the decoded-chunk cache entirely -- there is then no
     /// lock to take and no chunk to insert, rather than a cache that is merely
@@ -607,6 +617,29 @@ fn chunk_pool(requested: usize) -> Result<Option<Arc<rayon::ThreadPool>>, OpenEr
 
     pools.insert(threads, Arc::downgrade(&pool));
     Ok(Some(pool))
+}
+
+impl E01Reader {
+    /// `n` workers, reusing pooled ones and building the rest.
+    fn checkout_workers(&self, n: usize) -> Vec<ReadWorker> {
+        let mut pool = self.worker_pool.lock().expect("worker pool poisoned");
+
+        let keep = pool.len().saturating_sub(n);
+        let mut workers: Vec<ReadWorker> = pool.drain(keep..).collect();
+        drop(pool);
+
+        workers.resize_with(n, || {
+            ReadWorker::new(self.chunk_size, self.image_size, self.corrupt_chunk_policy)
+        });
+        workers
+    }
+
+    fn return_workers(&self, workers: Vec<ReadWorker>) {
+        self.worker_pool
+            .lock()
+            .expect("worker pool poisoned")
+            .extend(workers);
+    }
 }
 
 fn run_chunk_task(task: ChunkTask<'_>) -> Result<(), ReadError> {
@@ -870,7 +903,7 @@ impl E01Reader {
             segment_paths: meta.segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
-            workers: vec![],
+            worker_pool: Mutex::new(vec![]),
             cache,
             decoded_chunk_cache: options.decoded_chunk_cache.then(|| {
                 Arc::new(Mutex::new(DecodedChunkCache::new(
@@ -884,8 +917,10 @@ impl E01Reader {
         })
     }
 
+    /// Takes `&self`: a reader can serve concurrent reads without a lock around
+    /// it. See `worker_pool` for what used to require `&mut`.
     pub fn read_at_offset(
-        &mut self,
+        &self,
         mut offset: u64,
         mut buf: &mut [u8],
     ) -> Result<usize, ReadError> {
@@ -917,21 +952,11 @@ impl E01Reader {
 
         let foyer_trace = Arc::new(Mutex::new(ReadTrace::default()));
 
-        // TODO: Number of workers should have some fixed/configured maximum,
-        // should not scale with the number of chunks to be fetched.
-        // resize_with, not resize: the latter eagerly builds a template ReadWorker
-        // -- allocating a chunk_size+4 buffer -- on every call, even when no
-        // resize is needed and the template is dropped unused.
-        if end_chunk_index - beg_chunk_index > self.workers.len() {
-            let (chunk_size, policy) = (self.chunk_size, self.corrupt_chunk_policy);
-            self.workers
-                .resize_with(end_chunk_index - beg_chunk_index, || {
-                    ReadWorker::new(chunk_size, image_end, policy)
-                });
-        }
+        // TODO: worker count still scales with the number of chunks in the read.
+        let mut workers = self.checkout_workers(end_chunk_index - beg_chunk_index);
 
         let mut tasks = Vec::with_capacity(end_chunk_index - beg_chunk_index);
-        let mut w = &mut self.workers[..];
+        let mut w = &mut workers[..];
 
         while offset < buf_end {
             // get the next chunk
@@ -980,16 +1005,18 @@ impl E01Reader {
         // A single chunk is driven inline either way; there is nothing to fan out.
         let fan_out = self.parallel_chunk_reads && tasks.len() > 1;
 
-        if fan_out {
+        let result = if fan_out {
             match &self.chunk_pool {
-                Some(pool) => {
-                    pool.install(|| tasks.into_par_iter().try_for_each(run_chunk_task))?
-                }
-                None => tasks.into_par_iter().try_for_each(run_chunk_task)?,
+                Some(pool) => pool.install(|| tasks.into_par_iter().try_for_each(run_chunk_task)),
+                None => tasks.into_par_iter().try_for_each(run_chunk_task),
             }
         } else {
-            tasks.into_iter().try_for_each(run_chunk_task)?;
-        }
+            tasks.into_iter().try_for_each(run_chunk_task)
+        };
+
+        // Back to the pool even if a chunk failed, or a bad image would drain it.
+        self.return_workers(workers);
+        result?;
 
         let read_len = (offset - buf_beg) as usize;
         if let Some(log) = &self.io_log {
@@ -1079,6 +1106,56 @@ mod test {
     /// A pool is a process-level resource. Building one per reader spawns N OS
     /// threads on every open -- which is why the cold benches, which construct a
     /// fresh reader per iteration, regressed 66-193% when the pool was added.
+    /// The whole point of `read_at_offset(&self)`: a server can share one reader
+    /// across clients with no lock. If this stops compiling, the API has
+    /// regressed to forcing a Mutex around the reader.
+    #[test]
+    fn reader_is_shareable_across_threads() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<E01Reader>();
+    }
+
+    /// Concurrent reads through a shared `&self` reader must return the same
+    /// bytes a serial read would -- the worker pool is the only mutable state,
+    /// and handing the same worker to two threads would corrupt both.
+    #[test]
+    fn concurrent_reads_through_one_reader_agree_with_serial_reads() {
+        let options = E01ReaderOptions::default();
+        let reader = Arc::new(E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap());
+
+        let offsets: Vec<u64> = (0..16).map(|i| i * 4096).collect();
+
+        // What each offset should read, serially.
+        let expected: Vec<Vec<u8>> = offsets
+            .iter()
+            .map(|&off| {
+                let mut buf = vec![0u8; 4096];
+                let n = reader.read_at_offset(off, &mut buf).unwrap();
+                buf.truncate(n);
+                buf
+            })
+            .collect();
+
+        // The same reads, all at once, through one shared reader.
+        let handles: Vec<_> = offsets
+            .iter()
+            .map(|&off| {
+                let reader = reader.clone();
+                std::thread::spawn(move || {
+                    let mut buf = vec![0u8; 4096];
+                    let n = reader.read_at_offset(off, &mut buf).unwrap();
+                    buf.truncate(n);
+                    buf
+                })
+            })
+            .collect();
+
+        for (i, h) in handles.into_iter().enumerate() {
+            let got = h.join().expect("reader thread panicked");
+            assert_eq!(got, expected[i], "concurrent read at {} differed", offsets[i]);
+        }
+    }
+
     #[test]
     fn readers_asking_for_the_same_thread_count_share_a_pool() {
         let a = chunk_pool(2).unwrap().expect("a pool");
