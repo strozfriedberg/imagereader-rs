@@ -101,11 +101,20 @@ pub struct CommonArgs {
     #[arg(long)]
     pub cache_dir: Option<PathBuf>,
 
-    /// Debugging lever: Foyer cache block size in bytes (VMDK only; e01 hardcodes 1 MiB). Smaller
-    /// values reduce wasted cache footprint for scattered sub-chunk metadata
-    /// access (MFT/INDX) at the cost of more cache entries and, potentially,
-    /// more distinct S3 fetches if nearby offsets would otherwise have landed
-    /// in the same larger chunk.
+    /// Bytes fetched from the backing store per cache miss (e01 and VMDK).
+    ///
+    /// This is the unit of *fetch*, not of decompression, and against a
+    /// high-latency store it is the most important knob here. A range GET costs
+    /// almost entirely fixed latency: measured against S3, 1 MiB took 221 ms and
+    /// 16 MiB took 153 ms. The bytes are nearly free; the round trips are not.
+    /// So the runtime tracks the *number* of GETs, and a bigger block means
+    /// fewer of them -- an NTFS metadata walk that needed 1,192 fetches at 1 MiB
+    /// needs 447 at 8 MiB, with each one no slower.
+    ///
+    /// Larger is not always better: against a local file the bytes are not free,
+    /// and a big block is wasted bandwidth on scattered reads. Default stays at
+    /// 1 MiB. Memory cache capacity is in MiB and is divided by this, so raising
+    /// it does not inflate the cache's footprint.
     #[arg(long, default_value = "1048576")]
     pub cache_chunk_size: usize,
 

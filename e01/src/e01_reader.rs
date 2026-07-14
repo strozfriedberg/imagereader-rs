@@ -475,19 +475,35 @@ pub const DEFAULT_S3_CONCURRENCY: usize = 8;
 /// (sys time: 2m58 at 32 threads, 13s at 4).
 pub const DEFAULT_PARALLEL_CHUNK_THREADS: usize = 4;
 
-/// Default foyer memory cache capacity (~1 MiB entries when chunk size is 1 MiB).
+/// Default foyer memory cache capacity, in MiB.
 pub const DEFAULT_CACHE_MEM_MIB: usize = 1024;
+
+/// Default size of a foyer block: one byte range fetched from the backing store.
+///
+/// This is the unit of *fetch*, not of decompression -- an e01 chunk is ~32 KiB,
+/// and a block holds many of them. It is worth tuning against the backing store,
+/// because it decides how many round trips a workload costs. Measured against an
+/// S3-backed image, a range GET's cost is almost entirely fixed latency: 1 MiB
+/// took 221 ms and 16 MiB took 153 ms, so the bytes are nearly free and it is the
+/// *number* of GETs that sets the runtime. Larger blocks fetch more and wait less.
+///
+/// It stays 1 MiB by default because that is only true of a high-latency store.
+/// Against a local file, a larger block is wasted bandwidth on scattered reads.
+pub const DEFAULT_CACHE_BLOCK_SIZE: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct E01ReaderOptions {
     pub corrupt_section_policy: CorruptSectionPolicy,
     pub corrupt_chunk_policy: CorruptChunkPolicy,
-    /// Foyer backing-cache readahead in 1 MiB blocks (S3/file segment fetch). 0 disables.
+    /// Foyer backing-cache readahead in blocks (S3/file segment fetch). 0 disables.
     pub foyer_readahead: usize,
     /// Max concurrent in-flight S3 segment byte-range fetches. 0 = serial.
     pub s3_concurrency: usize,
-    /// Foyer in-memory cache capacity in ~1 MiB entries (see [`DEFAULT_CACHE_MEM_MIB`]).
+    /// Foyer in-memory cache capacity in MiB (see [`DEFAULT_CACHE_MEM_MIB`]).
+    /// Divided by the block size to get foyer's entry count.
     pub cache_mem_mib: usize,
+    /// Bytes fetched from the backing store per miss (see [`DEFAULT_CACHE_BLOCK_SIZE`]).
+    pub cache_block_size: usize,
     /// Cache structure for this session (single vs dedicated-metadata).
     pub cache_mode: CacheMode,
     /// Base directory for foyer's on-disk cache (created as a random subdir
@@ -537,6 +553,7 @@ impl Default for E01ReaderOptions {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
@@ -849,7 +866,7 @@ impl E01Reader {
             return Err(OpenError::NoSegmentFiles);
         }
 
-        let cache_chunk_size = 1024 * 1024;
+        let cache_chunk_size = options.cache_block_size.max(1);
         let cache_mem_size = options.cache_mem_mib;
         let foyer_readahead = options.foyer_readahead;
         let s3_concurrency = options.s3_concurrency;
@@ -1106,6 +1123,7 @@ mod test {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
@@ -1141,6 +1159,7 @@ mod test {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,

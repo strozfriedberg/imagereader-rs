@@ -74,12 +74,33 @@ fn make_tempdir(base: Option<&Path>) -> std::io::Result<TempDir> {
     }
 }
 
+/// Memory capacity in MiB, converted to the entry count foyer actually wants.
+///
+/// foyer's default weighter is `|_, _| 1`, so `.memory(n)` caps the cache at `n`
+/// *entries*, not `n` bytes. Passing a MiB figure straight in only looked right
+/// because blocks were 1 MiB: `--cache-mem-mib 1024` meant 1024 entries, which
+/// happened to be 1 GiB. With a configurable block size that coincidence breaks,
+/// and 1024 entries of 16 MiB would be a 16 GiB memory cache. Divide instead.
+fn mem_entries(mem_mib: usize, block_size: usize) -> usize {
+    // A zero block size is a caller bug, not a request for 67 million entries.
+    // Fall back to the 1 MiB default rather than dividing by a clamped 1 byte.
+    let block = if block_size == 0 {
+        1024 * 1024
+    } else {
+        block_size
+    };
+    ((mem_mib * 1024 * 1024) / block).max(1)
+}
+
 async fn build_hybrid(
-    mem_capacity: usize,
+    mem_mib: usize,
+    block_size: usize,
     disk_size: usize,
     dir: &TempDir,
 ) -> Result<BlockCache, std::io::Error> {
-    let builder = HybridCacheBuilder::new().memory(mem_capacity).storage();
+    let builder = HybridCacheBuilder::new()
+        .memory(mem_entries(mem_mib, block_size))
+        .storage();
     let builder = if disk_size > 0 {
         let device = FsDeviceBuilder::new(dir.path())
             .with_capacity(disk_size)
@@ -101,7 +122,7 @@ impl FoyerCache<DefaultHasher> {
         cache_base_dir: Option<&Path>,
     ) -> Result<Self, std::io::Error> {
         let dir = make_tempdir(cache_base_dir)?;
-        let content = Arc::new(build_hybrid(mem_capacity, 0, &dir).await?);
+        let content = Arc::new(build_hybrid(mem_capacity, chlen, 0, &dir).await?);
         Ok(Self {
             chlen,
             sources: SourceSlots::default(),
@@ -131,6 +152,7 @@ impl FoyerCache<DefaultHasher> {
         let content = Arc::new(
             build_hybrid(
                 content_mem_mib,
+                chlen,
                 content_disk_mib * 1024 * 1024,
                 &content_dir,
             )
@@ -139,6 +161,7 @@ impl FoyerCache<DefaultHasher> {
         let metadata = Arc::new(
             build_hybrid(
                 metadata_mem_mib,
+                chlen,
                 metadata_disk_mib * 1024 * 1024,
                 &metadata_dir,
             )
@@ -446,6 +469,77 @@ mod tests {
     use std::time::Duration;
 
     const MIB: u64 = 1024 * 1024;
+
+    /// The block size is the unit of *fetch*: a 4 KiB read must pull a whole
+    /// block from the backing store, whatever that block is set to. Against a
+    /// high-latency store this is the knob that decides the runtime, since a
+    /// range GET costs mostly fixed latency -- so it has to actually reach the
+    /// source, not just size the cache.
+    #[tokio::test]
+    async fn block_size_sets_the_range_fetched_from_the_source() {
+        /// Records the exact byte range of every fetch.
+        #[derive(Debug)]
+        struct RangeSource(Arc<std::sync::Mutex<Vec<(u64, u64)>>>);
+
+        impl BytesSource for RangeSource {
+            fn read(
+                &self,
+                beg: u64,
+                end: u64,
+            ) -> futures::future::BoxFuture<'static, Result<Vec<u8>, std::io::Error>> {
+                self.0.lock().unwrap().push((beg, end));
+                async move { Ok(vec![0u8; (end - beg) as usize]) }.boxed()
+            }
+            fn end(&self) -> u64 {
+                64 * MIB
+            }
+        }
+
+        for block in [64 * 1024usize, 1024 * 1024, 8 * 1024 * 1024] {
+            let ranges = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let cache = FoyerCache::single_memory(block, 64, 0, 8, None)
+                .await
+                .unwrap();
+            cache.add_source(0, Box::new(RangeSource(ranges.clone())));
+
+            // One 4 KiB read, at an offset inside the second block.
+            let mut buf = vec![0u8; 4096];
+            let mut trace = ReadTrace::default();
+            cache
+                .read(0, block as u64 + 4096, &mut buf, &mut trace)
+                .await
+                .unwrap();
+
+            let got = ranges.lock().unwrap().clone();
+            assert_eq!(got.len(), 1, "one block fetched, block={block}");
+            let (beg, end) = got[0];
+            assert_eq!(beg, block as u64, "fetch starts at the block boundary");
+            assert_eq!(
+                end - beg,
+                block as u64,
+                "a 4 KiB read must fetch a whole {block}-byte block"
+            );
+        }
+    }
+
+    /// Memory capacity is a byte budget, not an entry count. foyer's default
+    /// weighter counts 1 per entry, so handing it a MiB figure caps the cache at
+    /// that many *blocks* -- which was harmless only while blocks were 1 MiB. A
+    /// 1 GiB budget must stay 1 GiB when the block size changes, not silently
+    /// become 16 GiB.
+    #[test]
+    fn memory_budget_is_bytes_not_entries() {
+        let gib = 1024;
+        assert_eq!(mem_entries(gib, 1024 * 1024), 1024);
+        assert_eq!(mem_entries(gib, 8 * 1024 * 1024), 128);
+        assert_eq!(mem_entries(gib, 16 * 1024 * 1024), 64);
+
+        // Never zero, however small the budget or however large the block: a
+        // cache that can hold nothing would miss on every read forever.
+        assert_eq!(mem_entries(1, 64 * 1024 * 1024), 1);
+        assert_eq!(mem_entries(0, 1024 * 1024), 1);
+        assert_eq!(mem_entries(64, 0), 64); // block 0 falls back to 1 MiB
+    }
 
     /// A 1 MiB patterned temp file; the TempDir keeps it alive for the test.
     fn test_source() -> (tempfile::TempDir, Box<dyn BytesSource + Send + Sync>) {

@@ -119,6 +119,7 @@ fn open_e01(
     cache_mem_mib: usize,
     cache_mode: E01CacheMode,
     cache_dir: Option<PathBuf>,
+    cache_block_size: usize,
     cache_trace_log: Option<&Path>,
 ) -> Result<Adapter, Box<dyn std::error::Error>> {
     let io_log = cache_trace_log.map(E01IoLog::open).transpose()?;
@@ -134,6 +135,7 @@ fn open_e01(
             foyer_readahead: readahead,
             s3_concurrency,
             cache_mem_mib,
+            cache_block_size,
             cache_mode,
             cache_dir,
             // --io-log captures only NBD-level reads via diskimage-nbd's IoLog;
@@ -222,6 +224,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                         cache_mem_mib,
                         cache_mode,
                         cache_dir,
+                        cache_chunk_size,
                         cache_trace_log.as_deref(),
                     )
                 },

@@ -25,7 +25,8 @@ pub use imagesource::{IoLog, ReadTimer, ReadTrace, chunk_cache_label, init_traci
 mod test {
     use crate::{
         e01_reader::{
-            CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, DEFAULT_CACHE_MEM_MIB,
+            CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, DEFAULT_CACHE_BLOCK_SIZE,
+            DEFAULT_CACHE_MEM_MIB,
             DEFAULT_PARALLEL_CHUNK_THREADS, DEFAULT_S3_CONCURRENCY, E01Reader, E01ReaderOptions,
         },
         hasher::HashType,
@@ -125,6 +126,7 @@ mod test {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
@@ -141,6 +143,7 @@ mod test {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
