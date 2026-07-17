@@ -179,7 +179,7 @@ pub unsafe extern "C" fn rawdisk_read(
         }
 
         let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-        unsafe { &mut *(*handle).reader }
+        unsafe { &*(*handle).reader }
             .read_at_offset(offset, buf)
             .unwrap_or_else(|e| {
                 fill_error(e, err);
