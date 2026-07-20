@@ -261,7 +261,7 @@ mod test {
         let grain_size = 16;
         // 64 bytes of highly compressible data: decompresses to 4x grain_size
         // while the compressed data_size stays under the 2*grain_size gate.
-        let bytes = compressed_grain(&vec![0xABu8; 64]);
+        let bytes = compressed_grain(&[0xABu8; 64]);
         let mut file = Cursor::new(bytes);
 
         let err = read_and_decompress_grain(&mut file, 0, grain_size).unwrap_err();
