@@ -308,12 +308,17 @@ impl Iterator for SectionIterator<'_> {
 
             match read_section(self.io, self.ignore_checksums) {
                 Ok((section_offset, section)) => {
-                    self.current_offset = if self.current_offset == section_offset {
+                    // Sections advance forward through the file; the final
+                    // section's next_offset points at itself. A next_offset
+                    // that does not move forward — a self-pointer or a
+                    // backward cycle from a corrupt image — ends iteration.
+                    // Requiring strict forward progress prevents a two-section
+                    // A->B->A cycle from looping forever.
+                    self.current_offset = if section_offset > self.current_offset {
+                        section_offset
+                    } else {
                         // ensure that the next() next is None
                         self.io.size()
-                    } else {
-                        // otherwise advance to end of section
-                        section_offset
                     };
 
                     Some(Ok(section))
@@ -362,5 +367,33 @@ mod tests {
         let io = BytesReader::from(table_bytes(u32::MAX, &[]));
         let err = read_table(&io, 0, true).unwrap_err();
         assert!(matches!(err, LibError::TooManyTableEntries(_)), "got {err:?}");
+    }
+
+    /// A section descriptor v1 record: 16-byte type, u64 next_offset, u64
+    /// size, 40 bytes padding, u32 checksum (76 bytes total). An unknown
+    /// type parses as Section::Other with no checksum validation.
+    fn section_desc(type_str: &str, next_offset: u64, size: u64) -> Vec<u8> {
+        let mut b = vec![0u8; 76];
+        let t = type_str.as_bytes();
+        let n = t.len().min(16);
+        b[..n].copy_from_slice(&t[..n]);
+        b[16..24].copy_from_slice(&next_offset.to_le_bytes());
+        b[24..32].copy_from_slice(&size.to_le_bytes());
+        b
+    }
+
+    /// next_offset comes from the image. Valid sections advance forward and
+    /// the terminator points at itself; a corrupt image can point section B
+    /// back at section A. That must terminate iteration, not hang forever.
+    #[test]
+    fn cyclic_section_offsets_terminate_instead_of_looping() {
+        let mut bytes = section_desc("junk", 76, 76); // section at 0 -> 76
+        bytes.extend(section_desc("junk", 0, 76)); // section at 76 -> 0
+        let io = BytesReader::from(bytes);
+
+        // Without forward-progress enforcement this never returns.
+        let sections: Vec<_> = SectionIterator::new(&io, true).collect();
+        assert_eq!(sections.len(), 2);
+        assert!(sections.iter().all(|s| s.is_ok()), "got {sections:?}");
     }
 }
