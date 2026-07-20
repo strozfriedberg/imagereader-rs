@@ -1,3 +1,4 @@
+use percent_encoding::percent_decode_str;
 use s3::{bucket::Bucket, region::Region};
 use std::{path::Path, str::FromStr, sync::Arc};
 use tokio::runtime::Runtime;
@@ -99,17 +100,17 @@ pub fn source_for_url(
 ) -> Result<Box<dyn BytesSource + Send + Sync>, OpenError> {
     match url.scheme() {
         "file" => {
-            let p = if cfg!(windows) {
-                // Windows file URLs get a spare / before the drive letter,
-                // which we have to remove when using it as a path.
-                url.path().trim_start_matches('/')
-            } else {
-                url.path()
-            };
+            // url.path() is percent-encoded, so a path with a space or other
+            // reserved character (/data/my image.vmdk -> /data/my%20image.vmdk)
+            // becomes a spurious ENOENT if used directly. to_file_path decodes
+            // it and drops the Windows drive-letter leading slash.
+            let path = url
+                .to_file_path()
+                .map_err(|()| OpenError::from(OpenErrorKind::BadPath(url.to_string())))?;
 
-            let src = FileSource::open(p)
+            let src = FileSource::open(&path)
                 .map_err(OpenError::from)
-                .map_err(|e| e.with_path(p))?;
+                .map_err(|e| e.with_path(path.to_string_lossy()))?;
             Ok(Box::new(src))
         }
         "s3" => {
@@ -119,11 +120,16 @@ pub fn source_for_url(
             let name = url
                 .host_str()
                 .ok_or(OpenErrorKind::BadPath(url.to_string()))?;
-            let key = url.path().trim_start_matches('/');
+            // url.path() is percent-encoded, and rust-s3 encodes the key again
+            // on the wire, so "my key.e01" would go out as "my%2520key.e01" and
+            // never resolve. Decode here so rust-s3 encodes exactly once.
+            let key = percent_decode_str(url.path().trim_start_matches('/'))
+                .decode_utf8()
+                .map_err(|_| OpenError::from(OpenErrorKind::BadPath(url.to_string())))?;
             let bucket = s3_bucket(name, url.as_ref(), runtime, auth)?;
 
             let (h, _) = runtime
-                .block_on(bucket.head_object(key))
+                .block_on(bucket.head_object(key.as_ref()))
                 .map_err(std::io::Error::other)
                 .map_err(OpenError::from)
                 .map_err(|e| e.with_path(url))?;
@@ -152,7 +158,7 @@ pub fn source_for_url(
 
             Ok(Box::new(S3Source::new(
                 bucket,
-                key.to_string(),
+                key.into_owned(),
                 len,
                 auth.clone(),
                 segment,
@@ -167,6 +173,22 @@ pub fn source_for_url(
 mod tests {
     use super::*;
     use s3::creds::Credentials;
+
+    /// A file whose path contains a space produces a percent-encoded file URL;
+    /// opening it must decode the path rather than looking for a literal %20.
+    #[test]
+    fn file_url_with_space_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("my image.bin");
+        std::fs::write(&path, b"hello").unwrap();
+
+        let url = Url::from_file_path(&path).unwrap();
+        assert!(url.path().contains("%20"), "url should be percent-encoded");
+
+        let rt = Runtime::new().unwrap();
+        let src = source_for_url(&url, 0, &rt, None, None).unwrap();
+        assert_eq!(src.end(), 5);
+    }
 
     #[test]
     fn s3_access_point_alias_uses_accesspoint_domain() {

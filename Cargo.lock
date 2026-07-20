@@ -1881,6 +1881,7 @@ dependencies = [
  "foyer",
  "foyer-common",
  "futures",
+ "percent-encoding",
  "rust-s3",
  "tempfile",
  "thiserror",
