@@ -275,8 +275,17 @@ impl VmdkReader {
 
             idx += 1;
 
-            // size for all images must match
-            let size = img_extents.iter().fold(0, |acc, i| acc + i.sectors) * SECTOR_SIZE;
+            // size for all images must match. Extent sector counts come from
+            // the descriptor, so guard both the sum and the byte conversion
+            // against overflow rather than wrapping to a bogus image size.
+            let size = img_extents
+                .iter()
+                .try_fold(0u64, |acc, i| acc.checked_add(i.sectors))
+                .and_then(|sectors| sectors.checked_mul(SECTOR_SIZE))
+                .ok_or_else(|| OpenError {
+                    path: current_url.as_ref().into(),
+                    kind: OpenErrorKind::ImageSizeOverflow,
+                })?;
 
             if image_size.is_none() {
                 image_size = Some(size);

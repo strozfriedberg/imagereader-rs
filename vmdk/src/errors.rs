@@ -36,6 +36,8 @@ pub enum OpenErrorKind {
     UnsupportedExtentKind(String),
     #[error("Parent extent chain contains a cycle at {0}")]
     ParentChainCycle(String),
+    #[error("Extent sizes overflow the image size")]
+    ImageSizeOverflow,
     #[error("{0}")]
     Source(imagesource::OpenErrorKind),
 }
