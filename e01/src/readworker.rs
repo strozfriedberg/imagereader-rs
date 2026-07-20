@@ -206,7 +206,7 @@ impl ReadWorker {
             error!("checksum mismatch reading chunk {}", chunk_index);
             match self.corrupt_chunk_policy {
                 CorruptChunkPolicy::Error => {
-                    return Err(ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc));
+                    return Err(ReadErrorKind::BadChecksum(chunk_index, crc, crc_stored));
                 }
                 CorruptChunkPolicy::Zero => {
                     out.fill(0);
