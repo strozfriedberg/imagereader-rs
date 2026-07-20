@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fmt::Debug,
     io::{self, Seek, SeekFrom},
     path::PathBuf,
@@ -251,8 +251,19 @@ impl VmdkReader {
         let mut uncovered: BTreeMap<u64, u64> = BTreeMap::new();
         let mut extents = vec![];
         let mut image_size = None;
+        // parentFileNameHint is attacker-controlled; a chain that points back at
+        // an image already in it (A -> B -> A) would otherwise loop forever,
+        // slowly growing memory.
+        let mut visited: HashSet<Url> = HashSet::new();
 
         let image_size = 'img_loop: loop {
+            if !visited.insert(current_url.clone()) {
+                return Err(OpenError {
+                    path: current_url.as_ref().into(),
+                    kind: OpenErrorKind::ParentChainCycle(current_url.as_ref().into()),
+                });
+            }
+
             let (img_extents, parent_url) = handle_image(
                 &current_url,
                 idx,
@@ -446,6 +457,31 @@ mod test {
         assert!(
             buf.iter().all(|&b| b == 0xCC),
             "offset field must be added so the leading padding sector is skipped"
+        );
+    }
+
+    #[test]
+    fn parent_chain_cycle_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        // a.vmdk and b.vmdk name each other as parent and cover no sectors, so
+        // the open loop follows the parent hint round and round. Without cycle
+        // detection this recurses forever, slowly growing memory.
+        write(
+            dir.path(),
+            "a.vmdk",
+            b"# Disk DescriptorFile\nparentFileNameHint=\"b.vmdk\"\n",
+        );
+        write(
+            dir.path(),
+            "b.vmdk",
+            b"# Disk DescriptorFile\nparentFileNameHint=\"a.vmdk\"\n",
+        );
+
+        let path = dir.path().join("a.vmdk");
+        let err = VmdkReader::open(path.to_str().unwrap()).unwrap_err();
+        assert!(
+            matches!(err.kind, OpenErrorKind::ParentChainCycle(_)),
+            "got {err:?}"
         );
     }
 

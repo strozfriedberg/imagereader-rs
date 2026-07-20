@@ -34,6 +34,8 @@ pub enum OpenErrorKind {
     BadPath(String),
     #[error("Unsupported extent kind: {0}")]
     UnsupportedExtentKind(String),
+    #[error("Parent extent chain contains a cycle at {0}")]
+    ParentChainCycle(String),
     #[error("{0}")]
     Source(imagesource::OpenErrorKind),
 }
