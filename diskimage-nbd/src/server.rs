@@ -220,14 +220,27 @@ where
 /// Bind a Unix socket, removing any stale socket file first.
 #[cfg(unix)]
 pub fn bind_unix(path: &Path) -> io::Result<UnixListener> {
-    // Call remove_file unconditionally rather than checking exists() first:
-    // the exists()+remove_file sequence has a TOCTOU window, and remove_file
-    // returning NotFound is harmless (there was no stale file to clear).
-    if let Err(e) = std::fs::remove_file(path)
-        && e.kind() != io::ErrorKind::NotFound
-    {
-        return Err(e);
+    use std::os::unix::fs::FileTypeExt;
+
+    // Only remove a pre-existing path when it is actually a socket. Removing
+    // whatever happens to be there would let a typo like `--unix
+    // /data/image.raw` delete a real file. symlink_metadata does not follow
+    // symlinks, so a symlink is treated as "not a socket" and left alone.
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_socket() => std::fs::remove_file(path)?,
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} already exists and is not a socket; refusing to remove it",
+                    path.display()
+                ),
+            ));
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
     }
+
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -484,5 +497,46 @@ mod tests {
         client.flush().unwrap();
 
         server.join().unwrap().unwrap();
+    }
+
+    /// A typo pointing --unix at a real file must not delete it: bind_unix
+    /// refuses when the path exists and is not a socket.
+    #[test]
+    #[cfg(unix)]
+    fn bind_unix_refuses_to_clobber_a_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("image.raw");
+        std::fs::write(&path, b"precious data").unwrap();
+
+        let err = bind_unix(&path).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        // the file must still be intact
+        assert_eq!(std::fs::read(&path).unwrap(), b"precious data");
+    }
+
+    /// A stale socket left by a prior run is a socket, so it is removed and
+    /// rebinding succeeds.
+    #[test]
+    #[cfg(unix)]
+    fn bind_unix_replaces_a_stale_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nbd.sock");
+
+        let first = bind_unix(&path).unwrap();
+        drop(first); // leaves the socket file behind
+        assert!(std::fs::symlink_metadata(&path).is_ok());
+
+        // rebinding removes the stale socket and succeeds
+        let _second = bind_unix(&path).unwrap();
+    }
+
+    /// A fresh path with nothing at it binds cleanly.
+    #[test]
+    #[cfg(unix)]
+    fn bind_unix_binds_a_fresh_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fresh.sock");
+        let _listener = bind_unix(&path).unwrap();
+        assert!(std::fs::symlink_metadata(&path).is_ok());
     }
 }

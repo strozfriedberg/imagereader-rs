@@ -19,3 +19,6 @@ signal-hook = "0.3"
 time.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

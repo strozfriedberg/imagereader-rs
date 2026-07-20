@@ -1039,6 +1039,7 @@ dependencies = [
  "clap",
  "e01-rs",
  "signal-hook",
+ "tempfile",
  "time",
  "tracing",
  "tracing-subscriber",
