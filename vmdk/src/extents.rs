@@ -283,7 +283,14 @@ where
             offset: *offset,
             start_sector,
         }),
-        _ => todo!("TODO: {:?} support", ed.kind),
+        // VMFSRAW/VMFSRDM point at a raw device or RDM mapping we cannot read
+        // through here. ZERO is handled before we ever open a source, so it
+        // never reaches this function.
+        ExtentDescriptionInner::VmfsRaw { .. }
+        | ExtentDescriptionInner::VmfsRdm { .. }
+        | ExtentDescriptionInner::Zero => {
+            return Err(OpenErrorKind::UnsupportedExtentKind(format!("{:?}", ed.kind)).into());
+        }
     })
 }
 
@@ -303,7 +310,18 @@ pub fn read_extents(
     let mut start_sector = 0;
 
     for ed in eds {
-        let filename = ed.filename();
+        // A ZERO extent has no backing file: reads over its range return
+        // zeros. Build it directly, without opening a source or consuming a
+        // cache source index.
+        let Some(filename) = ed.filename() else {
+            extents.push(Extent {
+                sectors: ed.sectors,
+                start_sector,
+                storage: ExtentStorage::Zero,
+            });
+            start_sector += ed.sectors;
+            continue;
+        };
 
         let ed_url = image_url
             .join(filename)

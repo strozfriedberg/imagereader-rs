@@ -32,6 +32,8 @@ pub enum OpenErrorKind {
     InitializationFailed(#[from] InitError),
     #[error("Malformed path or URL: {0}")]
     BadPath(String),
+    #[error("Unsupported extent kind: {0}")]
+    UnsupportedExtentKind(String),
     #[error("{0}")]
     Source(imagesource::OpenErrorKind),
 }
