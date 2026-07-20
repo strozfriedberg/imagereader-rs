@@ -24,4 +24,11 @@ pub enum LibError {
     UnknownCompressionMethod(u16),
     #[error("Invalid segment file header")]
     InvalidSegmentFileHeader,
+    #[error("Corrupt chunk table: {0}")]
+    CorruptChunkTable(String),
+    #[error("Table section claims {0} entries, maximum is {MAX_TABLE_ENTRIES}")]
+    TooManyTableEntries(u32),
 }
+
+/// EWF caps table sections at 65534 entries; anything larger is corrupt.
+pub const MAX_TABLE_ENTRIES: u32 = 65534;

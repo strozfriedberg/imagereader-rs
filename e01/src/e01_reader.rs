@@ -133,6 +133,14 @@ pub enum ReadErrorKind {
     BadChecksum(usize, u32, u32),
     #[error("Decompression of chunk {0} failed: {1}")]
     DecompressionFailed(usize, #[source] std::io::Error),
+    #[error(
+        "Chunk {chunk} has corrupt bounds: data offset {data_offset}, end offset {end_offset}"
+    )]
+    BadChunkBounds {
+        chunk: usize,
+        data_offset: u64,
+        end_offset: u64,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -333,9 +341,10 @@ fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
         match (seg.volume, &volume) {
             // we have no volume section, and saw one
             (Some(sv), None) => {
-                // we can size the chunks vec now
+                // we can size the chunks vec now; chunk_count is untrusted
+                // image data, so cap the up-front reservation
                 let unread_chunks = (sv.chunk_count as usize).saturating_sub(chunks.len());
-                chunks.reserve_exact(unread_chunks);
+                chunks.reserve_exact(unread_chunks.min(1 << 20));
                 volume = Some(sv);
             }
             // we have a volume section, and didn't see a new one

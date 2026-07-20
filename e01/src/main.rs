@@ -90,7 +90,7 @@ fn display_progress(
 }
 
 fn run(args: Args) -> Result<ExitCode, E01Error> {
-    let mut e01_reader = E01Reader::open_glob(
+    let e01_reader = E01Reader::open_glob(
         &args.input,
         &E01ReaderOptions {
             corrupt_section_policy: CorruptSectionPolicy::Error,

@@ -1,4 +1,4 @@
-use crate::error::{IoError, LibError};
+use crate::error::{IoError, LibError, MAX_TABLE_ENTRIES};
 use crate::generated::{
     ewf_digest_section::EwfDigestSection, ewf_hash_section::EwfHashSection,
     ewf_section_descriptor_v1::EwfSectionDescriptorV1, ewf_table_header::EwfTableHeader,
@@ -161,7 +161,12 @@ pub fn read_table(
         )?;
     }
 
-    let entry_count = *table_section.entry_count() as usize;
+    let raw_entry_count = *table_section.entry_count();
+    if raw_entry_count > MAX_TABLE_ENTRIES {
+        return Err(LibError::TooManyTableEntries(raw_entry_count));
+    }
+
+    let entry_count = raw_entry_count as usize;
     if entry_count == 0 {
         // weird, but possible?
         return Ok(vec![]);
@@ -175,6 +180,17 @@ pub fn read_table(
 
     for i in 1..entry_count {
         let ch = read_table_entry(io, table_offset)?;
+        // each entry is the previous chunk's end; going backwards would give
+        // that chunk a negative length
+        if ch.data_offset < chunks[i - 1].data_offset {
+            return Err(LibError::CorruptChunkTable(format!(
+                "entry {} offset {} precedes entry {} offset {}",
+                i,
+                ch.data_offset,
+                i - 1,
+                chunks[i - 1].data_offset,
+            )));
+        }
         chunks[i - 1].end_offset = ch.data_offset;
         chunks.push(ch);
     }
@@ -307,5 +323,44 @@ impl Iterator for SectionIterator<'_> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// table header (24 bytes) followed by 4-byte offset entries
+    fn table_bytes(entry_count: u32, entries: &[u32]) -> Vec<u8> {
+        let mut b = vec![];
+        b.extend_from_slice(&entry_count.to_le_bytes());
+        b.extend_from_slice(&[0u8; 4]); // padding1
+        b.extend_from_slice(&0u64.to_le_bytes()); // table_base_offset
+        b.extend_from_slice(&[0u8; 4]); // padding2
+        b.extend_from_slice(&0u32.to_le_bytes()); // checksum
+        for e in entries {
+            b.extend_from_slice(&e.to_le_bytes());
+        }
+        b
+    }
+
+    /// Chunk data offsets must be monotonic — each entry is the previous
+    /// chunk's end. A table where they go backwards would give a chunk a
+    /// negative length downstream.
+    #[test]
+    fn non_monotonic_table_entries_are_an_error() {
+        let io = BytesReader::from(table_bytes(2, &[0x100, 0x80]));
+        let err = read_table(&io, 0, true).unwrap_err();
+        assert!(matches!(err, LibError::CorruptChunkTable(_)), "got {err:?}");
+    }
+
+    /// entry_count is a raw u32 from the image; EWF caps table entries at
+    /// 65534. An absurd count must be rejected before it drives a
+    /// multi-gigabyte allocation.
+    #[test]
+    fn huge_table_entry_count_is_rejected_before_allocation() {
+        let io = BytesReader::from(table_bytes(u32::MAX, &[]));
+        let err = read_table(&io, 0, true).unwrap_err();
+        assert!(matches!(err, LibError::TooManyTableEntries(_)), "got {err:?}");
     }
 }
