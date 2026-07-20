@@ -124,17 +124,25 @@ fn read_and_decompress_grain(
     let mut c = 0;
 
     loop {
-        let r = decoder.read(&mut buf[c..])?;
-        if r == 0 {
+        if c == buf.len() {
+            // The buffer is full. If the decoder still has output waiting, the
+            // grain decompresses to more than grain_size and is corrupt. (The
+            // old check sat after the `r == 0` break and never ran: reading
+            // into the now-empty `buf[c..]` returns Ok(0) first, silently
+            // truncating an over-long grain instead of reporting it.)
+            let mut overflow = [0u8; 1];
+            if decoder.read(&mut overflow)? != 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    CrazyGrainIndex(grain_index),
+                ));
+            }
             break;
         }
 
-        if c == buf.len() {
-            // The decompressed data is larger than the grain size!
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                CrazyGrainIndex(grain_index),
-            ));
+        let r = decoder.read(&mut buf[c..])?;
+        if r == 0 {
+            break;
         }
 
         c += r;
@@ -226,7 +234,52 @@ fn read_zero(buf: &mut [u8]) -> usize {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::io::Cursor;
+    use flate2::{Compression, write::DeflateEncoder};
+    use std::io::{Cursor, Write};
+
+    /// Build the on-disk bytes for one compressed grain: the 12-byte header
+    /// (lba + data_size), a valid 2-byte zlib header, then the raw deflate
+    /// stream of `payload`.
+    fn compressed_grain(payload: &[u8]) -> Vec<u8> {
+        let mut enc = DeflateEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(payload).unwrap();
+        let deflate = enc.finish().unwrap();
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u64.to_le_bytes()); // lba
+        bytes.extend_from_slice(&(deflate.len() as u32).to_le_bytes()); // data_size
+        bytes.extend_from_slice(&[0x78, 0x9c]); // zlib header; raw deflate follows
+        bytes.extend_from_slice(&deflate);
+        bytes
+    }
+
+    /// A grain that decompresses to more than grain_size is corrupt. The old
+    /// over-long check was unreachable, so such a grain was silently truncated;
+    /// it must now surface as an InvalidData error.
+    #[test]
+    fn over_long_grain_is_reported_not_truncated() {
+        let grain_size = 16;
+        // 64 bytes of highly compressible data: decompresses to 4x grain_size
+        // while the compressed data_size stays under the 2*grain_size gate.
+        let bytes = compressed_grain(&vec![0xABu8; 64]);
+        let mut file = Cursor::new(bytes);
+
+        let err = read_and_decompress_grain(&mut file, 0, grain_size).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    /// A grain that decompresses to exactly grain_size is valid and returned
+    /// intact.
+    #[test]
+    fn exact_size_grain_decompresses() {
+        let grain_size = 64;
+        let payload = vec![0xCDu8; grain_size as usize];
+        let bytes = compressed_grain(&payload);
+        let mut file = Cursor::new(bytes);
+
+        let out = read_and_decompress_grain(&mut file, 0, grain_size).unwrap();
+        assert_eq!(out, payload);
+    }
 
     fn sparse(grain_size: u64, grain_table: HashMap<u64, u64>) -> SparseStorage {
         SparseStorage {
