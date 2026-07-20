@@ -35,17 +35,26 @@ impl Extent {
     pub fn spans(&self) -> impl Iterator<Item = (u64, u64)> {
         match &self.storage {
             // Sparse storage is a collection of blocks of bytes.
-            // It need not cover the extent's whole space.
-            ExtentStorage::Sparse(storage) => storage
-                .grain_table
-                .keys()
-                .map(|goff| {
-                    // grain_size is in sectors
-                    let beg = self.start_sector + goff * storage.grain_size;
-                    let end = beg + storage.grain_size;
-                    (beg, end)
-                })
-                .collect::<Vec<_>>(),
+            // It need not cover the extent's whole space. The grain table
+            // comes from the sparse file's own header, which can describe
+            // grains past the descriptor-declared end of the extent; clamp
+            // so those never shadow the next extent's sectors.
+            ExtentStorage::Sparse(storage) => {
+                let extent_end = self.start_sector + self.sectors;
+                storage
+                    .grain_table
+                    .keys()
+                    .filter_map(|goff| {
+                        // grain_size is in sectors
+                        let beg = self.start_sector + goff * storage.grain_size;
+                        if beg >= extent_end {
+                            return None;
+                        }
+                        let end = (beg + storage.grain_size).min(extent_end);
+                        Some((beg, end))
+                    })
+                    .collect::<Vec<_>>()
+            }
             // Flat and Zero storage are each a single block of bytes.
             ExtentStorage::Flat(_) | ExtentStorage::Zero => {
                 vec![(self.start_sector, self.start_sector + self.sectors)]
@@ -341,4 +350,36 @@ pub fn read_extents(
 }
 
 #[cfg(test)]
-mod test {}
+mod test {
+    use super::*;
+    use crate::storage::SparseStorage;
+    use std::io::Cursor;
+
+    /// A sparse extent's own header (not the descriptor) determines which
+    /// grains exist, so a corrupt or grain-rounded header can describe grains
+    /// past the descriptor-declared end of the extent. Those spans must not
+    /// leak into the next extent's sector range.
+    #[test]
+    fn sparse_spans_are_clamped_to_the_extent_range() {
+        // extent covers sectors [100, 112); grain size is 8 sectors.
+        // grain 0 => [100, 108), grain 1 => [108, 116) overhangs the end,
+        // grain 2 => [116, 124) lies entirely past the end.
+        let extent = Extent {
+            start_sector: 100,
+            sectors: 12,
+            storage: ExtentStorage::Sparse(SparseStorage {
+                source: Box::new(Cursor::new(vec![0u8; 4096])),
+                filename: "crafted.vmdk".into(),
+                grain_table: HashMap::from([(0, 1), (1, 2), (2, 3)]),
+                grain_size: 8,
+                has_compressed_grain: false,
+                zeroed_grain_table_entry: false,
+                start_sector: 100,
+            }),
+        };
+
+        let mut spans: Vec<_> = extent.spans().collect();
+        spans.sort();
+        assert_eq!(spans, vec![(100, 108), (108, 112)]);
+    }
+}
