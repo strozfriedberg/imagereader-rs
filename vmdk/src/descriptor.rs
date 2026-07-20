@@ -17,10 +17,17 @@ where
     src.seek(SeekFrom::Start(offset * SECTOR_SIZE))?;
 
     let mut r = BufReader::new(src.take(20 * SECTOR_SIZE));
-    let len = r.read_until(0, &mut buf)?;
+    r.read_until(0, &mut buf)?;
 
-    // read_until includes the delimiter
-    Ok(String::from_utf8_lossy(&buf[..(len - 1)]).into())
+    // read_until includes the NUL delimiter when it finds one. Strip it only
+    // if it's actually there: an offset at or past EOF reads zero bytes (so
+    // `len - 1` would underflow), and a buffer that hit the 20-sector cap
+    // without a NUL must keep its last real byte.
+    if buf.last() == Some(&0) {
+        buf.pop();
+    }
+
+    Ok(String::from_utf8_lossy(&buf).into())
 }
 
 pub fn read_descriptor_file<R>(src: R) -> Result<String, OpenErrorKind>
@@ -76,6 +83,33 @@ pub fn extract_parent_fn_hint(descriptor: &str) -> Option<String> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::io::Cursor;
+
+    /// An offset at or past EOF reads zero bytes; the old `len - 1` underflowed
+    /// and panicked. It must return an empty descriptor instead.
+    #[test]
+    fn read_descriptor_internal_past_eof_is_empty_not_panic() {
+        let mut cur = Cursor::new(Vec::<u8>::new());
+        assert_eq!(read_descriptor_internal(&mut cur, 5).unwrap(), "");
+    }
+
+    /// When the descriptor data has no trailing NUL (e.g. it fills the sector
+    /// cap), the last real byte must be preserved, not dropped.
+    #[test]
+    fn read_descriptor_internal_keeps_last_byte_without_nul() {
+        let mut cur = Cursor::new(b"hello".to_vec());
+        assert_eq!(read_descriptor_internal(&mut cur, 0).unwrap(), "hello");
+    }
+
+    /// A NUL delimiter is still stripped, and bytes past it are ignored.
+    #[test]
+    fn read_descriptor_internal_strips_nul_delimiter() {
+        let mut data = b"abc".to_vec();
+        data.push(0);
+        data.extend_from_slice(b"trailing");
+        let mut cur = Cursor::new(data);
+        assert_eq!(read_descriptor_internal(&mut cur, 0).unwrap(), "abc");
+    }
 
     #[test]
     fn test_read_descriptor_file_ok() {
