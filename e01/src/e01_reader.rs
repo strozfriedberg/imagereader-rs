@@ -47,6 +47,8 @@ pub enum OpenError {
     TooManyChunks(usize, usize),
     #[error("Too few chunks found: actual {0}, expected {1}")]
     TooFewChunks(usize, usize),
+    #[error("Declared image size {image_size} exceeds chunk coverage {chunk_coverage}")]
+    DeclaredSizeExceedsChunks { image_size: u64, chunk_coverage: u64 },
     #[error("Error reading {path}: {source}")]
     IoError {
         path: String,
@@ -411,6 +413,26 @@ fn validate_volume(volume: &VolumeSection) -> Result<(), OpenError> {
         return Err(OpenError::InvalidVolumeGeometry {
             sectors_per_chunk: volume.sectors_per_chunk,
             bytes_per_sector: volume.bytes_per_sector,
+        });
+    }
+    Ok(())
+}
+
+/// The declared image size (`total_sector_count * bytes_per_sector`) and the
+/// chunk table are independent fields of the image. `read_at_offset` indexes
+/// `self.chunks` by `offset / chunk_size`, so a declared size larger than the
+/// chunks actually cover would let a read near the end index past the chunk
+/// array and panic. Reject that at open.
+fn validate_chunk_coverage(
+    image_size: u64,
+    chunk_count: usize,
+    chunk_size: usize,
+) -> Result<(), OpenError> {
+    let chunk_coverage = (chunk_count as u64).saturating_mul(chunk_size as u64);
+    if image_size > chunk_coverage {
+        return Err(OpenError::DeclaredSizeExceedsChunks {
+            image_size,
+            chunk_coverage,
         });
     }
     Ok(())
@@ -899,6 +921,8 @@ impl E01Reader {
         let sector_size = meta.volume.bytes_per_sector as usize;
         let image_size = meta.volume.max_offset() as u64;
 
+        validate_chunk_coverage(image_size, chunk_count, chunk_size)?;
+
         Ok(Self {
             segments: meta.segments,
             chunks: meta.chunks,
@@ -1047,6 +1071,28 @@ impl E01Reader {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// A declared size that fits within the chunks is fine; one larger than
+    /// the chunks cover would index past self.chunks on a read near the end,
+    /// so it must be rejected at open.
+    #[test]
+    fn chunk_coverage_rejects_oversized_declared_size() {
+        // 4 chunks * 32 KiB = 128 KiB of coverage.
+        let chunk_size = 32 * 1024;
+        let chunk_count = 4;
+        let coverage = (chunk_count * chunk_size) as u64;
+
+        // exactly covered, and one byte short, are both fine
+        assert!(validate_chunk_coverage(coverage, chunk_count, chunk_size).is_ok());
+        assert!(validate_chunk_coverage(coverage - 1, chunk_count, chunk_size).is_ok());
+
+        // one byte past the coverage indexes a non-existent chunk
+        let err = validate_chunk_coverage(coverage + 1, chunk_count, chunk_size).unwrap_err();
+        assert!(
+            matches!(err, OpenError::DeclaredSizeExceedsChunks { .. }),
+            "got {err:?}"
+        );
+    }
 
     #[test]
     fn repeated_partial_reads_match_single_read() {
