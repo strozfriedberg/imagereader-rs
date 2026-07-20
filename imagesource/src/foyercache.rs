@@ -190,7 +190,7 @@ fn make_fetch(
     }
 }
 
-fn short_read_error(idx: usize, off: u64, wanted: usize, got: u64) -> std::io::Error {
+pub(crate) fn short_read_error(idx: usize, off: u64, wanted: usize, got: u64) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::UnexpectedEof,
         format!("source {idx}: short read at offset {off}: filled {got} of {wanted} bytes"),
@@ -211,11 +211,13 @@ fn fill_from_block(
     let chbeg = (off - choff) as usize;
     let chend = chbeg + buf.len();
     if chend > ch.len() {
+        // `chbeg` can itself land past the block's tail if the block came back
+        // very short, so clamp with saturating_sub rather than underflowing.
         return Err(short_read_error(
             idx,
             off,
             buf.len(),
-            (ch.len() - chbeg) as u64,
+            ch.len().saturating_sub(chbeg) as u64,
         ));
     }
     buf.copy_from_slice(&ch[chbeg..chend]);
@@ -453,6 +455,17 @@ mod tests {
         std::fs::write(&path, &data).unwrap();
         let src = Box::new(FileSource::open(&path).unwrap());
         (dir, src)
+    }
+
+    /// A block that came back short enough that the requested offset lands past
+    /// its tail must yield an error, not underflow `ch.len() - chbeg`.
+    #[test]
+    fn fill_from_block_short_block_errors_without_underflow() {
+        let mut buf = [0u8; 16];
+        // block starts at choff=0 but is only 4 bytes; we want [8, 24).
+        let ch = [1u8, 2, 3, 4];
+        let err = fill_from_block(&mut buf, 8, 0, &ch, 0).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 
     #[test]
