@@ -360,11 +360,7 @@ impl VmdkReader {
     /// Takes `&self`: a reader can serve concurrent reads without a lock around
     /// it. Each read mints its own cursor over an extent, so no two threads
     /// share a file position.
-    pub fn read_at_offset(
-        &self,
-        mut offset: u64,
-        mut buf: &mut [u8],
-    ) -> Result<usize, ReadError> {
+    pub fn read_at_offset(&self, mut offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
         let beg = offset;
 
         // don't start reading past the end

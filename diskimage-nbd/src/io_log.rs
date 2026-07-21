@@ -255,7 +255,11 @@ mod tests {
             .filter(|l| l.contains(r#""kind":"summary""#))
             .collect();
         assert_eq!(summaries.len(), 2, "log: {content}");
-        assert!(summaries[0].contains(r#""nbd_reads":1"#), "{}", summaries[0]);
+        assert!(
+            summaries[0].contains(r#""nbd_reads":1"#),
+            "{}",
+            summaries[0]
+        );
         assert!(
             summaries[1].contains(r#""nbd_reads":0"#),
             "second session summary must start from zero: {}",

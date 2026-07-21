@@ -48,7 +48,10 @@ pub enum OpenError {
     #[error("Too few chunks found: actual {0}, expected {1}")]
     TooFewChunks(usize, usize),
     #[error("Declared image size {image_size} exceeds chunk coverage {chunk_coverage}")]
-    DeclaredSizeExceedsChunks { image_size: u64, chunk_coverage: u64 },
+    DeclaredSizeExceedsChunks {
+        image_size: u64,
+        chunk_coverage: u64,
+    },
     #[error("Error reading {path}: {source}")]
     IoError {
         path: String,
@@ -135,9 +138,7 @@ pub enum ReadErrorKind {
     BadChecksum(usize, u32, u32),
     #[error("Decompression of chunk {0} failed: {1}")]
     DecompressionFailed(usize, #[source] std::io::Error),
-    #[error(
-        "Chunk {chunk} has corrupt bounds: data offset {data_offset}, end offset {end_offset}"
-    )]
+    #[error("Chunk {chunk} has corrupt bounds: data offset {data_offset}, end offset {end_offset}")]
     BadChunkBounds {
         chunk: usize,
         data_offset: u64,
@@ -696,7 +697,14 @@ fn run_chunk_task(task: ChunkTask<'_>) -> Result<(), ReadError> {
             end_in_chunk,
             &cache,
         ),
-        None => worker.read(chunk, &mut src, chunk_index, sbuf, beg_in_chunk, end_in_chunk),
+        None => worker.read(
+            chunk,
+            &mut src,
+            chunk_index,
+            sbuf,
+            beg_in_chunk,
+            end_in_chunk,
+        ),
     }
     .map_err(ReadError::from)
     .map_err(|e| e.with_path(seg_path))
@@ -952,11 +960,7 @@ impl E01Reader {
 
     /// Takes `&self`: a reader can serve concurrent reads without a lock around
     /// it. See `worker_pool` for what used to require `&mut`.
-    pub fn read_at_offset(
-        &self,
-        mut offset: u64,
-        mut buf: &mut [u8],
-    ) -> Result<usize, ReadError> {
+    pub fn read_at_offset(&self, mut offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
         let timer = self.io_log.as_ref().map(|_| ReadTimer::start());
         let read_offset = offset;
         // don't start reading past the end
@@ -1176,7 +1180,9 @@ mod test {
     #[test]
     fn concurrent_reads_through_one_reader_agree_with_serial_reads() {
         let options = E01ReaderOptions::default();
-        let reader = Arc::new(E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap());
+        let reader = Arc::new(
+            E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap(),
+        );
 
         let offsets: Vec<u64> = (0..16).map(|i| i * 4096).collect();
 
@@ -1207,7 +1213,11 @@ mod test {
 
         for (i, h) in handles.into_iter().enumerate() {
             let got = h.join().expect("reader thread panicked");
-            assert_eq!(got, expected[i], "concurrent read at {} differed", offsets[i]);
+            assert_eq!(
+                got, expected[i],
+                "concurrent read at {} differed",
+                offsets[i]
+            );
         }
     }
 

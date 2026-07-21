@@ -5,18 +5,18 @@ use clap::Parser;
 use diskimage_nbd::{
     CommonArgs, NbdImage, init_tracing, make_cache_phase, run_serve, server::open_io_log,
 };
+use e01::IoLog as E01IoLog;
 use e01::e01_reader::{
     CacheMode as E01CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, E01Reader,
     E01ReaderOptions,
 };
-use e01::IoLog as E01IoLog;
 use std::{
     io,
     path::{Path, PathBuf},
     process::ExitCode,
 };
-use vmdkrs::vmdk_reader::{CacheMode as VmdkCacheMode, VmdkReader, VmdkReaderOptions};
 use vmdkrs::IoLog as VmdkIoLog;
+use vmdkrs::vmdk_reader::{CacheMode as VmdkCacheMode, VmdkReader, VmdkReaderOptions};
 
 /// Long `--version` output: crate version plus the commit it was built from.
 /// `GIT_COMMIT` is set by build.rs. `-V` still shows the plain crate version.

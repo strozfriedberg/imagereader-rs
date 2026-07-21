@@ -366,7 +366,10 @@ mod tests {
     fn huge_table_entry_count_is_rejected_before_allocation() {
         let io = BytesReader::from(table_bytes(u32::MAX, &[]));
         let err = read_table(&io, 0, true).unwrap_err();
-        assert!(matches!(err, LibError::TooManyTableEntries(_)), "got {err:?}");
+        assert!(
+            matches!(err, LibError::TooManyTableEntries(_)),
+            "got {err:?}"
+        );
     }
 
     /// A section descriptor v1 record: 16-byte type, u64 next_offset, u64

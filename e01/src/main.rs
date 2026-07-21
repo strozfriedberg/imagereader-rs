@@ -49,7 +49,6 @@ struct Args {
     /// measured at +55% throughput for a workload re-reading each chunk ~10x.
     #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
     decoded_chunk_cache: bool,
-
 }
 
 fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(

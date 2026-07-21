@@ -440,7 +440,8 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             let c4 = UnixStream::connect(&sock).unwrap();
-            c4.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+            c4.set_read_timeout(Some(Duration::from_millis(500)))
+                .unwrap();
             let mut magic = [0u8; 8];
             if (&c4).read_exact(&mut magic).is_ok() {
                 assert_eq!(&magic, b"NBDMAGIC");
@@ -481,7 +482,9 @@ mod tests {
         client.read_exact(&mut ihaveopt).unwrap();
         let _hs_flags = client.read_u16::<BigEndian>().unwrap();
         client.write_u32::<BigEndian>(0b11).unwrap(); // FIXED_NEWSTYLE | NO_ZEROES
-        client.write_u64::<BigEndian>(0x4948_4156_454F_5054).unwrap();
+        client
+            .write_u64::<BigEndian>(0x4948_4156_454F_5054)
+            .unwrap();
         client.write_u32::<BigEndian>(1).unwrap(); // NBD_OPT_EXPORT_NAME
         client.write_u32::<BigEndian>(0).unwrap();
         assert_eq!(client.read_u64::<BigEndian>().unwrap(), 4096);

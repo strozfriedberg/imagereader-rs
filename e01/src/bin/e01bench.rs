@@ -97,7 +97,6 @@ struct Args {
     /// if chunks are re-read; a sequential scan never re-reads one.
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     decoded_chunk_cache: bool,
-
 }
 
 fn offsets(args: &Args, image_size: u64) -> Vec<u64> {
@@ -289,10 +288,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mean = total / latencies.len().max(1) as u32;
 
     println!();
-    println!(
-        "wall       : {:.2}s",
-        elapsed.as_secs_f64()
-    );
+    println!("wall       : {:.2}s", elapsed.as_secs_f64());
     println!(
         "throughput : {:.1} MiB/s ({:.0} reads/s)",
         bytes as f64 / (1024.0 * 1024.0) / elapsed.as_secs_f64(),
@@ -301,7 +297,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("latency    : mean {:>9.1?}", mean);
     println!("             p50  {:>9.1?}", percentile(&latencies, 0.50));
     println!("             p99  {:>9.1?}", percentile(&latencies, 0.99));
-    println!("             max  {:>9.1?}", latencies.last().copied().unwrap_or_default());
+    println!(
+        "             max  {:>9.1?}",
+        latencies.last().copied().unwrap_or_default()
+    );
     println!();
     println!("(run under `time` for user/sys -- that is where the block_on churn shows up)");
 

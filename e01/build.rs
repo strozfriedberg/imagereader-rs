@@ -25,7 +25,11 @@ fn git(args: &[&str]) -> Option<String> {
     let out = Command::new("git").args(args).output().ok()?;
     out.status
         .success()
-        .then(|| str::from_utf8(&out.stdout).ok().map(|s| s.trim().to_string()))
+        .then(|| {
+            str::from_utf8(&out.stdout)
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
         .flatten()
         .filter(|s| !s.is_empty())
 }
@@ -49,7 +53,11 @@ fn emit_git_commit() {
             let short = git(&["rev-parse", "--short", "HEAD"])?;
             let dirty = git(&["status", "--porcelain", "--untracked-files=no"])
                 .is_some_and(|s| !s.is_empty());
-            Some(if dirty { format!("{short}-dirty") } else { short })
+            Some(if dirty {
+                format!("{short}-dirty")
+            } else {
+                short
+            })
         })
         .unwrap_or_else(|| "unknown".to_string());
 

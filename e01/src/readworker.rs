@@ -543,7 +543,10 @@ mod tests {
         let err = worker
             .read(&chunk, &mut src, 0, &mut out, 0, 512)
             .unwrap_err();
-        assert!(matches!(err, ReadErrorKind::BadChunkBounds { .. }), "got {err:?}");
+        assert!(
+            matches!(err, ReadErrorKind::BadChunkBounds { .. }),
+            "got {err:?}"
+        );
     }
 
     /// A chunk longer than chunk_size + 4 cannot be valid (the payload is at
@@ -569,6 +572,9 @@ mod tests {
         let err = worker
             .read_cached(&chunk, &mut src, 0, &mut out, 0, 512, &cache)
             .unwrap_err();
-        assert!(matches!(err, ReadErrorKind::BadChunkBounds { .. }), "got {err:?}");
+        assert!(
+            matches!(err, ReadErrorKind::BadChunkBounds { .. }),
+            "got {err:?}"
+        );
     }
 }

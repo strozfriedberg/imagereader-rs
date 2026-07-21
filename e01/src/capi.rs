@@ -441,16 +441,25 @@ mod test {
             chunk: c_int,
         }
 
-        let bad = RawOpts { section: 99, chunk: 0 };
+        let bad = RawOpts {
+            section: 99,
+            chunk: 0,
+        };
         let err = unsafe { rust_options((&bad as *const RawOpts).cast()) }.unwrap_err();
         assert!(err.contains("corrupt_section_policy"), "got {err}");
 
-        let bad = RawOpts { section: 0, chunk: 7 };
+        let bad = RawOpts {
+            section: 0,
+            chunk: 7,
+        };
         let err = unsafe { rust_options((&bad as *const RawOpts).cast()) }.unwrap_err();
         assert!(err.contains("corrupt_chunk_policy"), "got {err}");
 
         // valid discriminants still map through
-        let good = RawOpts { section: 1, chunk: 2 };
+        let good = RawOpts {
+            section: 1,
+            chunk: 2,
+        };
         let opts = unsafe { rust_options((&good as *const RawOpts).cast()) }.unwrap();
         assert!(matches!(
             opts.corrupt_section_policy,

@@ -48,8 +48,8 @@ fn read_exact_at(file: &std::fs::File, buf: &mut [u8], offset: u64) -> Result<()
 /// short, so fill the buffer the way the unix version does.
 #[cfg(windows)]
 fn read_exact_at(file: &std::fs::File, mut buf: &mut [u8], mut offset: u64) -> Result<(), Error> {
-    use std::os::windows::fs::FileExt;
     use std::io::ErrorKind;
+    use std::os::windows::fs::FileExt;
 
     while !buf.is_empty() {
         match file.seek_read(buf, offset) {

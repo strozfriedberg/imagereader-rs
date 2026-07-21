@@ -598,7 +598,17 @@ mod tests {
 
         let mut out = Vec::new();
         let mut buf = vec![0u8; 1024];
-        serve_read(&mut out, &mut FailImage, 4096, 0, 512, 7, &mut buf, Some(&log)).unwrap();
+        serve_read(
+            &mut out,
+            &mut FailImage,
+            4096,
+            0,
+            512,
+            7,
+            &mut buf,
+            Some(&log),
+        )
+        .unwrap();
         log.log_summary(); // flushes
 
         let content = std::fs::read_to_string(&path).unwrap();
