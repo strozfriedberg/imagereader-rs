@@ -610,6 +610,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "buildinfo"
+version = "0.1.0"
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1035,6 +1039,7 @@ dependencies = [
 name = "diskimage-nbd"
 version = "0.1.0"
 dependencies = [
+ "buildinfo",
  "byteorder",
  "clap",
  "e01-rs",
@@ -1077,6 +1082,7 @@ name = "e01-rs"
 version = "0.1.1"
 dependencies = [
  "adler32",
+ "buildinfo",
  "byteorder",
  "bytesize",
  "clap",

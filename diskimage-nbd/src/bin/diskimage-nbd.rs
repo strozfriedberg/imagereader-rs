@@ -18,15 +18,12 @@ use std::{
 use vmdkrs::IoLog as VmdkIoLog;
 use vmdkrs::vmdk_reader::{CacheMode as VmdkCacheMode, VmdkReader, VmdkReaderOptions};
 
-/// Long `--version` output: crate version plus the commit it was built from.
-/// `GIT_COMMIT` is set by build.rs. `-V` still shows the plain crate version.
-const LONG_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_COMMIT"), ")");
-
 #[derive(Parser)]
+// long_version (shown by `--version`) adds the build commit; `-V` stays plain.
 #[command(
     author,
     version,
-    long_version = LONG_VERSION,
+    long_version = buildinfo::long_version!(),
     about = "Serve an E01 or VMDK image over NBD",
     long_about = None
 )]

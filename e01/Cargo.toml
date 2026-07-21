@@ -24,8 +24,12 @@ path = "src/bin/e01bench.rs"
 [features]
 capi = []
 
+[build-dependencies]
+buildinfo.workspace = true
+
 [dependencies]
 imagesource.workspace = true
+buildinfo.workspace = true
 adler32 = "1.2"
 byteorder = "1.5"
 bytesize = "2.3.1"

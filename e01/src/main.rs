@@ -12,12 +12,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Long `--version` output: crate version plus the commit it was built from.
-/// `GIT_COMMIT` is set by build.rs. `-V` still shows the plain crate version.
-const LONG_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_COMMIT"), ")");
-
 #[derive(Parser)]
-#[command(author, version, long_version = LONG_VERSION, about, long_about)]
+// long_version (shown by `--version`) adds the build commit; `-V` stays plain.
+#[command(author, version, long_version = buildinfo::long_version!(), about, long_about)]
 struct Args {
     /// Path to input file.
     input: String,

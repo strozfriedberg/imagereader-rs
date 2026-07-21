@@ -10,7 +10,11 @@ autobins = false
 name = "diskimage-nbd"
 path = "src/bin/diskimage-nbd.rs"
 
+[build-dependencies]
+buildinfo.workspace = true
+
 [dependencies]
+buildinfo.workspace = true
 e01-rs = { path = "../e01" }
 vmdk-rs = { path = "../vmdk" }
 byteorder = "1.5"

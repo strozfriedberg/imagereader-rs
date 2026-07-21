@@ -1,9 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["imagesource", "vmdk", "e01", "rawdisk", "diskimage-nbd"]
+members = ["buildinfo", "imagesource", "vmdk", "e01", "rawdisk", "diskimage-nbd"]
 
 [workspace.dependencies]
 imagesource = { path = "imagesource" }
+buildinfo = { path = "buildinfo" }
 async-trait = "0.1.89"
 foyer = { version = "0.22", features = ["serde"] }
 foyer-common = "0.22"
