@@ -18,8 +18,18 @@ use std::{
 use vmdkrs::vmdk_reader::{CacheMode as VmdkCacheMode, VmdkReader, VmdkReaderOptions};
 use vmdkrs::IoLog as VmdkIoLog;
 
+/// Long `--version` output: crate version plus the commit it was built from.
+/// `GIT_COMMIT` is set by build.rs. `-V` still shows the plain crate version.
+const LONG_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_COMMIT"), ")");
+
 #[derive(Parser)]
-#[command(author, version, about = "Serve an E01 or VMDK image over NBD", long_about = None)]
+#[command(
+    author,
+    version,
+    long_version = LONG_VERSION,
+    about = "Serve an E01 or VMDK image over NBD",
+    long_about = None
+)]
 struct Args {
     /// Path to an E01 segment or VMDK descriptor/image (local path, glob, or s3:// URL).
     /// Format is chosen by extension: .e01 -> E01, .vmdk -> VMDK.
