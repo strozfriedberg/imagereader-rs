@@ -107,6 +107,9 @@ impl RawdiskReader {
         let c = match opts.cache_mode.clone() {
             CacheMode::SingleMemory => runtime.block_on(FoyerCache::single_memory(
                 cache_chunk_size,
+                // No fetch coalescing here: it pays only against a high-latency
+                // store, and e01 is the one served from S3 today.
+                cache_chunk_size,
                 opts.cache_mem_mib,
                 opts.foyer_readahead,
                 opts.s3_concurrency,
@@ -118,6 +121,7 @@ impl RawdiskReader {
                 metadata_disk_mib,
                 regular_phase,
             } => runtime.block_on(FoyerCache::dual_hybrid(
+                cache_chunk_size,
                 cache_chunk_size,
                 opts.cache_mem_mib,
                 content_disk_mib,

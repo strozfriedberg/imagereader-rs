@@ -491,6 +491,19 @@ pub const DEFAULT_CACHE_MEM_MIB: usize = 1024;
 /// Against a local file, a larger block is wasted bandwidth on scattered reads.
 pub const DEFAULT_CACHE_BLOCK_SIZE: usize = 1024 * 1024;
 
+/// Default bytes pulled from the backing store per cache miss.
+///
+/// Distinct from the block size on purpose. Fetching wants to be big -- an S3
+/// range GET is almost pure fixed latency, so the runtime tracks round trips, not
+/// bytes. Caching wants to stay small -- on a large image the metadata working
+/// set already fills the cache, and a coarse block evicts useful blocks to hold
+/// bytes nobody asked for. When this exceeds the block size, one GET fills
+/// several blocks, and the unused ones are separate entries an LRU drops first.
+///
+/// Equal to the block size by default: coalescing pays only against a
+/// high-latency store, and against a local file it is wasted bandwidth.
+pub const DEFAULT_CACHE_FETCH_SIZE: usize = DEFAULT_CACHE_BLOCK_SIZE;
+
 #[derive(Debug, Clone)]
 pub struct E01ReaderOptions {
     pub corrupt_section_policy: CorruptSectionPolicy,
@@ -502,8 +515,11 @@ pub struct E01ReaderOptions {
     /// Foyer in-memory cache capacity in MiB (see [`DEFAULT_CACHE_MEM_MIB`]).
     /// Divided by the block size to get foyer's entry count.
     pub cache_mem_mib: usize,
-    /// Bytes fetched from the backing store per miss (see [`DEFAULT_CACHE_BLOCK_SIZE`]).
+    /// Cache/eviction granularity, in bytes (see [`DEFAULT_CACHE_BLOCK_SIZE`]).
     pub cache_block_size: usize,
+    /// Bytes read from the backing store per miss (see [`DEFAULT_CACHE_FETCH_SIZE`]).
+    /// When larger than `cache_block_size`, one fetch fills several blocks.
+    pub cache_fetch_size: usize,
     /// Cache structure for this session (single vs dedicated-metadata).
     pub cache_mode: CacheMode,
     /// Base directory for foyer's on-disk cache (created as a random subdir
@@ -554,6 +570,7 @@ impl Default for E01ReaderOptions {
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
             cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
+            cache_fetch_size: DEFAULT_CACHE_FETCH_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
@@ -867,6 +884,7 @@ impl E01Reader {
         }
 
         let cache_chunk_size = options.cache_block_size.max(1);
+        let cache_fetch_size = options.cache_fetch_size.max(cache_chunk_size);
         let cache_mem_size = options.cache_mem_mib;
         let foyer_readahead = options.foyer_readahead;
         let s3_concurrency = options.s3_concurrency;
@@ -874,6 +892,7 @@ impl E01Reader {
             CacheMode::SingleMemory => runtime
                 .block_on(FoyerCache::single_memory(
                     cache_chunk_size,
+                    cache_fetch_size,
                     cache_mem_size,
                     foyer_readahead,
                     s3_concurrency,
@@ -888,6 +907,7 @@ impl E01Reader {
             } => runtime
                 .block_on(FoyerCache::dual_hybrid(
                     cache_chunk_size,
+                    cache_fetch_size,
                     cache_mem_size,
                     content_disk_mib,
                     metadata_mem_mib,
@@ -1124,6 +1144,7 @@ mod test {
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
             cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
+            cache_fetch_size: DEFAULT_CACHE_FETCH_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
@@ -1160,6 +1181,7 @@ mod test {
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
             cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
+            cache_fetch_size: DEFAULT_CACHE_FETCH_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,

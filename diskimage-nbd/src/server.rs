@@ -101,22 +101,33 @@ pub struct CommonArgs {
     #[arg(long)]
     pub cache_dir: Option<PathBuf>,
 
-    /// Bytes fetched from the backing store per cache miss (e01 and VMDK).
+    /// Cache block size in bytes: the granularity blocks are stored and
+    /// evicted at (e01 and VMDK).
     ///
-    /// This is the unit of *fetch*, not of decompression, and against a
-    /// high-latency store it is the most important knob here. A range GET costs
-    /// almost entirely fixed latency: measured against S3, 1 MiB took 221 ms and
-    /// 16 MiB took 153 ms. The bytes are nearly free; the round trips are not.
-    /// So the runtime tracks the *number* of GETs, and a bigger block means
-    /// fewer of them -- an NTFS metadata walk that needed 1,192 fetches at 1 MiB
-    /// needs 447 at 8 MiB, with each one no slower.
-    ///
-    /// Larger is not always better: against a local file the bytes are not free,
-    /// and a big block is wasted bandwidth on scattered reads. Default stays at
-    /// 1 MiB. Memory cache capacity is in MiB and is divided by this, so raising
-    /// it does not inflate the cache's footprint.
+    /// Small blocks let the cache keep exactly what is hot -- a scattered
+    /// 200 KB index read should not pin megabytes of junk in a cache under
+    /// pressure. This is not the knob that sets S3 round trips; that is
+    /// --cache-fetch-size. Memory capacity is a byte budget divided by this,
+    /// so it does not change the cache's footprint.
     #[arg(long, default_value = "1048576")]
     pub cache_chunk_size: usize,
+
+    /// Bytes pulled from the backing store per cache miss (e01 only).
+    /// Defaults to --cache-chunk-size.
+    ///
+    /// Against a high-latency store this is the most important knob here. A
+    /// range GET costs almost entirely fixed latency: measured against S3,
+    /// 1 MiB took 221 ms and 16 MiB took 153 ms. The bytes are nearly free;
+    /// the round trips are not. An NTFS metadata walk that needed 1,192
+    /// fetches at 1 MiB needs 447 at 8 MiB, with each one no slower.
+    ///
+    /// When larger than --cache-chunk-size, one GET fills several cache
+    /// blocks: the demanded block plus its aligned siblings, each a separate
+    /// cache entry, so eviction stays fine-grained and untouched siblings are
+    /// dropped first. Against a local file leave it unset: the bytes are not
+    /// free there, and a big fetch is wasted bandwidth on scattered reads.
+    #[arg(long)]
+    pub cache_fetch_size: Option<usize>,
 
     /// Append JSONL per-read cache-hit/miss trace (foyer tier, and e01's
     /// secondary decoded-chunk cache where applicable). Separate from
@@ -187,6 +198,15 @@ pub fn log_cache_opts(args: &CommonArgs) {
             "foyer readahead: prefetch up to {} MiB ({} x 1 MiB blocks) after each read",
             args.readahead,
             args.readahead
+        );
+    }
+    if let Some(fetch) = args.cache_fetch_size
+        && fetch > args.cache_chunk_size
+    {
+        tracing::info!(
+            "fetch coalescing: {} bytes per backing-store GET, cached as {}-byte blocks",
+            fetch,
+            args.cache_chunk_size
         );
     }
 }

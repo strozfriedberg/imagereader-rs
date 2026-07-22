@@ -120,6 +120,7 @@ fn open_e01(
     cache_mode: E01CacheMode,
     cache_dir: Option<PathBuf>,
     cache_block_size: usize,
+    cache_fetch_size: usize,
     cache_trace_log: Option<&Path>,
 ) -> Result<Adapter, Box<dyn std::error::Error>> {
     let io_log = cache_trace_log.map(E01IoLog::open).transpose()?;
@@ -136,6 +137,7 @@ fn open_e01(
             s3_concurrency,
             cache_mem_mib,
             cache_block_size,
+            cache_fetch_size,
             cache_mode,
             cache_dir,
             // --io-log captures only NBD-level reads via diskimage-nbd's IoLog;
@@ -197,6 +199,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         common.cache_mem_mib,
         common.cache_chunk_size,
     );
+    let cache_fetch_size = common.cache_fetch_size.unwrap_or(cache_chunk_size);
     let cache_dir = common.cache_dir.clone();
     let cache_trace_log = common.cache_trace_log.clone();
     let path = image_path.clone();
@@ -225,6 +228,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                         cache_mode,
                         cache_dir,
                         cache_chunk_size,
+                        cache_fetch_size,
                         cache_trace_log.as_deref(),
                     )
                 },
@@ -232,6 +236,9 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             )
         }
         Format::Vmdk => {
+            if cache_fetch_size != cache_chunk_size {
+                tracing::warn!("--cache-fetch-size only applies to e01 images; ignored for VMDK");
+            }
             let cache_mode = if common.metadata_cache {
                 VmdkCacheMode::DualHybrid {
                     content_disk_mib: common.content_cache_disk_mib,

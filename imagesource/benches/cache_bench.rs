@@ -37,7 +37,7 @@ fn single_threaded_throughput(c: &mut Criterion) {
     const NUM_WARM_BLOCKS: u64 = 32;
 
     let cache = RT.block_on(async {
-        let cache = FoyerCache::single_memory(CHUNK_LEN, 64, 0, 1, None)
+        let cache = FoyerCache::single_memory(CHUNK_LEN, CHUNK_LEN, 64, 0, 1, None)
             .await
             .unwrap();
         cache.add_source(
@@ -99,9 +99,10 @@ fn concurrent_read_scaling(c: &mut Criterion) {
             &concurrency,
             |b, &concurrency| {
                 let cache = RT.block_on(async {
-                    let cache = FoyerCache::single_memory(CHUNK_LEN, 64, 0, concurrency, None)
-                        .await
-                        .unwrap();
+                    let cache =
+                        FoyerCache::single_memory(CHUNK_LEN, CHUNK_LEN, 64, 0, concurrency, None)
+                            .await
+                            .unwrap();
                     cache.add_source(
                         0,
                         Box::new(SyntheticSource {

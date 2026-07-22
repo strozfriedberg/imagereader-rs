@@ -124,6 +124,8 @@ unsafe fn rust_options(
         foyer_readahead: 0,
         s3_concurrency: e01_reader::DEFAULT_S3_CONCURRENCY,
         cache_mem_mib: e01_reader::DEFAULT_CACHE_MEM_MIB,
+        cache_block_size: e01_reader::DEFAULT_CACHE_BLOCK_SIZE,
+        cache_fetch_size: e01_reader::DEFAULT_CACHE_FETCH_SIZE,
         cache_mode: e01_reader::CacheMode::default(),
         cache_dir: None,
         io_log: None,
