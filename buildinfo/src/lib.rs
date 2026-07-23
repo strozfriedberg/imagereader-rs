@@ -13,7 +13,11 @@ fn git(args: &[&str]) -> Option<String> {
     let out = Command::new("git").args(args).output().ok()?;
     out.status
         .success()
-        .then(|| str::from_utf8(&out.stdout).ok().map(|s| s.trim().to_string()))
+        .then(|| {
+            str::from_utf8(&out.stdout)
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
         .flatten()
         .filter(|s| !s.is_empty())
 }
@@ -31,6 +35,18 @@ pub fn emit_git_commit() {
     if let Some(head) = git(&["rev-parse", "--git-path", "HEAD"]) {
         println!("cargo:rerun-if-changed={head}");
     }
+    // .git/HEAD is normally a symref ("ref: refs/heads/<branch>"); committing on
+    // a branch updates the *ref* file, not HEAD itself, so watching only HEAD
+    // leaves GIT_COMMIT frozen across commits on the same branch. Also watch the
+    // resolved ref file and packed-refs so a new commit actually reruns this.
+    if let Some(ref_path) =
+        git(&["symbolic-ref", "-q", "HEAD"]).and_then(|r| git(&["rev-parse", "--git-path", &r]))
+    {
+        println!("cargo:rerun-if-changed={ref_path}");
+    }
+    if let Some(packed) = git(&["rev-parse", "--git-path", "packed-refs"]) {
+        println!("cargo:rerun-if-changed={packed}");
+    }
 
     let commit = env::var("GIT_COMMIT")
         .ok()
@@ -39,7 +55,11 @@ pub fn emit_git_commit() {
             let short = git(&["rev-parse", "--short", "HEAD"])?;
             let dirty = git(&["status", "--porcelain", "--untracked-files=no"])
                 .is_some_and(|s| !s.is_empty());
-            Some(if dirty { format!("{short}-dirty") } else { short })
+            Some(if dirty {
+                format!("{short}-dirty")
+            } else {
+                short
+            })
         })
         .unwrap_or_else(|| "unknown".to_string());
 
