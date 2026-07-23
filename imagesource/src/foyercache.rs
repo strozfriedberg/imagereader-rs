@@ -369,6 +369,22 @@ async fn route_block(
                 .await
                 .map_err(foyer_to_io_error);
         }
+        // Metadata phase. The demanded block is metadata and goes to the
+        // protected tier; the rest of the fetch group is speculation and goes to
+        // the content tier, where ordinary eviction can reclaim it. Without this
+        // split the metadata tier's footprint is the union of aligned fetch
+        // groups, so raising --cache-fetch-size to cut S3 round trips inflates
+        // the very cache the warming pass exists to produce.
+        if let Some(entry) = md_cache.get(&key).await.map_err(std::io::Error::other)? {
+            return Ok(entry);
+        }
+        // A sibling that is now demanded is part of the working set after all.
+        // Promote it, or the warming pass ends with metadata sitting in an
+        // evictable tier and the post-flip reads go back to S3.
+        if let Some(entry) = content.get(&key).await.map_err(std::io::Error::other)? {
+            md_cache.insert(key, entry.value().clone());
+            return Ok(entry);
+        }
         let fetch = make_fetch(
             chlen,
             fetch_size,
@@ -379,7 +395,7 @@ async fn route_block(
             fetch_limit,
             permit,
             trace,
-            md_cache.clone(),
+            content.clone(),
         );
         return md_cache
             .get_or_fetch(&key, fetch)
@@ -1254,5 +1270,93 @@ mod tests {
         let mut buf = vec![0u8; CHUNK * 2];
         let err = cache.read(0, 0, &mut buf, &mut t).await.unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    /// The whole point of a fetch size larger than the block size, in the phase
+    /// the metadata cache is being built: one GET fills many blocks, but only the
+    /// block the filesystem actually asked for is metadata. The rest are
+    /// speculation and belong in the content tier, where ordinary eviction can
+    /// reclaim them -- otherwise the protected cache's footprint is the union of
+    /// fetch groups and raising the fetch size inflates it in proportion.
+    #[tokio::test]
+    async fn metadata_phase_keeps_over_reads_out_of_the_metadata_tier() {
+        const CHUNK: usize = 64 * 1024;
+        const CHUNK64: u64 = CHUNK as u64;
+        const FETCH: usize = 4 * CHUNK;
+
+        let reads = Arc::new(AtomicUsize::new(0));
+        let regular = Arc::new(AtomicBool::new(false));
+        let cache =
+            FoyerCache::dual_hybrid(CHUNK, FETCH, 64, 0, 64, 0, 0, 4, regular.clone(), None)
+                .await
+                .unwrap();
+        cache.add_source(
+            0,
+            Box::new(CountingSource {
+                reads: reads.clone(),
+                len: 1024 * 1024,
+            }),
+        );
+
+        // Demand block 0. One GET covers blocks 0..3.
+        let mut buf = vec![0u8; 4096];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+        assert_eq!(reads.load(Ordering::Relaxed), 1, "one fetch for the group");
+
+        let md = &cache.metadata.as_ref().unwrap().cache;
+        assert!(md.contains(&(0, 0)), "the demanded block is metadata");
+        for sibling in 1..4u64 {
+            let key = (0, sibling * CHUNK64);
+            assert!(
+                !md.contains(&key),
+                "sibling block {sibling} must not enter the metadata tier"
+            );
+            assert!(
+                cache.content.contains(&key),
+                "sibling block {sibling} belongs in the content tier"
+            );
+        }
+    }
+
+    /// A sibling that is later demanded must be served from the content tier
+    /// without a second GET, and must then be promoted into the metadata tier --
+    /// it is part of the filesystem's working set, so leaving it in an evictable
+    /// tier would mean the warming pass did not actually capture it.
+    #[tokio::test]
+    async fn metadata_phase_promotes_a_demanded_sibling_without_refetching() {
+        const CHUNK: usize = 64 * 1024;
+        const CHUNK64: u64 = CHUNK as u64;
+        const FETCH: usize = 4 * CHUNK;
+
+        let reads = Arc::new(AtomicUsize::new(0));
+        let regular = Arc::new(AtomicBool::new(false));
+        let cache =
+            FoyerCache::dual_hybrid(CHUNK, FETCH, 64, 0, 64, 0, 0, 4, regular.clone(), None)
+                .await
+                .unwrap();
+        cache.add_source(
+            0,
+            Box::new(CountingSource {
+                reads: reads.clone(),
+                len: 1024 * 1024,
+            }),
+        );
+
+        let mut buf = vec![0u8; 4096];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+        cache.read(0, CHUNK64, &mut buf, &mut t).await.unwrap();
+
+        assert_eq!(
+            reads.load(Ordering::Relaxed),
+            1,
+            "the sibling was already in the content tier; no second GET"
+        );
+        let md = &cache.metadata.as_ref().unwrap().cache;
+        assert!(
+            md.contains(&(0, CHUNK64)),
+            "a demanded sibling is promoted into the metadata tier"
+        );
     }
 }
