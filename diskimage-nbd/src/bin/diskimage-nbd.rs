@@ -14,6 +14,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::Arc,
 };
 use vmdkrs::IoLog as VmdkIoLog;
 use vmdkrs::vmdk_reader::{CacheMode as VmdkCacheMode, VmdkReader, VmdkReaderOptions};
@@ -121,9 +122,8 @@ fn open_e01(
     cache_dir: Option<PathBuf>,
     cache_block_size: usize,
     cache_fetch_size: usize,
-    cache_trace_log: Option<&Path>,
+    io_log: Option<Arc<E01IoLog>>,
 ) -> Result<Adapter, Box<dyn std::error::Error>> {
-    let io_log = cache_trace_log.map(E01IoLog::open).transpose()?;
     E01Reader::open_glob(
         path,
         &E01ReaderOptions {
@@ -165,9 +165,8 @@ fn open_vmdk(
     cache_dir: Option<PathBuf>,
     cache_chunk_size: usize,
     cache_fetch_size: usize,
-    cache_trace_log: Option<&Path>,
+    io_log: Option<Arc<VmdkIoLog>>,
 ) -> Result<Adapter, Box<dyn std::error::Error>> {
-    let io_log = cache_trace_log.map(VmdkIoLog::open).transpose()?;
     VmdkReader::open_with_options(
         path,
         &VmdkReaderOptions {
@@ -220,8 +219,9 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             run_serve(
                 common,
                 &image_path,
-                move || {
-                    open_e01(
+                move || -> Result<Adapter, Box<dyn std::error::Error>> {
+                    let trace = cache_trace_log.as_deref().map(E01IoLog::open).transpose()?;
+                    let adapter = open_e01(
                         &path,
                         ignore_checksums,
                         readahead,
@@ -231,8 +231,16 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                         cache_dir,
                         cache_chunk_size,
                         cache_fetch_size,
-                        cache_trace_log.as_deref(),
-                    )
+                        trace.clone(),
+                    )?;
+                    // The reader's trace log starts suppressed so that opening the
+                    // image -- reading section headers and the chunk table -- does
+                    // not swamp the served workload. Nothing else ever flipped it,
+                    // so the file stayed empty.
+                    if let Some(trace) = &trace {
+                        trace.begin_serving()?;
+                    }
+                    Ok(adapter)
                 },
                 io_log,
             )
@@ -251,8 +259,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             run_serve(
                 common,
                 &image_path,
-                move || {
-                    open_vmdk(
+                move || -> Result<Adapter, Box<dyn std::error::Error>> {
+                    let trace = cache_trace_log
+                        .as_deref()
+                        .map(VmdkIoLog::open)
+                        .transpose()?;
+                    let adapter = open_vmdk(
                         &path,
                         readahead,
                         s3_concurrency,
@@ -261,8 +273,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                         cache_dir,
                         cache_chunk_size,
                         cache_fetch_size,
-                        cache_trace_log.as_deref(),
-                    )
+                        trace.clone(),
+                    )?;
+                    if let Some(trace) = &trace {
+                        trace.begin_serving()?;
+                    }
+                    Ok(adapter)
                 },
                 io_log,
             )
