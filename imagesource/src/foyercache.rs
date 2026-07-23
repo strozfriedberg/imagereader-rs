@@ -341,6 +341,7 @@ async fn route_block(
     fetch_limit: Arc<FetchLimiter>,
     permit: Option<OwnedSemaphorePermit>,
     trace: Option<Arc<AtomicBool>>,
+    io_log: Option<Arc<IoLog>>,
 ) -> Result<BlockEntry, std::io::Error> {
     let key = (idx, choff);
     // Siblings from a coalesced fetch go into whichever cache this block is
@@ -382,7 +383,11 @@ async fn route_block(
         // Promote it, or the warming pass ends with metadata sitting in an
         // evictable tier and the post-flip reads go back to S3.
         if let Some(entry) = content.get(&key).await.map_err(std::io::Error::other)? {
+            let bytes = entry.value().len();
             md_cache.insert(key, entry.value().clone());
+            if let Some(log) = &io_log {
+                log.log_metadata_insert(idx, choff, bytes, true);
+            }
             return Ok(entry);
         }
         let fetch = make_fetch(
@@ -397,10 +402,14 @@ async fn route_block(
             trace,
             content.clone(),
         );
-        return md_cache
+        let entry = md_cache
             .get_or_fetch(&key, fetch)
             .await
-            .map_err(foyer_to_io_error);
+            .map_err(foyer_to_io_error)?;
+        if let Some(log) = &io_log {
+            log.log_metadata_insert(idx, choff, entry.value().len(), false);
+        }
+        return Ok(entry);
     }
     let fetch = make_fetch(
         chlen,
@@ -466,6 +475,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                     self.fetch_limit.clone(),
                     None,
                     Some(trace_cell.clone()),
+                    self.io_log.clone(),
                 )
                 .await?;
                 fill_from_block(buf, off, choff, &ch, idx)?;
@@ -487,6 +497,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                         self.fetch_limit.clone(),
                         None,
                         Some(trace_cell.clone()),
+                        self.io_log.clone(),
                     )
                 });
                 let chunks = try_join_all(demand).await?;
@@ -559,6 +570,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                 self.fetch_limit.clone(),
                 Some(permit),
                 None,
+                self.io_log.clone(),
             );
             tokio::spawn(async move {
                 let _ = fut.await;
@@ -1357,6 +1369,56 @@ mod tests {
         assert!(
             md.contains(&(0, CHUNK64)),
             "a demanded sibling is promoted into the metadata tier"
+        );
+    }
+
+    /// The metadata tier's footprint is no longer the union of fetched ranges, so
+    /// it has to be recorded directly or it cannot be measured at all.
+    #[tokio::test]
+    async fn metadata_inserts_are_traced() {
+        const CHUNK: usize = 64 * 1024;
+        const CHUNK64: u64 = CHUNK as u64;
+        const FETCH: usize = 4 * CHUNK;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trace.jsonl");
+        let io_log = IoLog::open(&path).unwrap();
+        io_log.begin_serving().unwrap();
+
+        let regular = Arc::new(AtomicBool::new(false));
+        let cache =
+            FoyerCache::dual_hybrid(CHUNK, FETCH, 64, 0, 64, 0, 0, 4, regular.clone(), None)
+                .await
+                .unwrap()
+                .with_io_log(Some(io_log.clone()));
+        let (_src_dir, src) = test_source();
+        cache.add_source(0, src);
+
+        let mut buf = vec![0u8; 4096];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+        cache.read(0, CHUNK64, &mut buf, &mut t).await.unwrap();
+
+        // Flush by dropping every handle to the log's BufWriter.
+        drop(cache);
+        drop(io_log);
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        let inserts: Vec<&str> = body
+            .lines()
+            .filter(|l| l.contains(r#""kind":"md_insert""#))
+            .collect();
+        assert_eq!(inserts.len(), 2, "one demand insert, one promotion: {body}");
+        assert!(
+            inserts[0].contains(r#""block":0"#) && inserts[0].contains(r#""promoted":false"#),
+            "first insert is the demanded block: {}",
+            inserts[0]
+        );
+        assert!(
+            inserts[1].contains(&format!(r#""block":{CHUNK64}"#))
+                && inserts[1].contains(r#""promoted":true"#),
+            "second insert is the promoted sibling: {}",
+            inserts[1]
         );
     }
 }
