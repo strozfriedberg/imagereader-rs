@@ -3,6 +3,10 @@ use std::sync::{Arc, atomic::AtomicBool};
 pub const DEFAULT_CACHE_MEM_MIB: usize = 256;
 pub const DEFAULT_S3_CONCURRENCY: usize = 8;
 pub const DEFAULT_CACHE_CHUNK_SIZE: usize = 1024 * 1024;
+/// Default bytes read from the backing store per miss. Equal to the block size,
+/// so fetch coalescing is off unless explicitly raised -- it pays only against a
+/// high-latency store like S3, and is wasted bandwidth against a local file.
+pub const DEFAULT_CACHE_FETCH_SIZE: usize = DEFAULT_CACHE_CHUNK_SIZE;
 
 /// How the foyer cache is structured for a session.
 #[derive(Debug, Clone, Default)]

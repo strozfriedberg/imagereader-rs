@@ -63,7 +63,8 @@ pub struct CommonArgs {
     #[arg(long, conflicts_with = "listen")]
     pub unix: Option<PathBuf>,
 
-    /// Prefetch this many 1 MiB foyer blocks ahead on sequential reads.
+    /// Prefetch this many foyer blocks (--cache-chunk-size each) ahead on
+    /// sequential reads.
     #[arg(long, default_value = "0")]
     pub readahead: usize,
 
@@ -75,7 +76,8 @@ pub struct CommonArgs {
     #[arg(long, default_value = "8")]
     pub s3_concurrency: usize,
 
-    /// Foyer in-memory cache capacity in ~1 MiB entries.
+    /// Foyer in-memory cache capacity in MiB (a byte budget divided by
+    /// --cache-chunk-size to get foyer's entry count).
     #[arg(long, default_value = "1024")]
     pub cache_mem_mib: usize,
 
@@ -112,7 +114,7 @@ pub struct CommonArgs {
     #[arg(long, default_value = "1048576")]
     pub cache_chunk_size: usize,
 
-    /// Bytes pulled from the backing store per cache miss (e01 only).
+    /// Bytes pulled from the backing store per cache miss (e01 and VMDK).
     /// Defaults to --cache-chunk-size.
     ///
     /// Against a high-latency store this is the most important knob here. A
@@ -189,15 +191,16 @@ pub fn log_cache_opts(args: &CommonArgs) {
             args.s3_concurrency
         );
         tracing::info!(
-            "foyer memory cache: {} x ~1 MiB entries",
-            args.cache_mem_mib
+            "foyer memory cache: {} MiB budget, {}-byte blocks",
+            args.cache_mem_mib,
+            args.cache_chunk_size
         );
     }
     if args.readahead > 0 {
         tracing::info!(
-            "foyer readahead: prefetch up to {} MiB ({} x 1 MiB blocks) after each read",
+            "foyer readahead: prefetch up to {} blocks ({} bytes each) after each read",
             args.readahead,
-            args.readahead
+            args.cache_chunk_size
         );
     }
     if let Some(fetch) = args.cache_fetch_size

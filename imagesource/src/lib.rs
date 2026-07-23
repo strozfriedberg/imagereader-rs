@@ -22,7 +22,8 @@ pub mod urlsource;
 pub use bytessource::BytesSource;
 pub use cache::Cache;
 pub use cachemode::{
-    CacheMode, DEFAULT_CACHE_CHUNK_SIZE, DEFAULT_CACHE_MEM_MIB, DEFAULT_S3_CONCURRENCY,
+    CacheMode, DEFAULT_CACHE_CHUNK_SIZE, DEFAULT_CACHE_FETCH_SIZE, DEFAULT_CACHE_MEM_MIB,
+    DEFAULT_S3_CONCURRENCY,
 };
 pub use cachereadseek::CacheReadSeek;
 pub use dummycache::DummyCache;

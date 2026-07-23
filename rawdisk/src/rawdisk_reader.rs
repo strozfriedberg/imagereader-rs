@@ -11,7 +11,8 @@ use imagesource::{
 // Re-exported so consumers get everything reader-related from this module,
 // matching the vmdk-rs/e01-rs API shape.
 pub use imagesource::{
-    CacheMode, DEFAULT_CACHE_CHUNK_SIZE, DEFAULT_CACHE_MEM_MIB, DEFAULT_S3_CONCURRENCY,
+    CacheMode, DEFAULT_CACHE_CHUNK_SIZE, DEFAULT_CACHE_FETCH_SIZE, DEFAULT_CACHE_MEM_MIB,
+    DEFAULT_S3_CONCURRENCY,
 };
 
 /// A reader for raw (dd) disk images. The image is a single full-cover
@@ -65,8 +66,13 @@ pub struct RawdiskReaderOptions {
     pub cache_dir: Option<PathBuf>,
     /// When set, generate JSONL I/O logging (see [`IoLog`]). This will hose performance; only enable it as a diagnostic.
     pub io_log: Option<Arc<IoLog>>,
-    /// Foyer block size in bytes.
+    /// Foyer block size in bytes: the granularity blocks are stored and evicted at.
     pub cache_chunk_size: usize,
+    /// Bytes read from the backing store per miss. When larger than
+    /// `cache_chunk_size`, one fetch fills several cache blocks -- worth it
+    /// against a high-latency store (S3), wasted bandwidth against a local file.
+    /// Defaults to `cache_chunk_size` (no coalescing).
+    pub cache_fetch_size: usize,
 }
 
 impl Default for RawdiskReaderOptions {
@@ -79,6 +85,7 @@ impl Default for RawdiskReaderOptions {
             cache_dir: None,
             io_log: None,
             cache_chunk_size: DEFAULT_CACHE_CHUNK_SIZE,
+            cache_fetch_size: DEFAULT_CACHE_FETCH_SIZE,
         }
     }
 }
@@ -104,12 +111,13 @@ impl RawdiskReader {
         );
 
         let cache_chunk_size = opts.cache_chunk_size;
+        // Coalesced fetch: one backing-store GET per miss can fill several cache
+        // blocks. Never below a block. Pays against a high-latency store (S3).
+        let cache_fetch_size = opts.cache_fetch_size.max(cache_chunk_size);
         let c = match opts.cache_mode.clone() {
             CacheMode::SingleMemory => runtime.block_on(FoyerCache::single_memory(
                 cache_chunk_size,
-                // No fetch coalescing here: it pays only against a high-latency
-                // store, and e01 is the one served from S3 today.
-                cache_chunk_size,
+                cache_fetch_size,
                 opts.cache_mem_mib,
                 opts.foyer_readahead,
                 opts.s3_concurrency,
@@ -122,7 +130,7 @@ impl RawdiskReader {
                 regular_phase,
             } => runtime.block_on(FoyerCache::dual_hybrid(
                 cache_chunk_size,
-                cache_chunk_size,
+                cache_fetch_size,
                 opts.cache_mem_mib,
                 content_disk_mib,
                 metadata_mem_mib,

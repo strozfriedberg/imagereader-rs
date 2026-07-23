@@ -164,6 +164,7 @@ fn open_vmdk(
     cache_mode: VmdkCacheMode,
     cache_dir: Option<PathBuf>,
     cache_chunk_size: usize,
+    cache_fetch_size: usize,
     cache_trace_log: Option<&Path>,
 ) -> Result<Adapter, Box<dyn std::error::Error>> {
     let io_log = cache_trace_log.map(VmdkIoLog::open).transpose()?;
@@ -179,6 +180,7 @@ fn open_vmdk(
             // --cache-trace-log carries vmdk's own per-read foyer hit/miss trace.
             io_log,
             cache_chunk_size,
+            cache_fetch_size,
         },
     )
     .map(|r| Adapter::Vmdk(VmdkAdapter(r)))
@@ -236,9 +238,6 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             )
         }
         Format::Vmdk => {
-            if cache_fetch_size != cache_chunk_size {
-                tracing::warn!("--cache-fetch-size only applies to e01 images; ignored for VMDK");
-            }
             let cache_mode = if common.metadata_cache {
                 VmdkCacheMode::DualHybrid {
                     content_disk_mib: common.content_cache_disk_mib,
@@ -261,6 +260,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                         cache_mode,
                         cache_dir,
                         cache_chunk_size,
+                        cache_fetch_size,
                         cache_trace_log.as_deref(),
                     )
                 },
