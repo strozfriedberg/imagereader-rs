@@ -40,8 +40,7 @@ futures.workspace = true
 glob = "0.3"
 hex = "0.4"
 itertools = "0.14.0"
-#kaitai = { git = "https://github.com/kaitai-io/kaitai_struct_rust_runtime.git", branch = "master" }
-kaitai = { git = "https://github.com/uckelman-sf/kaitai_struct_rust_runtime.git", branch = "master" }
+kaitai = { git = "https://github.com/strozfriedberg/kaitai_struct_rust_runtime.git", rev = "14ab334ec9a188561924cd3cb5a6ac00d16fc4e8" }
 md-5 = "0.10"
 rand = "0.9"
 rayon = "1.11.0"

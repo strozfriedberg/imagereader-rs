@@ -1988,8 +1988,8 @@ dependencies = [
 
 [[package]]
 name = "kaitai"
-version = "0.2.0"
-source = "git+https://github.com/uckelman-sf/kaitai_struct_rust_runtime.git?branch=master#88e824cafd6bc42b75e7d5a3879272c58c2dab1c"
+version = "0.11.0"
+source = "git+https://github.com/strozfriedberg/kaitai_struct_rust_runtime.git?rev=14ab334ec9a188561924cd3cb5a6ac00d16fc4e8#14ab334ec9a188561924cd3cb5a6ac00d16fc4e8"
 dependencies = [
  "cp437",
  "encoding-next",
