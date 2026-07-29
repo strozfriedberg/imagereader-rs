@@ -203,14 +203,25 @@ pub fn log_cache_opts(args: &CommonArgs) {
             args.cache_chunk_size
         );
     }
-    if let Some(fetch) = args.cache_fetch_size
-        && fetch > args.cache_chunk_size
-    {
-        tracing::info!(
-            "fetch coalescing: {} bytes per backing-store GET, cached as {}-byte blocks",
-            fetch,
-            args.cache_chunk_size
-        );
+    if let Some(fetch) = args.cache_fetch_size {
+        // A fetch group is a whole number of blocks, so the requested size is
+        // rounded down. Report what will actually be fetched, not what was typed.
+        let effective = e01::aligned_fetch_size(fetch, args.cache_chunk_size);
+        if effective != fetch {
+            tracing::warn!(
+                "--cache-fetch-size {} is not a multiple of --cache-chunk-size {}; using {}",
+                fetch,
+                args.cache_chunk_size,
+                effective
+            );
+        }
+        if effective > args.cache_chunk_size {
+            tracing::info!(
+                "fetch coalescing: {} bytes per backing-store GET, cached as {}-byte blocks",
+                effective,
+                args.cache_chunk_size
+            );
+        }
     }
 }
 

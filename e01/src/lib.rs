@@ -19,7 +19,9 @@ mod seg_path;
 mod segment;
 mod workersource;
 
-pub use imagesource::{IoLog, ReadTimer, ReadTrace, chunk_cache_label, init_tracing};
+pub use imagesource::{
+    IoLog, ReadTimer, ReadTrace, aligned_fetch_size, chunk_cache_label, init_tracing,
+};
 
 #[cfg(test)]
 mod test {

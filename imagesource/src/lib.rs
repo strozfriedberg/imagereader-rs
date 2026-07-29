@@ -30,7 +30,7 @@ pub use dummycache::DummyCache;
 pub use errors::{InitError, OpenError, OpenErrorKind};
 pub use fetch_limit::FetchLimiter;
 pub use filesource::FileSource;
-pub use foyercache::FoyerCache;
+pub use foyercache::{FoyerCache, aligned_fetch_size};
 pub use io_log::{IoLog, ReadTimer, ReadTrace, chunk_cache_label};
 pub use readseek::ReadSeek;
 pub use s3_creds::{S3Auth, resolve_s3_auth, s3_region_name, snapshot_credentials_sync};

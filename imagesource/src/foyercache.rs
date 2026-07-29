@@ -4,7 +4,9 @@ use foyer::{
     HybridCacheBuilder, HybridCacheEntry,
 };
 use foyer_common::code::HashBuilder;
-use futures::future::try_join_all;
+use futures::future::{BoxFuture, FutureExt, Shared, try_join_all};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt::Debug, future::Future, path::Path, sync::Arc};
 use tempfile::TempDir;
@@ -34,6 +36,106 @@ type BlockEntry = HybridCacheEntry<(usize, u64), Vec<u8>, DefaultHasher>;
 /// A boxed future returned by a fetch closure passed to `FetchLimiter::run`.
 type FetchFuture = std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, foyer::Error>> + Send>>;
 
+/// The bytes of one aligned fetch group, shared by every block waiting on it.
+/// `io::Error` is not `Clone`, which `Shared` requires, hence the `Arc`.
+type GroupResult = Result<Arc<Vec<u8>>, Arc<std::io::Error>>;
+type GroupFuture = Shared<BoxFuture<'static, GroupResult>>;
+
+/// The aligned group a coalesced fetch covers: always a whole number of blocks.
+///
+/// `fetch_size` is a user-supplied byte count and need not be a multiple of the
+/// block size. It has to be rounded *down* to one, because `gbeg` is derived from
+/// it and the cache keys live on the `chlen` grid. A group that starts mid-block
+/// emits no `boff` equal to the demanded `choff`, so the fetch returns no demanded
+/// block and the read fails with a bogus short-read error -- permanently, for
+/// every block whose group start is misaligned -- while the siblings it did insert
+/// land under keys no lookup will ever use.
+fn group_size(fetch_size: usize, chlen: u64) -> u64 {
+    ((fetch_size as u64) / chlen).max(1) * chlen
+}
+
+/// The fetch size that will actually be used for a given block size, so callers
+/// can report the effective value rather than the one that was asked for.
+pub fn aligned_fetch_size(fetch_size: usize, block_size: usize) -> usize {
+    group_size(fetch_size, normalize_block_size(block_size) as u64) as usize
+}
+
+/// Dedups concurrent fetches of the same aligned group.
+///
+/// foyer single-flights per *key*, and a group is not a key, so without this every
+/// block of a group that misses concurrently issues its own GET for the whole
+/// group. Two ordinary paths do exactly that: a multi-block demand read fans its
+/// blocks out through `try_join_all`, and the readahead loop spawns a task per
+/// block without waiting for the previous one to land. Both multiply round trips
+/// and bytes by up to `fetch_size / chlen` -- precisely inverting what coalescing
+/// exists to do.
+#[derive(Default)]
+struct GroupLatch {
+    inflight: Mutex<HashMap<(usize, u64), GroupFuture>>,
+}
+
+impl GroupLatch {
+    /// Read `[gbeg, gend)` of source `idx`, joining an already in-flight fetch of
+    /// the same group instead of issuing a second one.
+    ///
+    /// The returned flag is true only for the caller that created the fetch. Only
+    /// that caller inserts the group's sibling blocks: joiners would clone and
+    /// insert exactly the same bytes under exactly the same keys.
+    async fn fetch(
+        self: &Arc<Self>,
+        idx: usize,
+        gbeg: u64,
+        gend: u64,
+        source: Arc<dyn BytesSource + Send + Sync>,
+        fetch_limit: Arc<FetchLimiter>,
+        permit: Option<OwnedSemaphorePermit>,
+    ) -> (GroupResult, bool) {
+        let key = (idx, gbeg);
+        let (fut, owner) = {
+            // The map holds no invariant a panic could break, so recover from
+            // poisoning rather than turning one panic into a dead cache.
+            let mut inflight = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+            match inflight.get(&key) {
+                Some(fut) => {
+                    // Joining, not reading: hand the permit back now instead of
+                    // holding capacity for a GET we are not going to issue.
+                    drop(permit);
+                    (fut.clone(), false)
+                }
+                None => {
+                    let latch = self.clone();
+                    let fut = async move {
+                        let bytes = match permit {
+                            // Readahead already took a permit with `try_permit`;
+                            // hold it for the read rather than queueing for a
+                            // second one.
+                            Some(permit) => {
+                                let _permit = permit;
+                                source.read(gbeg, gend).await
+                            }
+                            None => fetch_limit.run(move || source.read(gbeg, gend)).await,
+                        };
+                        // Retire the entry before waking the waiters, so the next
+                        // miss on this group starts a fresh fetch rather than
+                        // joining a finished one.
+                        latch
+                            .inflight
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(&key);
+                        bytes.map(Arc::new).map_err(Arc::new)
+                    }
+                    .boxed()
+                    .shared();
+                    inflight.insert(key, fut.clone());
+                    (fut, true)
+                }
+            }
+        };
+        (fut.await, owner)
+    }
+}
+
 struct MetadataTier<S>
 where
     S: HashBuilder + Debug,
@@ -47,13 +149,15 @@ where
     S: HashBuilder + Debug,
 {
     chlen: usize,
-    /// Bytes pulled from the backing store per miss. `>= chlen`; when larger,
-    /// one GET fills several cache blocks. See `make_fetch`.
+    /// Bytes pulled from the backing store per miss. Always a whole multiple of
+    /// `chlen`; when larger, one GET fills several cache blocks. See `make_fetch`.
     fetch_size: usize,
     sources: SourceSlots,
     content: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
     metadata: Option<MetadataTier<S>>,
     fetch_limit: Arc<FetchLimiter>,
+    /// Joins concurrent misses on one fetch group into a single GET.
+    groups: Arc<GroupLatch>,
     _dirs: Vec<TempDir>,
     readahead: usize,
     io_log: Option<Arc<IoLog>>,
@@ -95,6 +199,13 @@ fn mem_entries(mem_mib: usize, block_size: usize) -> usize {
     ((mem_mib * 1024 * 1024) / block).max(1)
 }
 
+/// A usable block size. Zero is a caller bug, and left alone it would panic in
+/// `step_by` and divide by zero in `group_size`; fall back to the 1 MiB default,
+/// matching what [`mem_entries`] does with the same input.
+fn normalize_block_size(chlen: usize) -> usize {
+    if chlen == 0 { 1024 * 1024 } else { chlen }
+}
+
 async fn build_hybrid(
     mem_mib: usize,
     block_size: usize,
@@ -125,15 +236,17 @@ impl FoyerCache<DefaultHasher> {
         s3_concurrency: usize,
         cache_base_dir: Option<&Path>,
     ) -> Result<Self, std::io::Error> {
+        let chlen = normalize_block_size(chlen);
         let dir = make_tempdir(cache_base_dir)?;
         let content = Arc::new(build_hybrid(mem_capacity, chlen, 0, &dir).await?);
         Ok(Self {
             chlen,
-            fetch_size: fetch_size.max(chlen),
+            fetch_size: group_size(fetch_size, chlen as u64) as usize,
             sources: SourceSlots::default(),
             content,
             metadata: None,
             fetch_limit: FetchLimiter::new(s3_concurrency),
+            groups: Arc::new(GroupLatch::default()),
             _dirs: vec![dir],
             readahead,
             io_log: None,
@@ -153,6 +266,7 @@ impl FoyerCache<DefaultHasher> {
         regular_phase: Arc<AtomicBool>,
         cache_base_dir: Option<&Path>,
     ) -> Result<Self, std::io::Error> {
+        let chlen = normalize_block_size(chlen);
         let content_dir = make_tempdir(cache_base_dir)?;
         let metadata_dir = make_tempdir(cache_base_dir)?;
         let content = Arc::new(
@@ -175,7 +289,7 @@ impl FoyerCache<DefaultHasher> {
         );
         Ok(Self {
             chlen,
-            fetch_size: fetch_size.max(chlen),
+            fetch_size: group_size(fetch_size, chlen as u64) as usize,
             sources: SourceSlots::default(),
             content,
             metadata: Some(MetadataTier {
@@ -183,6 +297,7 @@ impl FoyerCache<DefaultHasher> {
                 regular_phase,
             }),
             fetch_limit: FetchLimiter::new(s3_concurrency),
+            groups: Arc::new(GroupLatch::default()),
             _dirs: vec![content_dir, metadata_dir],
             readahead,
             io_log: None,
@@ -210,10 +325,9 @@ impl FoyerCache<DefaultHasher> {
 /// are never touched, while the demanded blocks keep getting hit. Under a full
 /// cache this degrades toward the old behaviour instead of trampling it.
 ///
-/// Two concurrent misses on different blocks of the same group will each fetch
-/// the group: foyer single-flights per key, and the group is not a key. That
-/// costs a duplicate GET, not incorrect data, and demands rarely overlap (mean
-/// fetch concurrency on the real workload is ~1.05).
+/// Concurrent misses on different blocks of one group are joined by [`GroupLatch`]
+/// into a single GET, so a multi-block read or a readahead burst that lands inside
+/// one group costs one round trip rather than one per block.
 #[allow(clippy::too_many_arguments)]
 fn make_fetch(
     chlen: usize,
@@ -226,12 +340,13 @@ fn make_fetch(
     permit: Option<OwnedSemaphorePermit>,
     trace: Option<Arc<AtomicBool>>,
     sink: Arc<BlockCache>,
+    groups: Arc<GroupLatch>,
 ) -> impl FnOnce() -> FetchFuture {
     move || {
         let chlen = chlen as u64;
-        // Never fetch less than a block, and align the group so that every block
-        // in it lands on the same boundaries the cache keys use.
-        let group = (fetch_size as u64).max(chlen);
+        // A whole number of blocks, so every block in the group lands on the same
+        // boundaries the cache keys use.
+        let group = group_size(fetch_size, chlen);
         let gbeg = (choff / group) * group;
         let gend = (gbeg + group).min(end);
 
@@ -239,16 +354,12 @@ fn make_fetch(
             if let Some(trace) = trace {
                 trace.store(true, Ordering::Relaxed);
             }
-            let bytes = match permit {
-                // Readahead already took a permit with `try_permit`; hold it for
-                // the duration of the read instead of queueing for a second one.
-                Some(permit) => {
-                    let _permit = permit;
-                    source.read(gbeg, gend).await
-                }
-                None => fetch_limit.run(move || source.read(gbeg, gend)).await,
-            }
-            .map_err(foyer::Error::io_error)?;
+            let (bytes, owner) = groups
+                .fetch(idx, gbeg, gend, source, fetch_limit, permit)
+                .await;
+            let bytes = bytes.map_err(|e| {
+                foyer::Error::io_error(std::io::Error::new(e.kind(), e.to_string()))
+            })?;
 
             let mut demanded = None;
             for boff in (gbeg..gend).step_by(chlen as usize) {
@@ -261,7 +372,9 @@ fn make_fetch(
                 }
                 if boff == choff {
                     demanded = Some(bytes[beg..end].to_vec());
-                } else {
+                } else if owner {
+                    // Only the caller that issued the GET populates the siblings;
+                    // a joiner would insert identical bytes under identical keys.
                     sink.insert((idx, boff), bytes[beg..end].to_vec());
                 }
             }
@@ -342,6 +455,7 @@ async fn route_block(
     permit: Option<OwnedSemaphorePermit>,
     trace: Option<Arc<AtomicBool>>,
     io_log: Option<Arc<IoLog>>,
+    groups: Arc<GroupLatch>,
 ) -> Result<BlockEntry, std::io::Error> {
     let key = (idx, choff);
     // Siblings from a coalesced fetch go into whichever cache this block is
@@ -364,6 +478,7 @@ async fn route_block(
                 permit,
                 trace,
                 content.clone(),
+                groups,
             );
             return content
                 .get_or_fetch(&key, fetch)
@@ -401,6 +516,7 @@ async fn route_block(
             permit,
             trace,
             content.clone(),
+            groups,
         );
         let entry = md_cache
             .get_or_fetch(&key, fetch)
@@ -422,6 +538,7 @@ async fn route_block(
         permit,
         trace,
         content.clone(),
+        groups,
     );
     content
         .get_or_fetch(&key, fetch)
@@ -476,6 +593,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                     None,
                     Some(trace_cell.clone()),
                     self.io_log.clone(),
+                    self.groups.clone(),
                 )
                 .await?;
                 fill_from_block(buf, off, choff, &ch, idx)?;
@@ -484,6 +602,49 @@ impl Cache for FoyerCache<DefaultHasher> {
             }
             _ => {
                 let trace_cell = Arc::new(AtomicBool::new(false));
+
+                // Fetch each group this read spans exactly once, before routing
+                // the individual blocks.
+                //
+                // `get_or_fetch` commits to fetching the moment it finds a key
+                // absent, so fanning every block out at once means all the blocks
+                // of a group are committed before the first fetch fills the rest
+                // in -- each then pulls the whole group again. The group latch
+                // catches that only while the fetches overlap in time; against a
+                // fast source they complete one after another and it cannot help.
+                // Routing one block per group first collapses them to one fetch,
+                // and leaves the rest as cache hits below.
+                let group = group_size(self.fetch_size, chlen);
+                if group > chlen {
+                    let leaders = (csbeg..csend)
+                        .step_by(self.chlen)
+                        .filter(|choff| {
+                            // The first block of the read that falls in this group.
+                            let gbeg = (choff / group) * group;
+                            *choff == gbeg.max(csbeg)
+                        })
+                        .map(|choff| {
+                            route_block(
+                                self.chlen,
+                                self.fetch_size,
+                                idx,
+                                choff,
+                                source.clone(),
+                                end,
+                                self.content.clone(),
+                                md.clone(),
+                                self.fetch_limit.clone(),
+                                None,
+                                Some(trace_cell.clone()),
+                                self.io_log.clone(),
+                                self.groups.clone(),
+                            )
+                        });
+                    // Errors surface again below, where the offending block is
+                    // reported precisely; here we only care about warming.
+                    let _ = try_join_all(leaders).await;
+                }
+
                 let demand = (csbeg..csend).step_by(self.chlen).map(|choff| {
                     route_block(
                         self.chlen,
@@ -498,6 +659,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                         None,
                         Some(trace_cell.clone()),
                         self.io_log.clone(),
+                        self.groups.clone(),
                     )
                 });
                 let chunks = try_join_all(demand).await?;
@@ -536,6 +698,13 @@ impl Cache for FoyerCache<DefaultHasher> {
 
         let mut prefetched = vec![];
 
+        // One prefetch per fetch group, not per block. The loop spawns without
+        // waiting, so `contains` cannot see blocks a still-unfinished group fetch
+        // is about to fill; spawning per block would refetch the same group once
+        // for every block of it that the window covers.
+        let ra_group = group_size(self.fetch_size, chlen);
+        let mut last_group: Option<u64> = None;
+
         for choff in (rabeg..raend).step_by(self.chlen) {
             let key = (idx, choff);
 
@@ -549,6 +718,14 @@ impl Cache for FoyerCache<DefaultHasher> {
             {
                 continue;
             }
+
+            // A block whose group we have already enqueued this pass arrives with
+            // that fetch; asking for it separately would duplicate the GET.
+            let gbeg = (choff / ra_group) * ra_group;
+            if last_group == Some(gbeg) {
+                continue;
+            }
+            last_group = Some(gbeg);
 
             // Speculation gets only spare capacity. A prefetch that would have
             // to queue for a permit is dropped instead: it must never make a
@@ -571,6 +748,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                 Some(permit),
                 None,
                 self.io_log.clone(),
+                self.groups.clone(),
             );
             tokio::spawn(async move {
                 let _ = fut.await;
@@ -1331,6 +1509,21 @@ mod tests {
         }
     }
 
+    /// A zero block size is a caller bug, but it must not be a crash: it would
+    /// otherwise divide by zero in `group_size` and panic in `step_by`.
+    #[tokio::test]
+    async fn zero_block_size_falls_back_instead_of_panicking() {
+        let cache = FoyerCache::single_memory(0, 0, 16, 0, 4, None)
+            .await
+            .unwrap();
+        let (_dir, src) = test_source();
+        cache.add_source(0, src);
+
+        let mut buf = vec![0u8; 4096];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+    }
+
     /// A sibling that is later demanded must be served from the content tier
     /// without a second GET, and must then be promoted into the metadata tier --
     /// it is part of the filesystem's working set, so leaving it in an evictable
@@ -1369,6 +1562,191 @@ mod tests {
         assert!(
             md.contains(&(0, CHUNK64)),
             "a demanded sibling is promoted into the metadata tier"
+        );
+    }
+
+    /// A fetch size is a byte count a user typed, not necessarily a whole number
+    /// of blocks. It has to be rounded down to one: `gbeg` derives from it, and if
+    /// a group starts mid-block then no block boundary inside it coincides with a
+    /// cache key, so the demanded block is never produced.
+    #[test]
+    fn fetch_size_is_rounded_down_to_whole_blocks() {
+        const CHUNK: u64 = 64 * 1024;
+        assert_eq!(group_size(4 * CHUNK as usize, CHUNK), 4 * CHUNK);
+        // 2.5 blocks -> 2 blocks.
+        assert_eq!(group_size(CHUNK as usize * 5 / 2, CHUNK), 2 * CHUNK);
+        // Never below one block, however small the request.
+        assert_eq!(group_size(1, CHUNK), CHUNK);
+        assert_eq!(group_size(0, CHUNK), CHUNK);
+    }
+
+    /// The end-to-end consequence of the rounding above: with an unaligned fetch
+    /// size, blocks whose group started mid-block used to fail forever with a
+    /// spurious `UnexpectedEof` against a perfectly healthy source, and their
+    /// siblings were cached under keys no lookup could ever hit.
+    #[tokio::test]
+    async fn unaligned_fetch_size_still_reads_every_block() {
+        const CHUNK: usize = 64 * 1024;
+        const CHUNK64: u64 = CHUNK as u64;
+        // 2.5 blocks: a legal --cache-fetch-size that is not a multiple.
+        const FETCH: usize = CHUNK * 5 / 2;
+
+        let ranges = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cache = FoyerCache::single_memory(CHUNK, FETCH, 64, 0, 8, None)
+            .await
+            .unwrap();
+        cache.add_source(
+            0,
+            Box::new(RecordingSource {
+                len: 64 * MIB,
+                ranges: ranges.clone(),
+            }),
+        );
+
+        for blk in 0..8u64 {
+            let mut buf = vec![0u8; 512];
+            let mut t = ReadTrace::default();
+            cache
+                .read(0, blk * CHUNK64, &mut buf, &mut t)
+                .await
+                .unwrap_or_else(|e| panic!("block {blk} must be readable, got {e}"));
+        }
+
+        // Every GET must sit on the block grid and span whole blocks, or the
+        // blocks it caches are unreachable.
+        for (beg, end) in ranges.lock().unwrap().iter() {
+            assert_eq!(beg % CHUNK64, 0, "group start {beg} is not block-aligned");
+            assert_eq!(
+                (end - beg) % CHUNK64,
+                0,
+                "group [{beg},{end}) is not a whole number of blocks"
+            );
+        }
+    }
+
+    /// One read spanning several blocks of a single fetch group is one GET.
+    /// `try_join_all` fans the blocks out concurrently and foyer single-flights
+    /// per key, not per group, so without the group latch this issued one
+    /// whole-group GET *per block* -- 8x the bytes for a 4-block read.
+    #[tokio::test]
+    async fn multi_block_demand_read_fetches_its_group_once() {
+        const CHUNK: usize = 64 * 1024;
+        const FETCH: usize = 8 * CHUNK;
+
+        let ranges = Arc::new(std::sync::Mutex::new(Vec::new()));
+        // readahead 0: nothing speculative is involved in this path.
+        let cache = FoyerCache::single_memory(CHUNK, FETCH, 64, 0, 16, None)
+            .await
+            .unwrap();
+        cache.add_source(
+            0,
+            Box::new(RecordingSource {
+                len: 64 * MIB,
+                ranges: ranges.clone(),
+            }),
+        );
+
+        let mut buf = vec![0u8; 4 * CHUNK];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+
+        assert_eq!(
+            ranges.lock().unwrap().clone(),
+            vec![(0, FETCH as u64)],
+            "a 4-block read inside one group must cost exactly one GET"
+        );
+    }
+
+    /// The readahead loop spawns a task per block without waiting for the
+    /// previous one to land, so `contains` cannot suppress blocks that a
+    /// still-in-flight group fetch is about to fill. The group latch has to,
+    /// or a readahead window wider than one group refetches it per block.
+    #[tokio::test]
+    async fn readahead_does_not_refetch_a_group_per_block() {
+        const CHUNK: usize = 64 * 1024;
+        const CHUNK64: u64 = CHUNK as u64;
+        const FETCH: usize = 4 * CHUNK;
+
+        let ranges = Arc::new(std::sync::Mutex::new(Vec::new()));
+        // Readahead of 8 blocks over 4-block groups: the window reaches past the
+        // demand block's own group into two more.
+        let cache = FoyerCache::single_memory(CHUNK, FETCH, 64, 8, 16, None)
+            .await
+            .unwrap();
+        cache.add_source(
+            0,
+            Box::new(RecordingSource {
+                len: 64 * MIB,
+                ranges: ranges.clone(),
+            }),
+        );
+
+        let mut buf = vec![0u8; 512];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let got = ranges.lock().unwrap().clone();
+        let mut distinct = got.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(
+            got.len(),
+            distinct.len(),
+            "each group must be fetched once, got {got:?}"
+        );
+        assert_eq!(
+            distinct,
+            vec![
+                (0, 4 * CHUNK64),
+                (4 * CHUNK64, 8 * CHUNK64),
+                (8 * CHUNK64, 12 * CHUNK64),
+            ],
+            "demand block's group plus the two the readahead window reaches"
+        );
+    }
+
+    /// Joining an in-flight group must not weaken the short-read contract: a
+    /// joiner whose block fell inside the truncated tail still errors rather
+    /// than being handed someone else's bytes.
+    #[tokio::test]
+    async fn group_joiners_still_reject_short_reads() {
+        const CHUNK: usize = 64 * 1024;
+        const CHUNK64: u64 = CHUNK as u64;
+        const FETCH: usize = 4 * CHUNK;
+
+        let cache = Arc::new(
+            FoyerCache::single_memory(CHUNK, FETCH, 64, 0, 8, None)
+                .await
+                .unwrap(),
+        );
+        // Returns half of any requested range: a 4-block group yields blocks 0-1.
+        cache.add_source(0, Box::new(ShortSource { len: MIB }));
+
+        // Blocks 0 and 2 race on the same group; 0 survives, 2 is in the tail.
+        let (a, b) = tokio::join!(
+            {
+                let cache = cache.clone();
+                async move {
+                    let mut buf = vec![0u8; 512];
+                    let mut t = ReadTrace::default();
+                    cache.read(0, 0, &mut buf, &mut t).await
+                }
+            },
+            {
+                let cache = cache.clone();
+                async move {
+                    let mut buf = vec![0u8; 512];
+                    let mut t = ReadTrace::default();
+                    cache.read(0, 2 * CHUNK64, &mut buf, &mut t).await
+                }
+            }
+        );
+        a.unwrap();
+        assert_eq!(
+            b.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof,
+            "a block inside the truncated tail must error, joined fetch or not"
         );
     }
 
