@@ -132,7 +132,14 @@ impl GroupLatch {
                 }
             }
         };
-        (fut.await, owner)
+        // Bound to a `let` so the `Shared` handle is dropped at the end of this
+        // statement rather than living until the function returns. When nothing
+        // else joined this group, that drops the last handle and with it the
+        // copy `Shared` caches for late joiners -- leaving the caller holding the
+        // only `Arc` to the bytes, which is what lets `make_fetch` move them into
+        // the cache instead of copying.
+        let result = fut.await;
+        (result, owner)
     }
 }
 
@@ -356,6 +363,31 @@ fn make_fetch(
             let bytes = bytes.map_err(|e| {
                 foyer::Error::io_error(std::io::Error::new(e.kind(), e.to_string()))
             })?;
+
+            // One block per group -- the default, with no fetch coalescing. The
+            // buffer we just fetched *is* the demanded block, so move it into the
+            // cache rather than copying it out. Slicing unconditionally cost a
+            // full extra block copy on every miss, which the pre-split code did
+            // not pay: it moved the source's `Vec` straight in.
+            //
+            // `try_unwrap` succeeds whenever no other block joined this group's
+            // fetch, which is the ordinary case; a joiner falls back to the copy.
+            if group == chlen {
+                let want = (gend - gbeg) as usize;
+                if bytes.len() < want {
+                    return Err(foyer::Error::io_error(short_read_error(
+                        idx,
+                        choff,
+                        chlen as usize,
+                        bytes.len() as u64,
+                    )));
+                }
+                let mut block = Arc::try_unwrap(bytes).unwrap_or_else(|shared| (*shared).clone());
+                // A source that returned more than asked for must not widen the
+                // block; the slicing path would have trimmed it too.
+                block.truncate(want);
+                return Ok(block);
+            }
 
             let mut demanded = None;
             for boff in (gbeg..gend).step_by(chlen as usize) {
@@ -1578,6 +1610,57 @@ mod tests {
         assert!(
             md.contains(&(0, CHUNK64)),
             "a demanded sibling is promoted into the metadata tier"
+        );
+    }
+
+    /// Without fetch coalescing the fetched buffer *is* the block, so it must be
+    /// moved into the cache, not copied. Proven by identity: the cached entry has
+    /// to be the very allocation the source handed back. A copy here is a whole
+    /// extra block memcpy on every miss.
+    #[tokio::test]
+    async fn single_block_group_moves_the_fetched_buffer_instead_of_copying() {
+        const CHUNK: usize = 64 * 1024;
+
+        /// Records the address of the buffer it returns.
+        #[derive(Debug)]
+        struct PtrSource(Arc<std::sync::Mutex<Vec<usize>>>);
+
+        impl BytesSource for PtrSource {
+            fn read(
+                &self,
+                beg: u64,
+                end: u64,
+            ) -> futures::future::BoxFuture<'static, Result<Vec<u8>, std::io::Error>> {
+                let seen = self.0.clone();
+                async move {
+                    let v = vec![7u8; (end - beg) as usize];
+                    seen.lock().unwrap().push(v.as_ptr() as usize);
+                    Ok(v)
+                }
+                .boxed()
+            }
+            fn end(&self) -> u64 {
+                64 * MIB
+            }
+        }
+
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        // fetch == block: no coalescing, the default.
+        let cache = FoyerCache::single_memory(CHUNK, CHUNK, 64, 0, 8, None)
+            .await
+            .unwrap();
+        cache.add_source(0, Box::new(PtrSource(seen.clone())));
+
+        let mut buf = vec![0u8; 512];
+        let mut t = ReadTrace::default();
+        cache.read(0, 0, &mut buf, &mut t).await.unwrap();
+
+        let fetched_ptr = seen.lock().unwrap()[0];
+        let entry = cache.content.get(&(0, 0)).await.unwrap().unwrap();
+        assert_eq!(
+            entry.value().as_ptr() as usize,
+            fetched_ptr,
+            "the fetched buffer must be moved into the cache, not copied out of"
         );
     }
 
