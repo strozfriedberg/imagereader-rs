@@ -73,7 +73,7 @@ fn warm_sequential_read(c: &mut Criterion) {
 }
 
 fn warm_random_read(c: &mut Criterion) {
-    let mut reader = open();
+    let reader = open();
     let offsets = random_offsets(reader.image_size);
 
     let mut group = c.benchmark_group("vmdk random read (warm cache)");
@@ -136,7 +136,7 @@ fn cold_random_read(c: &mut Criterion) {
         let mut buf = vec![0u8; RANDOM_BUF_SIZE];
         b.iter_batched(
             open,
-            |mut reader| {
+            |reader| {
                 for &offset in &offsets {
                     reader.read_at_offset(offset, &mut buf).unwrap();
                 }

@@ -1019,12 +1019,18 @@ impl E01Reader {
         let beg_chunk_index = (buf_beg / chunk_size) as usize;
         let end_chunk_index = (buf_end / chunk_size + (buf_end % chunk_size).min(1)) as usize;
 
-        let chunk_hit = self.decoded_chunk_cache.as_ref().map(|cache| {
-            let mut cache = cache.lock().unwrap();
-            (beg_chunk_index..end_chunk_index).all(|idx| cache.get(idx).is_some())
-        });
+        let tracing = self.io_log.is_some();
 
-        let foyer_trace = Arc::new(Mutex::new(ReadTrace::default()));
+        let chunk_hit = if tracing {
+            self.decoded_chunk_cache.as_ref().map(|cache| {
+                let mut cache = cache.lock().unwrap();
+                (beg_chunk_index..end_chunk_index).all(|idx| cache.get(idx).is_some())
+            })
+        } else {
+            None
+        };
+
+        let foyer_trace = tracing.then(|| Arc::new(Mutex::new(ReadTrace::default())));
 
         // TODO: worker count still scales with the number of chunks in the read.
         let mut workers = self.checkout_workers(end_chunk_index - beg_chunk_index);
@@ -1058,7 +1064,7 @@ impl E01Reader {
                 cache: self.cache.clone(),
                 runtime: self.runtime.clone(),
                 idx: chunk.segment,
-                foyer_trace: Some(foyer_trace.clone()),
+                foyer_trace: foyer_trace.clone(),
             };
             let decoded_chunk_cache = self.decoded_chunk_cache.clone();
             tasks.push((
@@ -1095,7 +1101,9 @@ impl E01Reader {
         let read_len = (offset - buf_beg) as usize;
         if let Some(log) = &self.io_log {
             let dur_us = timer.as_ref().map(ReadTimer::elapsed_us).unwrap_or(0);
-            let foyer = foyer_trace.lock().unwrap().foyer_label();
+            let foyer = foyer_trace
+                .as_ref()
+                .map_or("n/a", |t| t.lock().unwrap().foyer_label());
             log.log_read(
                 read_offset,
                 read_len,
@@ -1112,6 +1120,56 @@ impl E01Reader {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// The per-read residency probe and the shared `ReadTrace` are built only
+    /// when tracing is on, and their sole consumer is this trace line. Nothing
+    /// else in the tree exercises the tracing-on path, so if the gating were
+    /// wrong the fields would silently degrade to "n/a" and no test would notice.
+    #[test]
+    fn read_trace_reports_decoded_chunk_and_foyer_verdicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("io.jsonl");
+        let io_log = IoLog::open(&log_path).unwrap();
+        io_log.begin_serving().unwrap();
+
+        let options = E01ReaderOptions {
+            io_log: Some(io_log.clone()),
+            ..Default::default()
+        };
+        let reader =
+            E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
+
+        let mut buf = vec![0u8; 4096];
+        // First read decodes the chunk; the second must be served from the
+        // decoded-chunk cache.
+        reader.read_at_offset(0, &mut buf).unwrap();
+        reader.read_at_offset(0, &mut buf).unwrap();
+
+        drop(reader);
+        drop(io_log);
+
+        let body = std::fs::read_to_string(&log_path).unwrap();
+        let reads: Vec<&str> = body
+            .lines()
+            .filter(|l| l.contains(r#""kind":"read""#))
+            .collect();
+        assert_eq!(reads.len(), 2, "one record per read: {body}");
+        assert!(
+            reads[0].contains(r#""chunk":"miss""#),
+            "the first read has to decode: {}",
+            reads[0]
+        );
+        assert!(
+            reads[1].contains(r#""chunk":"hit""#),
+            "the second read comes from the decoded-chunk cache: {}",
+            reads[1]
+        );
+        assert!(
+            !reads[1].contains(r#""foyer":"n/a""#),
+            "the foyer verdict must be a real hit/miss, not the unset fallback: {}",
+            reads[1]
+        );
+    }
 
     /// A declared size that fits within the chunks is fine; one larger than
     /// the chunks cover would index past self.chunks on a read near the end,
