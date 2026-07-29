@@ -883,7 +883,12 @@ impl E01Reader {
             return Err(OpenError::NoSegmentFiles);
         }
 
-        let cache_chunk_size = options.cache_block_size.max(1);
+        // Not clamped to 1: a zero here means "unset", and the cache's own
+        // fallback is the 1 MiB default. `.max(1)` produced a *1-byte* block size
+        // instead -- a memory budget of a billion entries, and one cache entry per
+        // byte of every read -- while vmdk and rawdisk, which pass the value
+        // straight through, got the sane fallback.
+        let cache_chunk_size = options.cache_block_size;
         let cache_fetch_size = options.cache_fetch_size.max(cache_chunk_size);
         let cache_mem_size = options.cache_mem_mib;
         let foyer_readahead = options.foyer_readahead;
@@ -1120,6 +1125,24 @@ impl E01Reader {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// A zero block size means "unset", and has to land on the cache's 1 MiB
+    /// fallback the way vmdk and rawdisk do. Clamping it to 1 instead gave a
+    /// 1-byte block size: a memory budget of ~10^9 entries, and one cache entry
+    /// per byte of every read. The read below would not finish in any useful time.
+    #[test]
+    fn zero_block_size_uses_the_default_not_a_one_byte_block() {
+        let options = E01ReaderOptions {
+            cache_block_size: 0,
+            cache_fetch_size: 0,
+            ..Default::default()
+        };
+        let reader =
+            E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
+
+        let mut buf = vec![0u8; 4096];
+        reader.read_at_offset(0, &mut buf).unwrap();
+    }
 
     /// The per-read residency probe and the shared `ReadTrace` are built only
     /// when tracing is on, and their sole consumer is this trace line. Nothing

@@ -6,6 +6,7 @@ use foyer::{
 use foyer_common::code::HashBuilder;
 use futures::future::{BoxFuture, FutureExt, Shared, try_join_all};
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt::Debug, future::Future, path::Path, sync::Arc};
@@ -74,6 +75,26 @@ struct GroupLatch {
     inflight: Mutex<HashMap<(usize, u64), GroupFuture>>,
 }
 
+/// Read `[gbeg, gend)` from the backing store, respecting the fetch limiter.
+///
+/// A readahead caller already took a permit with `try_permit` and holds it for the
+/// duration of the read; a demand caller queues for one.
+async fn fetch_range(
+    gbeg: u64,
+    gend: u64,
+    source: Arc<dyn BytesSource + Send + Sync>,
+    fetch_limit: Arc<FetchLimiter>,
+    permit: Option<OwnedSemaphorePermit>,
+) -> Result<Vec<u8>, std::io::Error> {
+    match permit {
+        Some(permit) => {
+            let _permit = permit;
+            source.read(gbeg, gend).await
+        }
+        None => fetch_limit.run(move || source.read(gbeg, gend)).await,
+    }
+}
+
 impl GroupLatch {
     /// Read `[gbeg, gend)` of source `idx`, joining an already in-flight fetch of
     /// the same group instead of issuing a second one.
@@ -105,16 +126,23 @@ impl GroupLatch {
                 None => {
                     let latch = self.clone();
                     let fut = async move {
-                        let bytes = match permit {
-                            // Readahead already took a permit with `try_permit`;
-                            // hold it for the read rather than queueing for a
-                            // second one.
-                            Some(permit) => {
-                                let _permit = permit;
-                                source.read(gbeg, gend).await
-                            }
-                            None => fetch_limit.run(move || source.read(gbeg, gend)).await,
-                        };
+                        // Caught, not propagated, because the retire below has to
+                        // run. An unwind would skip it and leave a `Shared` whose
+                        // inner future has already panicked installed under this
+                        // key -- every later miss in the group would then join the
+                        // dead future instead of retrying, wedging `fetch_size`
+                        // bytes of the image for the reader's lifetime. As an
+                        // ordinary error it fails this read and the next one
+                        // retries, which is how a source `Err` already behaves.
+                        let bytes =
+                            AssertUnwindSafe(fetch_range(gbeg, gend, source, fetch_limit, permit))
+                                .catch_unwind()
+                                .await
+                                .unwrap_or_else(|_| {
+                                    Err(std::io::Error::other(format!(
+                                        "source {idx}: panicked reading [{gbeg},{gend})"
+                                    )))
+                                });
                         // Retire the entry before waking the waiters, so the next
                         // miss on this group starts a fresh fetch rather than
                         // joining a finished one.
@@ -132,12 +160,9 @@ impl GroupLatch {
                 }
             }
         };
-        // Bound to a `let` so the `Shared` handle is dropped at the end of this
-        // statement rather than living until the function returns. When nothing
-        // else joined this group, that drops the last handle and with it the
-        // copy `Shared` caches for late joiners -- leaving the caller holding the
-        // only `Arc` to the bytes, which is what lets `make_fetch` move them into
-        // the cache instead of copying.
+        // Bound to a `let` so the `Shared` handle drops at the end of this
+        // statement rather than living until the function returns, releasing the
+        // copy it caches for late joiners as soon as we are done with it.
         let result = fut.await;
         (result, owner)
     }
@@ -357,22 +382,22 @@ fn make_fetch(
         let gend = (gbeg + group).min(end);
 
         Box::pin(async move {
-            let (bytes, owner) = groups
-                .fetch(idx, gbeg, gend, source, fetch_limit, permit)
-                .await;
-            let bytes = bytes.map_err(|e| {
-                foyer::Error::io_error(std::io::Error::new(e.kind(), e.to_string()))
-            })?;
-
-            // One block per group -- the default, with no fetch coalescing. The
-            // buffer we just fetched *is* the demanded block, so move it into the
-            // cache rather than copying it out. Slicing unconditionally cost a
-            // full extra block copy on every miss, which the pre-split code did
-            // not pay: it moved the source's `Vec` straight in.
+            // One block per group -- the default, with no fetch coalescing. There
+            // are no siblings to fill, so the fetched buffer *is* the demanded
+            // block and can be handed over whole rather than copied out of.
             //
-            // `try_unwrap` succeeds whenever no other block joined this group's
-            // fetch, which is the ordinary case; a joiner falls back to the copy.
+            // The group latch is skipped here too. With one block per group the
+            // group key *is* the foyer key, and foyer already single-flights per
+            // key, so the latch could never dedup anything on this path -- it
+            // would only add a lock round trip and two map operations per miss.
+            // It still earns its keep for multi-block groups below, and in
+            // `dual_hybrid`, where a demand routed to the metadata tier and a
+            // prefetch routed to the content tier are separate caches holding the
+            // same key.
             if group == chlen {
+                let bytes = fetch_range(gbeg, gend, source, fetch_limit, permit)
+                    .await
+                    .map_err(foyer::Error::io_error)?;
                 let want = (gend - gbeg) as usize;
                 if bytes.len() < want {
                     return Err(foyer::Error::io_error(short_read_error(
@@ -382,12 +407,19 @@ fn make_fetch(
                         bytes.len() as u64,
                     )));
                 }
-                let mut block = Arc::try_unwrap(bytes).unwrap_or_else(|shared| (*shared).clone());
+                let mut block = bytes;
                 // A source that returned more than asked for must not widen the
-                // block; the slicing path would have trimmed it too.
+                // block; the slicing path below would have trimmed it too.
                 block.truncate(want);
                 return Ok(block);
             }
+
+            let (bytes, owner) = groups
+                .fetch(idx, gbeg, gend, source, fetch_limit, permit)
+                .await;
+            let bytes = bytes.map_err(|e| {
+                foyer::Error::io_error(std::io::Error::new(e.kind(), e.to_string()))
+            })?;
 
             let mut demanded = None;
             for boff in (gbeg..gend).step_by(chlen as usize) {
@@ -1661,6 +1693,70 @@ mod tests {
             entry.value().as_ptr() as usize,
             fetched_ptr,
             "the fetched buffer must be moved into the cache, not copied out of"
+        );
+    }
+
+    /// A panicking source read must not outlive the read that triggered it. The
+    /// latch retires its inflight entry after the fetch; an unwind used to skip
+    /// that, leaving a `Shared` whose inner future had already panicked under the
+    /// group key, so every later miss anywhere in the group joined the dead future
+    /// and failed without ever retrying -- `fetch_size` bytes of the image wedged
+    /// for the reader's lifetime. Recovery must match a source `Err`.
+    #[tokio::test]
+    async fn a_panicking_fetch_does_not_poison_the_group() {
+        const CHUNK: usize = 64 * 1024;
+        const CHUNK64: u64 = CHUNK as u64;
+        const FETCH: usize = 4 * CHUNK;
+
+        /// Panics on its first read, succeeds afterwards.
+        #[derive(Debug)]
+        struct PanicOnce(Arc<AtomicUsize>);
+
+        impl BytesSource for PanicOnce {
+            fn read(
+                &self,
+                beg: u64,
+                end: u64,
+            ) -> futures::future::BoxFuture<'static, Result<Vec<u8>, std::io::Error>> {
+                let calls = self.0.clone();
+                async move {
+                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        panic!("source blew up");
+                    }
+                    Ok(vec![0u8; (end - beg) as usize])
+                }
+                .boxed()
+            }
+            fn end(&self) -> u64 {
+                64 * MIB
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cache = FoyerCache::single_memory(CHUNK, FETCH, 64, 0, 8, None)
+            .await
+            .unwrap();
+        cache.add_source(0, Box::new(PanicOnce(calls.clone())));
+
+        let mut buf = vec![0u8; 512];
+        let mut t = ReadTrace::default();
+
+        // Block 0's fetch panics: the read fails, but as an error, not an unwind.
+        assert!(
+            cache.read(0, 0, &mut buf, &mut t).await.is_err(),
+            "a panicking source read must surface as a failed read"
+        );
+
+        // A different block of the same group: it must reach the source again
+        // rather than join the dead fetch.
+        cache
+            .read(0, CHUNK64, &mut buf, &mut t)
+            .await
+            .expect("the group must retry after a panicking fetch, not stay poisoned");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "the retry has to actually reach the source"
         );
     }
 
