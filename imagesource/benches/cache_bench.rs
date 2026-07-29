@@ -12,6 +12,34 @@ static RT: LazyLock<Runtime> = LazyLock::new(|| Runtime::new().unwrap());
 const CHUNK_LEN: usize = 1024 * 1024;
 const NUM_BLOCKS: u64 = 1_000_000;
 
+/// A block-sized pattern the synthetic source copies out of.
+///
+/// Deliberately not zeros, and copied rather than zero-allocated. `vec![0u8; n]`
+/// gets its pages from `alloc_zeroed`, which at megabyte sizes is a fresh `mmap`:
+/// pages the kernel is not obliged to materialize because they are already zero.
+/// Every block handed to the cache was therefore backed by the *same* shared zero
+/// page, and a "32 MiB" warm read was really re-reading one 4 KiB page. The
+/// warm-read benchmark reported 44 GiB/s -- faster than this machine can move
+/// memory, which is the tell -- so it was not measuring what it claimed to.
+///
+/// The damage was to comparisons: any change that introduced a genuine copy
+/// (splitting a fetched group into per-block entries did) forced 32 distinct MiB
+/// to be materialized and showed up as a ~4x regression, while like-for-like on
+/// realistic data it was actually slightly faster. Copying a non-zero pattern
+/// makes every block real memory, so the benchmark measures real traffic.
+static PATTERN: LazyLock<Vec<u8>> =
+    LazyLock::new(|| (0..CHUNK_LEN).map(|i| (i % 251) as u8).collect());
+
+/// `n` bytes of pattern. A copy, so the pages are genuinely faulted in.
+fn patterned(n: usize) -> Vec<u8> {
+    let mut v = Vec::with_capacity(n);
+    while v.len() < n {
+        let take = (n - v.len()).min(PATTERN.len());
+        v.extend_from_slice(&PATTERN[..take]);
+    }
+    v
+}
+
 struct SyntheticSource {
     len: u64,
     latency: Duration,
@@ -23,7 +51,7 @@ impl BytesSource for SyntheticSource {
         let n = (end - beg) as usize;
         async move {
             tokio::time::sleep(latency).await;
-            Ok(vec![0u8; n])
+            Ok(patterned(n))
         }
         .boxed()
     }

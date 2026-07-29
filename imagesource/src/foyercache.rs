@@ -338,7 +338,6 @@ fn make_fetch(
     end: u64,
     fetch_limit: Arc<FetchLimiter>,
     permit: Option<OwnedSemaphorePermit>,
-    trace: Option<Arc<AtomicBool>>,
     sink: Arc<BlockCache>,
     groups: Arc<GroupLatch>,
 ) -> impl FnOnce() -> FetchFuture {
@@ -351,9 +350,6 @@ fn make_fetch(
         let gend = (gbeg + group).min(end);
 
         Box::pin(async move {
-            if let Some(trace) = trace {
-                trace.store(true, Ordering::Relaxed);
-            }
             let (bytes, owner) = groups
                 .fetch(idx, gbeg, gend, source, fetch_limit, permit)
                 .await;
@@ -441,22 +437,31 @@ fn fill_from_block(
     Ok(())
 }
 
+/// Resolve one block, returning it and whether it had to be fetched.
+///
+/// Every path looks in the cache *before* building the fetch closure. That
+/// closure owns clones of the source, the tier, the fetch limiter and the group
+/// latch, so constructing it eagerly charged every read -- overwhelmingly cache
+/// hits -- four-plus atomic refcount round trips on `Arc`s shared by all readers.
+/// The cost is invisible single-threaded and compounds with concurrency, because
+/// each one is a contended write to a line every other reader also wants.
+/// Building it only on the miss path costs one extra hash lookup when we do miss,
+/// against a fetch that is about to go to the backing store anyway.
 #[allow(clippy::too_many_arguments)]
 async fn route_block(
     chlen: usize,
     fetch_size: usize,
     idx: usize,
     choff: u64,
-    source: Arc<dyn BytesSource + Send + Sync>,
+    source: &Arc<dyn BytesSource + Send + Sync>,
     end: u64,
-    content: Arc<BlockCache>,
-    metadata: Option<(Arc<BlockCache>, Arc<AtomicBool>)>,
-    fetch_limit: Arc<FetchLimiter>,
+    content: &Arc<BlockCache>,
+    metadata: Option<(&Arc<BlockCache>, &Arc<AtomicBool>)>,
+    fetch_limit: &Arc<FetchLimiter>,
     permit: Option<OwnedSemaphorePermit>,
-    trace: Option<Arc<AtomicBool>>,
-    io_log: Option<Arc<IoLog>>,
-    groups: Arc<GroupLatch>,
-) -> Result<BlockEntry, std::io::Error> {
+    io_log: Option<&Arc<IoLog>>,
+    groups: &Arc<GroupLatch>,
+) -> Result<(BlockEntry, bool), std::io::Error> {
     let key = (idx, choff);
     // Siblings from a coalesced fetch go into whichever cache this block is
     // being routed to, so speculation never lands in a tier the read would not
@@ -465,24 +470,27 @@ async fn route_block(
     if let Some((md_cache, regular_phase)) = metadata {
         if regular_phase.load(Ordering::Acquire) {
             if let Some(entry) = md_cache.get(&key).await.map_err(std::io::Error::other)? {
-                return Ok(entry);
+                return Ok((entry, false));
+            }
+            if let Some(entry) = content.get(&key).await.map_err(std::io::Error::other)? {
+                return Ok((entry, false));
             }
             let fetch = make_fetch(
                 chlen,
                 fetch_size,
                 idx,
                 choff,
-                source,
+                source.clone(),
                 end,
-                fetch_limit,
+                fetch_limit.clone(),
                 permit,
-                trace,
                 content.clone(),
-                groups,
+                groups.clone(),
             );
             return content
                 .get_or_fetch(&key, fetch)
                 .await
+                .map(|entry| (entry, true))
                 .map_err(foyer_to_io_error);
         }
         // Metadata phase. The demanded block is metadata and goes to the
@@ -492,7 +500,7 @@ async fn route_block(
         // groups, so raising --cache-fetch-size to cut S3 round trips inflates
         // the very cache the warming pass exists to produce.
         if let Some(entry) = md_cache.get(&key).await.map_err(std::io::Error::other)? {
-            return Ok(entry);
+            return Ok((entry, false));
         }
         // A sibling that is now demanded is part of the working set after all.
         // Promote it, or the warming pass ends with metadata sitting in an
@@ -500,49 +508,51 @@ async fn route_block(
         if let Some(entry) = content.get(&key).await.map_err(std::io::Error::other)? {
             let bytes = entry.value().len();
             md_cache.insert(key, entry.value().clone());
-            if let Some(log) = &io_log {
+            if let Some(log) = io_log {
                 log.log_metadata_insert(idx, choff, bytes, true);
             }
-            return Ok(entry);
+            return Ok((entry, false));
         }
         let fetch = make_fetch(
             chlen,
             fetch_size,
             idx,
             choff,
-            source,
+            source.clone(),
             end,
-            fetch_limit,
+            fetch_limit.clone(),
             permit,
-            trace,
             content.clone(),
-            groups,
+            groups.clone(),
         );
         let entry = md_cache
             .get_or_fetch(&key, fetch)
             .await
             .map_err(foyer_to_io_error)?;
-        if let Some(log) = &io_log {
+        if let Some(log) = io_log {
             log.log_metadata_insert(idx, choff, entry.value().len(), false);
         }
-        return Ok(entry);
+        return Ok((entry, true));
+    }
+    if let Some(entry) = content.get(&key).await.map_err(std::io::Error::other)? {
+        return Ok((entry, false));
     }
     let fetch = make_fetch(
         chlen,
         fetch_size,
         idx,
         choff,
-        source,
+        source.clone(),
         end,
-        fetch_limit,
+        fetch_limit.clone(),
         permit,
-        trace,
         content.clone(),
-        groups,
+        groups.clone(),
     );
     content
         .get_or_fetch(&key, fetch)
         .await
+        .map(|entry| (entry, true))
         .map_err(foyer_to_io_error)
 }
 
@@ -563,10 +573,9 @@ impl Cache for FoyerCache<DefaultHasher> {
         let csend = off + buf.len() as u64;
         let (rabeg, raend) = readahead_block_range(csend, chlen, self.readahead, end);
 
-        let md = self
-            .metadata
-            .as_ref()
-            .map(|m| (m.cache.clone(), m.regular_phase.clone()));
+        // Borrowed, not cloned: this is on every read, and `route_block` only
+        // needs owned handles on the miss path.
+        let md = self.metadata.as_ref().map(|m| (&m.cache, &m.regular_phase));
 
         // The overwhelming majority of calls (struct-field-sized reads during
         // header/grain-table parsing) need exactly one block. Skip the
@@ -579,30 +588,26 @@ impl Cache for FoyerCache<DefaultHasher> {
 
         let miss = match (first, second) {
             (Some(choff), None) => {
-                let trace_cell = Arc::new(AtomicBool::new(false));
-                let ch = route_block(
+                let (ch, missed) = route_block(
                     self.chlen,
                     self.fetch_size,
                     idx,
                     choff,
-                    source.clone(),
+                    &source,
                     end,
-                    self.content.clone(),
-                    md.clone(),
-                    self.fetch_limit.clone(),
+                    &self.content,
+                    md,
+                    &self.fetch_limit,
                     None,
-                    Some(trace_cell.clone()),
-                    self.io_log.clone(),
-                    self.groups.clone(),
+                    self.io_log.as_ref(),
+                    &self.groups,
                 )
                 .await?;
                 fill_from_block(buf, off, choff, &ch, idx)?;
                 trace!("fetched {idx} [{choff},{})", choff + ch.len() as u64);
-                trace_cell.load(Ordering::Relaxed)
+                missed
             }
             _ => {
-                let trace_cell = Arc::new(AtomicBool::new(false));
-
                 // Fetch each group this read spans exactly once, before routing
                 // the individual blocks.
                 //
@@ -614,7 +619,9 @@ impl Cache for FoyerCache<DefaultHasher> {
                 // fast source they complete one after another and it cannot help.
                 // Routing one block per group first collapses them to one fetch,
                 // and leaves the rest as cache hits below.
-                let group = group_size(self.fetch_size, chlen);
+                // Already a whole number of blocks (both constructors normalize
+                // it), so this needs no rounding and no division per read.
+                let group = self.fetch_size as u64;
                 if group > chlen {
                     let leaders = (csbeg..csend)
                         .step_by(self.chlen)
@@ -629,15 +636,14 @@ impl Cache for FoyerCache<DefaultHasher> {
                                 self.fetch_size,
                                 idx,
                                 choff,
-                                source.clone(),
+                                &source,
                                 end,
-                                self.content.clone(),
-                                md.clone(),
-                                self.fetch_limit.clone(),
+                                &self.content,
+                                md,
+                                &self.fetch_limit,
                                 None,
-                                Some(trace_cell.clone()),
-                                self.io_log.clone(),
-                                self.groups.clone(),
+                                self.io_log.as_ref(),
+                                &self.groups,
                             )
                         });
                     // Errors surface again below, where the offending block is
@@ -651,21 +657,21 @@ impl Cache for FoyerCache<DefaultHasher> {
                         self.fetch_size,
                         idx,
                         choff,
-                        source.clone(),
+                        &source,
                         end,
-                        self.content.clone(),
-                        md.clone(),
-                        self.fetch_limit.clone(),
+                        &self.content,
+                        md,
+                        &self.fetch_limit,
                         None,
-                        Some(trace_cell.clone()),
-                        self.io_log.clone(),
-                        self.groups.clone(),
+                        self.io_log.as_ref(),
+                        &self.groups,
                     )
                 });
                 let chunks = try_join_all(demand).await?;
+                let any_missed = chunks.iter().any(|(_, missed)| *missed);
 
                 let mut bbeg = 0u64;
-                for (choff, ch) in (csbeg..csend).step_by(self.chlen).zip(chunks) {
+                for (choff, (ch, _)) in (csbeg..csend).step_by(self.chlen).zip(chunks) {
                     trace!("fetched {idx} [{choff},{})", choff + ch.len() as u64);
 
                     // A short earlier block means this block's math would underflow.
@@ -691,7 +697,7 @@ impl Cache for FoyerCache<DefaultHasher> {
                     return Err(short_read_error(idx, off, buf.len(), bbeg));
                 }
 
-                trace_cell.load(Ordering::Relaxed)
+                any_missed
             }
         };
         trace.foyer_miss = miss;
@@ -702,7 +708,7 @@ impl Cache for FoyerCache<DefaultHasher> {
         // waiting, so `contains` cannot see blocks a still-unfinished group fetch
         // is about to fill; spawning per block would refetch the same group once
         // for every block of it that the window covers.
-        let ra_group = group_size(self.fetch_size, chlen);
+        let ra_group = self.fetch_size as u64;
         let mut last_group: Option<u64> = None;
 
         for choff in (rabeg..raend).step_by(self.chlen) {
@@ -712,9 +718,7 @@ impl Cache for FoyerCache<DefaultHasher> {
             // sequential scan re-spawns a prefetch for every resident block on
             // every read, so task churn tracks read rate rather than miss rate.
             if self.content.contains(&key)
-                || md
-                    .as_ref()
-                    .is_some_and(|(md_cache, _)| md_cache.contains(&key))
+                || md.is_some_and(|(md_cache, _)| md_cache.contains(&key))
             {
                 continue;
             }
@@ -735,23 +739,35 @@ impl Cache for FoyerCache<DefaultHasher> {
                 break;
             };
 
-            let fut = route_block(
-                self.chlen,
-                self.fetch_size,
-                idx,
-                choff,
-                source.clone(),
-                end,
-                self.content.clone(),
-                md.clone(),
-                self.fetch_limit.clone(),
-                Some(permit),
-                None,
-                self.io_log.clone(),
-                self.groups.clone(),
-            );
+            // A spawned task outlives this call and so needs owned handles. This
+            // is the miss path by construction, so the clones are paid once per
+            // enqueued group rather than once per read.
+            let source = source.clone();
+            let content = self.content.clone();
+            let md_owned = self
+                .metadata
+                .as_ref()
+                .map(|m| (m.cache.clone(), m.regular_phase.clone()));
+            let fetch_limit = self.fetch_limit.clone();
+            let io_log = self.io_log.clone();
+            let groups = self.groups.clone();
+            let (chlen_bytes, fetch_size) = (self.chlen, self.fetch_size);
             tokio::spawn(async move {
-                let _ = fut.await;
+                let _ = route_block(
+                    chlen_bytes,
+                    fetch_size,
+                    idx,
+                    choff,
+                    &source,
+                    end,
+                    &content,
+                    md_owned.as_ref().map(|(c, r)| (c, r)),
+                    &fetch_limit,
+                    Some(permit),
+                    io_log.as_ref(),
+                    &groups,
+                )
+                .await;
             });
 
             prefetched.push(choff);
