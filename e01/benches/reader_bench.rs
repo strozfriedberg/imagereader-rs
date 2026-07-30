@@ -17,7 +17,7 @@ fn open(options: &E01ReaderOptions) -> E01Reader {
 }
 
 /// Read the whole image front to back through `buf`.
-fn read_all(reader: &mut E01Reader, buf: &mut [u8]) {
+fn read_all(reader: &E01Reader, buf: &mut [u8]) {
     let mut offset = 0u64;
     loop {
         let n = reader.read_at_offset(offset, buf).unwrap();
@@ -59,14 +59,14 @@ fn warm_sequential_read(c: &mut Criterion) {
     configure(&mut group);
 
     for buf_size in BUF_SIZES {
-        let mut reader = open(&options);
+        let reader = open(&options);
         group.throughput(Throughput::Bytes(reader.image_size));
         group.bench_with_input(
             BenchmarkId::from_parameter(buf_size),
             &buf_size,
             |b, &buf_size| {
                 let mut buf = vec![0u8; buf_size];
-                b.iter(|| read_all(&mut reader, &mut buf));
+                b.iter(|| read_all(&reader, &mut buf));
             },
         );
     }
@@ -119,7 +119,10 @@ fn cold_sequential_read(c: &mut Criterion) {
                 let mut buf = vec![0u8; buf_size];
                 b.iter_batched(
                     || open(&options),
-                    |mut reader| read_all(&mut reader, &mut buf),
+                    |reader| {
+                        read_all(&reader, &mut buf);
+                        reader
+                    },
                     BatchSize::PerIteration,
                 );
             },
@@ -144,6 +147,8 @@ fn cold_random_read(c: &mut Criterion) {
                 for &offset in &offsets {
                     reader.read_at_offset(offset, &mut buf).unwrap();
                 }
+                // Return this so that reader teardown isn't part of the bench timing
+                reader
             },
             BatchSize::PerIteration,
         );
