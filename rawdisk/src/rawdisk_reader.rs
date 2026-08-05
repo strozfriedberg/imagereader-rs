@@ -100,11 +100,19 @@ impl Default for RawdiskReaderOptions {
     }
 }
 
-fn missing_segment_error(e: MissingSegment) -> OpenError {
+/// A segment the image needs but that we cannot use, rendered as an open
+/// failure. NotFound rather than BadPath: the path the user gave is perfectly
+/// well formed, it is the file that is not there (or not usable). The message
+/// carries the offending path once, via `OpenError`'s own `{path}: {kind}`.
+fn segment_error(path: String, kind: io::ErrorKind, msg: &'static str) -> OpenError {
     OpenError {
-        path: e.path.clone(),
-        kind: OpenErrorKind::BadPath(e.to_string()),
+        path,
+        kind: OpenErrorKind::IoError(io::Error::new(kind, msg)),
     }
+}
+
+fn missing_segment_error(e: MissingSegment) -> OpenError {
+    segment_error(e.path, io::ErrorKind::NotFound, "missing image segment")
 }
 
 impl RawdiskReader {
@@ -171,16 +179,29 @@ impl RawdiskReader {
             None
         };
 
-        // A raw image may be split across numbered segments. Discovery works on
-        // the original path rather than the URL, because that is what the user
-        // named and what the checkers probe.
+        // A raw image may be split across numbered segments. Discovery probes
+        // names in whatever spelling the checker understands: `FileChecker`
+        // wants a filesystem path, `S3Checker` wants a URL. A `file://` URL is
+        // neither -- probing it with `FileChecker` makes every candidate look
+        // absent, and the image would silently open as a single segment. So
+        // normalise a file URL back to its path first; both spellings of the
+        // same image then discover the same segments.
+        let discovery_path = if url.scheme() == "file" {
+            url.to_file_path()
+                .ok()
+                .and_then(|p| p.to_str().map(str::to_string))
+                .unwrap_or_else(|| image_path.as_ref().to_string())
+        } else {
+            image_path.as_ref().to_string()
+        };
+
         //
         // The no-suffix case short-circuits before any checker is built, and that
         // ordering is load-bearing for S3: `S3Checker::new` calls `s3_bucket`,
         // which is a GetBucketLocation round trip. Building it unconditionally
         // would add a network call to every single-file S3 open that does not
         // need one.
-        let paths = if crate::seg_path::has_numeric_suffix(image_path.as_ref()) {
+        let paths = if crate::seg_path::has_numeric_suffix(&discovery_path) {
             match url.scheme() {
                 "s3" => {
                     let auth = s3_auth.clone().ok_or_else(|| {
@@ -190,9 +211,9 @@ impl RawdiskReader {
                         ))
                     })?;
                     let mut checker = S3Checker::new(&url, runtime.clone(), auth)?;
-                    segment_paths(image_path.as_ref(), &mut checker)
+                    segment_paths(&discovery_path, &mut checker)
                 }
-                _ => segment_paths(image_path.as_ref(), &mut FileChecker),
+                _ => segment_paths(&discovery_path, &mut FileChecker),
             }
             .map_err(missing_segment_error)?
         } else {
@@ -210,6 +231,20 @@ impl RawdiskReader {
                 s3_auth.as_ref(),
                 opts.io_log.as_ref(),
             )?;
+            // An empty segment in a multi-segment image is refused, never
+            // skipped. `SegmentMap::locate` steps over zero-length spans to keep
+            // the read loop making progress, so a stray `touch` or an
+            // interrupted copy would otherwise shift every following segment
+            // down and serve wrong bytes for the whole tail of the image with
+            // no error at all. A lone empty file is a legitimate, if useless,
+            // image and stays acceptable.
+            if paths.len() > 1 && src.end() == 0 {
+                return Err(segment_error(
+                    path.clone(),
+                    io::ErrorKind::InvalidData,
+                    "empty image segment",
+                ));
+            }
             lengths.push(src.end());
             cache.add_source(idx, src);
         }
@@ -350,10 +385,13 @@ mod test {
         let dir = tempfile::tempdir().unwrap();
         let whole = patterned(3000);
 
+        // Deliberately uneven, and deliberately including a one-byte segment:
+        // equal segments would let an implementation that derived a single
+        // stride from segment 0 pass this test.
         let single = write_image(dir.path(), "whole.raw", &whole);
         write_image(dir.path(), "part.001", &whole[0..1000]);
-        write_image(dir.path(), "part.002", &whole[1000..2000]);
-        write_image(dir.path(), "part.003", &whole[2000..3000]);
+        write_image(dir.path(), "part.002", &whole[1000..1001]);
+        write_image(dir.path(), "part.003", &whole[1001..3000]);
         let split = dir.path().join("part.001").to_str().unwrap().to_string();
 
         let a = RawdiskReader::open(&single).unwrap();
@@ -361,8 +399,9 @@ mod test {
         assert_eq!(b.image_size, 3000);
         assert_eq!(a.image_size, b.image_size);
 
-        // Inside one segment, across one boundary, across two boundaries, and
-        // the whole image in one call.
+        // Inside one segment, across both boundaries (the middle segment is a
+        // single byte, so anything crossing it touches all three), and the whole
+        // image in one call.
         for (off, len) in [(0, 10), (995, 10), (990, 1020), (0, 3000), (2999, 1)] {
             let mut ba = vec![0u8; len];
             let mut bb = vec![0u8; len];
@@ -401,6 +440,66 @@ mod test {
         let path = dir.path().join("g.003").to_str().unwrap().to_string();
         let err = RawdiskReader::open(&path).unwrap_err().to_string();
         assert!(err.contains("g.002"), "error should name the gap: {err}");
+        assert!(
+            !err.contains("Malformed"),
+            "a missing file is not a malformed path: {err}"
+        );
+        assert_eq!(
+            err.matches("g.002").count(),
+            1,
+            "the missing file should be named once: {err}"
+        );
+    }
+
+    /// An empty segment must be refused, not silently skipped: skipping it
+    /// shifts every later segment down and serves wrong bytes for the tail of
+    /// the image.
+    #[test]
+    fn a_zero_length_segment_refuses_to_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let whole = patterned(200);
+        write_image(dir.path(), "z.001", &whole[0..100]);
+        write_image(dir.path(), "z.002", &[]);
+        write_image(dir.path(), "z.003", &whole[100..200]);
+
+        let path = dir.path().join("z.001").to_str().unwrap().to_string();
+        let err = RawdiskReader::open(&path).unwrap_err().to_string();
+        assert!(
+            err.contains("z.002"),
+            "error should name the empty segment: {err}"
+        );
+    }
+
+    /// The same image named two ways must not give two different images.
+    /// Discovery probes the filesystem, so a `file://` URL has to be normalised
+    /// back to a path first or every candidate looks absent.
+    #[test]
+    fn file_url_and_plain_path_find_the_same_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let whole = patterned(200);
+        let plain = write_image(dir.path(), "u.001", &whole[0..100]);
+        write_image(dir.path(), "u.002", &whole[100..200]);
+
+        let url = url::Url::from_file_path(std::fs::canonicalize(&plain).unwrap())
+            .unwrap()
+            .to_string();
+        assert!(url.starts_with("file://"), "{url}");
+
+        let a = RawdiskReader::open(&plain).unwrap();
+        let b = RawdiskReader::open(&url).unwrap();
+        assert_eq!(a.image_size, 200);
+        assert_eq!(
+            a.image_size, b.image_size,
+            "file:// URL saw a different image"
+        );
+
+        // A read spanning the segment boundary, both ways.
+        let mut ba = vec![0u8; 200];
+        let mut bb = vec![0u8; 200];
+        a.read_at_offset(0, &mut ba).unwrap();
+        b.read_at_offset(0, &mut bb).unwrap();
+        assert_eq!(ba, whole);
+        assert_eq!(ba, bb);
     }
 
     /// Unsuffixed images must not regress.
