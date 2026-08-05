@@ -42,9 +42,16 @@ Segments must be numbered with a `.` followed by digits (`disk.001`, `disk.dd.1`
 The digit width is taken from the path you name, so `.001` pairs with `.002` but
 never with `.02`. Sequences may start at `000` or `001`.
 
-If a segment in the middle is missing, opening fails and names it. This is
-deliberate: a split image with a hole would otherwise read as a valid but short
-image, which parses and mounts and looks correct until something reads past the
-gap.
+A hole in the sequence makes opening fail, naming the missing file. A split
+image with a gap would otherwise read as a valid but short image, which parses
+and mounts and looks correct until something reads past the gap.
+
+That check is not total, and the limit is worth knowing. A segment missing
+between the start of the sequence and the one you name is always caught,
+whatever the size of the hole. Past the segment you name, only a one-segment
+hole is caught: a gap two or more segments wide cannot be distinguished from
+the end of the sequence, and the image opens short. Naming the LAST segment
+rather than the first therefore gives the strongest check, because every
+segment then falls below the one you named.
 
 `split(1)`'s alphabetic output (`xaa`, `xab`) is not recognised.
