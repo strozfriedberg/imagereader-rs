@@ -103,6 +103,16 @@ fn warm_random_read(c: &mut Criterion) {
 // backing file is still in the OS page cache, so this measures decode and
 // cache-fill cost, not device I/O. For the latency-bound case (S3), see
 // imagesource's cache_bench, which injects latency at the BytesSource.
+//
+// Expect run-to-run variance here, and do not read a cross-session comparison as
+// a code change. At a 1 MiB block size a few-MiB image is only a handful of
+// misses, and each miss costs several cross-thread handoffs through tokio and
+// foyer -- so these benchmarks are dominated by scheduling latency, not by read
+// work. Measured on a 2-vCPU VM: one cold 4 KiB read took 30-42 ms where a whole
+// warm pass over the same image took 2.4 ms, and consecutive cold passes inside
+// one process ranged 122-171 ms. The same benchmarks track bare metal within 5%
+// on the warm path. Judge a change by recording the baseline and the comparison
+// back-to-back in one session.
 // ---------------------------------------------------------------------------
 
 fn cold_sequential_read(c: &mut Criterion) {
