@@ -12,12 +12,7 @@ use e01::e01_reader::{
 };
 use rawdisk::IoLog as RawIoLog;
 use rawdisk::rawdisk_reader::{CacheMode as RawCacheMode, RawdiskReader, RawdiskReaderOptions};
-use std::{
-    io,
-    path::{Path, PathBuf},
-    process::ExitCode,
-    sync::Arc,
-};
+use std::{io, path::PathBuf, process::ExitCode, sync::Arc};
 use vmdkrs::IoLog as VmdkIoLog;
 use vmdkrs::vmdk_reader::{CacheMode as VmdkCacheMode, VmdkReader, VmdkReaderOptions};
 
@@ -38,7 +33,8 @@ struct Args {
     /// whole image.
     image_path: String,
 
-    /// Ignore chunk checksums while reading (E01 only; silently has no effect for VMDK).
+    /// Ignore chunk checksums while reading (E01 only; silently has no effect
+    /// for VMDK or raw, which have no per-chunk checksums).
     #[arg(short, long)]
     ignore_checksums: bool,
 
@@ -53,18 +49,37 @@ enum Format {
     Raw,
 }
 
+/// The suffix after the final `.` of the last path component, or `None` when
+/// there is no dot or nothing follows it.
+///
+/// Deliberately not `Path::extension()`, which reports `None` for a name that
+/// begins with a dot. Every reader here splits on the final `.` instead --
+/// e01's `validate_proto_extension` and rawdisk's `split_numeric_suffix` both
+/// do -- so `Path::extension()` made this function reject names the readers
+/// would have opened without complaint: `/img/.001` is a segment like any
+/// other, and `/img/.e01` an E01 like any other.
+fn final_suffix(path: &str) -> Option<&str> {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    name.rsplit_once('.')
+        .map(|(_, suffix)| suffix)
+        .filter(|suffix| !suffix.is_empty())
+}
+
 fn detect_format(path: &str) -> Result<Format, String> {
-    let ext = Path::new(path)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase());
+    let ext = final_suffix(path).map(|ext| ext.to_ascii_lowercase());
 
     match ext.as_deref() {
         Some("e01") => Ok(Format::E01),
         Some("vmdk") => Ok(Format::Vmdk),
         Some("raw" | "dd" | "img") => Ok(Format::Raw),
-        // A numeric extension is a split raw segment; the reader finds the rest.
-        Some(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => Ok(Format::Raw),
+        // A numeric suffix is a split raw segment; the reader finds the rest.
+        // Left broad on purpose. Narrowing it to something more segment-shaped
+        // -- zero-padded, or below some bound -- would reject `disk.150`, which
+        // is a perfectly ordinary way to name the segment you happen to have,
+        // and rawdisk rewinds to the start of the sequence from any of them. A
+        // false positive here costs nothing: raw means "serve these bytes", so
+        // an unrecognised file is served as-is rather than misparsed.
+        Some(s) if s.bytes().all(|b| b.is_ascii_digit()) => Ok(Format::Raw),
         _ => Err(format!(
             "unsupported image extension in {path:?}; expected .e01, .vmdk, .raw, .dd, .img, or a numbered segment"
         )),
@@ -448,6 +463,46 @@ mod tests {
     fn still_detects_e01_and_vmdk() {
         assert_eq!(detect_format("/img/d.E01").unwrap(), Format::E01);
         assert_eq!(detect_format("/img/d.vmdk").unwrap(), Format::Vmdk);
+    }
+
+    /// `Path::extension()` reports None for a leading-dot filename, so these
+    /// were rejected here despite the readers opening them without complaint --
+    /// both split on the final `.` instead. The CLI must not refuse to serve an
+    /// image the reader supports.
+    #[test]
+    fn detects_dotfile_names_the_readers_accept() {
+        assert_eq!(detect_format("/img/.001").unwrap(), Format::Raw);
+        assert_eq!(detect_format("/img/.e01").unwrap(), Format::E01);
+        assert_eq!(detect_format("/img/.vmdk").unwrap(), Format::Vmdk);
+        assert_eq!(detect_format(".001").unwrap(), Format::Raw);
+    }
+
+    /// A dot in a directory name is not a suffix. Only the last component counts.
+    #[test]
+    fn a_dot_in_a_directory_is_not_a_suffix() {
+        assert!(detect_format("/img/v1.2/disk").is_err());
+        assert_eq!(detect_format("/img/v1.2/disk.001").unwrap(), Format::Raw);
+        assert_eq!(
+            detect_format("/img/case.2024/disk.raw").unwrap(),
+            Format::Raw
+        );
+    }
+
+    /// A trailing dot leaves no suffix at all.
+    #[test]
+    fn a_trailing_dot_is_not_a_suffix() {
+        assert!(detect_format("/img/disk.").is_err());
+    }
+
+    /// The numeric rule is deliberately broad: any all-digit suffix is a raw
+    /// segment. Narrowing it to something more segment-shaped would reject
+    /// `disk.150`, an ordinary way to name the segment you have. Pinned so the
+    /// breadth stays a decision rather than an accident.
+    #[test]
+    fn any_all_digit_suffix_is_raw() {
+        for path in ["/img/d.1", "/img/d.150", "/img/d.0000", "/img/backup.2024"] {
+            assert_eq!(detect_format(path).unwrap(), Format::Raw, "{path}");
+        }
     }
 
     #[test]

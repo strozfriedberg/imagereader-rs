@@ -104,7 +104,7 @@ pub struct CommonArgs {
     pub cache_dir: Option<PathBuf>,
 
     /// Cache block size in bytes: the granularity blocks are stored and
-    /// evicted at (e01 and VMDK).
+    /// evicted at (all formats).
     ///
     /// Small blocks let the cache keep exactly what is hot -- a scattered
     /// 200 KB index read should not pin megabytes of junk in a cache under
@@ -114,7 +114,7 @@ pub struct CommonArgs {
     #[arg(long, default_value = "1048576")]
     pub cache_chunk_size: usize,
 
-    /// Bytes pulled from the backing store per cache miss (e01 and VMDK).
+    /// Bytes pulled from the backing store per cache miss (all formats).
     /// Defaults to --cache-chunk-size.
     ///
     /// Against a high-latency store this is the most important knob here. A
