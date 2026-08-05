@@ -73,6 +73,15 @@ pub fn segment_paths<C: ExistsChecker>(
         }
     }
 
+    // The caller asked for this exact path; it must exist. If it does not, we
+    // would silently return a different image (the one before it), which is the
+    // exact failure this module exists to prevent.
+    if !checker.exists(example) {
+        return Err(MissingSegment {
+            path: example.to_string(),
+        });
+    }
+
     let mut paths = Vec::new();
     let mut n = first;
     loop {
@@ -214,5 +223,25 @@ mod test {
             segment_paths("/img/d.001", &mut fs).unwrap(),
             vec!["/img/d.001"]
         );
+    }
+
+    /// Asking for a file that does not exist must not hand back a working
+    /// reader over a different image. This prevents silent substitution.
+    #[test]
+    fn a_nonexistent_named_segment_is_an_error() {
+        let mut fs = FakeFs::new(&["/img/d.001", "/img/d.002", "/img/d.003", "/img/d.004"]);
+        let err = segment_paths("/img/d.005", &mut fs).unwrap_err();
+        assert_eq!(err.path, "/img/d.005");
+    }
+
+    /// Distinguishing case for the lower-gap loop: without it, the walk would
+    /// stop at d.002, the lookahead would check only d.003 (absent), and the
+    /// function would return Ok(["d.001"]), silently dropping segments 002–005
+    /// and the requested d.006 itself.
+    #[test]
+    fn a_wide_gap_below_the_example_is_an_error() {
+        let mut fs = FakeFs::new(&["/img/d.001", "/img/d.006"]);
+        let err = segment_paths("/img/d.006", &mut fs).unwrap_err();
+        assert_eq!(err.path, "/img/d.002");
     }
 }
