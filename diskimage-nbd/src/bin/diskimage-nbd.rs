@@ -10,6 +10,8 @@ use e01::e01_reader::{
     CacheMode as E01CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, E01Reader,
     E01ReaderOptions,
 };
+use rawdisk::IoLog as RawIoLog;
+use rawdisk::rawdisk_reader::{CacheMode as RawCacheMode, RawdiskReader, RawdiskReaderOptions};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -45,19 +47,23 @@ struct Args {
 enum Format {
     E01,
     Vmdk,
+    Raw,
 }
 
 fn detect_format(path: &str) -> Result<Format, String> {
-    match Path::new(path)
+    let ext = Path::new(path)
         .extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .as_deref()
-    {
+        .map(|ext| ext.to_ascii_lowercase());
+
+    match ext.as_deref() {
         Some("e01") => Ok(Format::E01),
         Some("vmdk") => Ok(Format::Vmdk),
+        Some("raw" | "dd" | "img") => Ok(Format::Raw),
+        // A numeric extension is a split raw segment; the reader finds the rest.
+        Some(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => Ok(Format::Raw),
         _ => Err(format!(
-            "unsupported image extension in {path:?}; expected .e01 or .vmdk"
+            "unsupported image extension in {path:?}; expected .e01, .vmdk, .raw, .dd, .img, or a numbered segment"
         )),
     }
 }
@@ -90,9 +96,24 @@ impl NbdImage for VmdkAdapter {
     }
 }
 
+struct RawAdapter(RawdiskReader);
+
+impl NbdImage for RawAdapter {
+    fn size(&self) -> u64 {
+        self.0.image_size
+    }
+
+    fn read_at_offset(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        self.0
+            .read_at_offset(offset, buf)
+            .map_err(|e| io::Error::other(e.to_string()))
+    }
+}
+
 enum Adapter {
     E01(E01Adapter),
     Vmdk(VmdkAdapter),
+    Raw(RawAdapter),
 }
 
 impl NbdImage for Adapter {
@@ -100,6 +121,7 @@ impl NbdImage for Adapter {
         match self {
             Adapter::E01(a) => a.size(),
             Adapter::Vmdk(a) => a.size(),
+            Adapter::Raw(a) => a.size(),
         }
     }
 
@@ -107,6 +129,7 @@ impl NbdImage for Adapter {
         match self {
             Adapter::E01(a) => a.read_at_offset(offset, buf),
             Adapter::Vmdk(a) => a.read_at_offset(offset, buf),
+            Adapter::Raw(a) => a.read_at_offset(offset, buf),
         }
     }
 }
@@ -183,6 +206,35 @@ fn open_vmdk(
         },
     )
     .map(|r| Adapter::Vmdk(VmdkAdapter(r)))
+    .map_err(Into::into)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_raw(
+    path: &str,
+    readahead: usize,
+    s3_concurrency: usize,
+    cache_mem_mib: usize,
+    cache_mode: RawCacheMode,
+    cache_dir: Option<PathBuf>,
+    cache_chunk_size: usize,
+    cache_fetch_size: usize,
+    io_log: Option<Arc<RawIoLog>>,
+) -> Result<Adapter, Box<dyn std::error::Error>> {
+    RawdiskReader::open_with_options(
+        path,
+        &RawdiskReaderOptions {
+            foyer_readahead: readahead,
+            s3_concurrency,
+            cache_mem_mib,
+            cache_mode,
+            cache_dir,
+            io_log,
+            cache_chunk_size,
+            cache_fetch_size,
+        },
+    )
+    .map(|r| Adapter::Raw(RawAdapter(r)))
     .map_err(Into::into)
 }
 
@@ -283,6 +335,41 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 io_log,
             )
         }
+        Format::Raw => {
+            let cache_mode = if common.metadata_cache {
+                RawCacheMode::DualHybrid {
+                    content_disk_mib: common.content_cache_disk_mib,
+                    metadata_mem_mib: common.metadata_cache_mem_mib,
+                    metadata_disk_mib: common.metadata_cache_disk_mib,
+                    regular_phase: make_cache_phase(&common)?,
+                }
+            } else {
+                RawCacheMode::SingleMemory
+            };
+            run_serve(
+                common,
+                &image_path,
+                move || -> Result<Adapter, Box<dyn std::error::Error>> {
+                    let trace = cache_trace_log.as_deref().map(RawIoLog::open).transpose()?;
+                    let adapter = open_raw(
+                        &path,
+                        readahead,
+                        s3_concurrency,
+                        cache_mem_mib,
+                        cache_mode,
+                        cache_dir,
+                        cache_chunk_size,
+                        cache_fetch_size,
+                        trace.clone(),
+                    )?;
+                    if let Some(trace) = &trace {
+                        trace.begin_serving()?;
+                    }
+                    Ok(adapter)
+                },
+                io_log,
+            )
+        }
     }
 }
 
@@ -331,14 +418,33 @@ mod tests {
 
     #[test]
     fn rejects_unknown_extension() {
-        let err = detect_format("/data/image.raw").unwrap_err();
-        assert!(err.contains(".e01 or .vmdk"), "unexpected error: {err}");
+        let err = detect_format("/data/image.qcow2").unwrap_err();
+        assert!(err.contains(".e01"), "unexpected error: {err}");
     }
 
     #[test]
     fn rejects_missing_extension() {
         let err = detect_format("/data/image").unwrap_err();
-        assert!(err.contains(".e01 or .vmdk"), "unexpected error: {err}");
+        assert!(err.contains(".e01"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn detects_raw_extensions() {
+        for path in ["/img/d.raw", "/img/d.dd", "/img/d.img", "/img/d.001"] {
+            assert_eq!(detect_format(path).unwrap(), Format::Raw, "{path}");
+        }
+    }
+
+    #[test]
+    fn still_detects_e01_and_vmdk() {
+        assert_eq!(detect_format("/img/d.E01").unwrap(), Format::E01);
+        assert_eq!(detect_format("/img/d.vmdk").unwrap(), Format::Vmdk);
+    }
+
+    #[test]
+    fn rejects_unknown_extensions() {
+        assert!(detect_format("/img/d.qcow2").is_err());
+        assert!(detect_format("/img/d").is_err());
     }
 
     #[test]

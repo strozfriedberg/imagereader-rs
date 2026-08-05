@@ -1043,6 +1043,7 @@ dependencies = [
  "byteorder",
  "clap",
  "e01-rs",
+ "rawdisk-rs",
  "signal-hook",
  "tempfile",
  "time",
