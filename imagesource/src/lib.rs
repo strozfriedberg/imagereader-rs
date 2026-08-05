@@ -8,6 +8,7 @@ pub mod cachemode;
 pub mod cachereadseek;
 pub mod dummycache;
 pub mod errors;
+pub mod exists;
 pub mod fetch_limit;
 pub mod filesource;
 pub mod foyercache;

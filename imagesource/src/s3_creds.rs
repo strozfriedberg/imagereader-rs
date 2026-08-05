@@ -194,6 +194,18 @@ pub fn s3_region_name(auth: Option<&S3Auth>) -> Option<String> {
         .or_else(|| auth.and_then(|a| a.region.clone()))
 }
 
+/// Whether a bucket holding `current` needs to be handed `fresh`.
+///
+/// Only the three fields that get signed are compared. Expiry deliberately is
+/// not: a bucket carrying credentials that are valid but nearer their expiry
+/// than the snapshot signs exactly the same, and treating that as a difference
+/// would rewrite the bucket on every single call for no gain.
+pub fn credentials_rotated(current: &Credentials, fresh: &Credentials) -> bool {
+    current.access_key != fresh.access_key
+        || current.secret_key != fresh.secret_key
+        || current.session_token != fresh.session_token
+}
+
 pub fn snapshot_credentials_sync(
     runtime: &Runtime,
     auth: &S3Auth,
@@ -290,6 +302,55 @@ mod tests {
         assert_eq!(creds.session_token.as_deref(), Some("TOKEN"));
         assert_eq!(creds.security_token.as_deref(), Some("TOKEN"));
         assert!(creds.expiration.is_some());
+    }
+
+    fn creds(access: &str, secret: &str, token: Option<&str>) -> Credentials {
+        Credentials {
+            access_key: Some(access.into()),
+            secret_key: Some(secret.into()),
+            session_token: token.map(str::to_string),
+            security_token: token.map(str::to_string),
+            expiration: None,
+        }
+    }
+
+    /// Holding one bucket across many probes is only safe if rotation is
+    /// noticed, so each signed field has to count.
+    #[test]
+    fn credentials_rotated_spots_each_signed_field() {
+        let base = creds("AKID", "SECRET", Some("TOKEN"));
+
+        assert!(!credentials_rotated(&base, &base.clone()));
+        assert!(credentials_rotated(
+            &base,
+            &creds("AKID2", "SECRET", Some("TOKEN"))
+        ));
+        assert!(credentials_rotated(
+            &base,
+            &creds("AKID", "SECRET2", Some("TOKEN"))
+        ));
+        assert!(credentials_rotated(
+            &base,
+            &creds("AKID", "SECRET", Some("TOKEN2"))
+        ));
+        assert!(credentials_rotated(&base, &creds("AKID", "SECRET", None)));
+    }
+
+    /// The other half: identical signing material must NOT count as rotation,
+    /// or the bucket gets rewritten on every probe and the caching is undone.
+    /// Expiry moving on its own is the case that matters -- it does not change
+    /// what gets signed.
+    #[test]
+    fn credentials_rotated_ignores_expiry_alone() {
+        let mut a = creds("AKID", "SECRET", Some("TOKEN"));
+        let mut b = a.clone();
+        a.expiration = Some(Rfc3339OffsetDateTime::from(
+            OffsetDateTime::now_utc() + time::Duration::hours(1),
+        ));
+        b.expiration = Some(Rfc3339OffsetDateTime::from(
+            OffsetDateTime::now_utc() + time::Duration::hours(9),
+        ));
+        assert!(!credentials_rotated(&a, &b));
     }
 
     #[test]

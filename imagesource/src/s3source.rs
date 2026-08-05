@@ -8,7 +8,7 @@ use tracing::trace;
 
 use crate::bytessource::BytesSource;
 use crate::io_log::IoLog;
-use crate::s3_creds::{S3Auth, ensure_fresh_async};
+use crate::s3_creds::{S3Auth, credentials_rotated, ensure_fresh_async};
 
 pub struct S3Source {
     bucket: Arc<RwLock<Bucket>>,
@@ -47,11 +47,7 @@ impl S3Source {
         let needs_update = {
             let bucket = bucket.read().await;
             match bucket.credentials().await {
-                Ok(current) => {
-                    current.access_key != creds.access_key
-                        || current.secret_key != creds.secret_key
-                        || current.session_token != creds.session_token
-                }
+                Ok(current) => credentials_rotated(&current, &creds),
                 Err(_) => true,
             }
         };

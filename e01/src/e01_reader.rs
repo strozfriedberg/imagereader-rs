@@ -1,6 +1,5 @@
 use kaitai::{BytesReader, KError, ReadSeek};
 use rayon::prelude::*;
-use s3::{bucket::Bucket, region::Region};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -9,29 +8,43 @@ use std::{
 };
 use tokio::runtime::Runtime;
 use tracing::{debug, warn};
-use url::{self, Url};
 
 use crate::{
     cacheworkersource::CacheWorkerSource,
     error::{IoError, LibError},
     readworker::{DecodedChunkCache, ReadWorker},
     sec_read::{Chunk, Section, SectionIterator, VolumeSection},
-    seg_path::{ExistsChecker, UnrecognizedExtension, validated_segment_paths},
+    seg_path::{SegPathError, UnrecognizedExtension, validated_segment_paths},
     segment::SegmentFileHeader,
 };
 use imagesource::{
     Cache, CacheReadSeek, FoyerCache, IoLog, ReadTimer, ReadTrace, chunk_cache_label,
-    s3_creds::{S3Auth, resolve_s3_auth, snapshot_credentials_sync},
-    urlsource::{path_or_url_to_url, s3_bucket, source_for_url},
+    exists::{ExistsError, FileChecker, S3Checker},
+    s3_creds::{S3Auth, resolve_s3_auth},
+    urlsource::{path_or_url_to_url, source_for_url},
 };
 
 // Re-exported so existing consumers keep their `e01::e01_reader::…` paths.
 pub use imagesource::{CacheMode, InitError};
 
+impl From<SegPathError> for OpenError {
+    fn from(e: SegPathError) -> Self {
+        match e {
+            SegPathError::UnrecognizedExtension(e) => Self::PathGlobError(e),
+            SegPathError::Undetermined(e) => Self::SegmentProbeFailed(e),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error("{0}")]
     PathGlobError(#[from] UnrecognizedExtension),
+    /// A segment probe during globbing gave no definite answer. Distinct from
+    /// `NoSegmentFiles`: the sequence may well be complete, we just could not
+    /// see it, and silently globbing a shorter one would open a short image.
+    #[error("{0}")]
+    SegmentProbeFailed(#[from] ExistsError),
     #[error("No segment files given")]
     NoSegmentFiles,
     #[error("Missing volume section in {0}")]
@@ -760,57 +773,6 @@ impl Debug for E01Reader {
             .field("corrupt_section_policy", &self.corrupt_section_policy)
             .field("corrupt_chunk_policy", &self.corrupt_chunk_policy)
             .finish()
-    }
-}
-
-struct FileChecker;
-
-impl ExistsChecker for FileChecker {
-    fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
-        Path::new(path.as_ref()).is_file()
-    }
-}
-
-struct S3Checker {
-    bucket_name: String,
-    region: Region,
-    runtime: Arc<Runtime>,
-    auth: Arc<S3Auth>,
-}
-
-impl S3Checker {
-    fn new(url: &Url, runtime: Arc<Runtime>, auth: Arc<S3Auth>) -> Result<Self, OpenError> {
-        let name = url.host_str().ok_or(OpenError::BadPath(url.to_string()))?;
-        let bucket = s3_bucket(name, url.as_ref(), &runtime, &auth)?;
-        Ok(Self {
-            bucket_name: name.to_string(),
-            region: bucket.region().clone(),
-            runtime,
-            auth,
-        })
-    }
-}
-
-impl ExistsChecker for S3Checker {
-    fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
-        Url::parse(path.as_ref())
-            .map(|url| {
-                let bucket = snapshot_credentials_sync(&self.runtime, &self.auth)
-                    .ok()
-                    .and_then(|credentials| {
-                        Bucket::new(&self.bucket_name, self.region.clone(), credentials)
-                            .ok()
-                            .map(|b| *b)
-                    });
-                bucket
-                    .map(|bucket| {
-                        self.runtime
-                            .block_on(bucket.head_object(url.path().trim_start_matches('/')))
-                            .is_ok_and(|(_, code)| code == 200)
-                    })
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false)
     }
 }
 
