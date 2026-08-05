@@ -27,3 +27,24 @@ diskimage-nbd 0.1.0 (a1b2c3d)   # --version: crate version + commit
 $ diskimage-nbd -V
 diskimage-nbd 0.1.0             # -V: plain crate version
 ```
+
+## Supported image formats
+
+### Split raw images
+
+A raw image split across numbered segments is opened by naming any one of them:
+
+```
+diskimage-nbd /images/disk.001 --unix /tmp/nbd.sock
+```
+
+Segments must be numbered with a `.` followed by digits (`disk.001`, `disk.dd.1`).
+The digit width is taken from the path you name, so `.001` pairs with `.002` but
+never with `.02`. Sequences may start at `000` or `001`.
+
+If a segment in the middle is missing, opening fails and names it. This is
+deliberate: a split image with a hole would otherwise read as a valid but short
+image, which parses and mounts and looks correct until something reads past the
+gap.
+
+`split(1)`'s alphabetic output (`xaa`, `xab`) is not recognised.
