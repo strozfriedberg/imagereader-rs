@@ -1,3 +1,5 @@
 /target
 /.world/build_config.sh
 /.bench-ab/
+/.claude/
+/.superpowers/
