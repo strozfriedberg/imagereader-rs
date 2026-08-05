@@ -1,4 +1,5 @@
 pub mod rawdisk_reader;
+pub mod spans;
 
 #[cfg(feature = "capi")]
 pub mod capi;
