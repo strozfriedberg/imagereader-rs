@@ -1,5 +1,5 @@
-//! Serve an E01 or VMDK image over NBD (fixed new-style), similar to `qemu-nbd`.
-//! The image format (E01 vs VMDK) is chosen by the input path's extension.
+//! Serve an E01, VMDK or raw image over NBD (fixed new-style), similar to
+//! `qemu-nbd`. The image format is chosen by the input path's extension.
 
 use clap::Parser;
 use diskimage_nbd::{
@@ -27,12 +27,15 @@ use vmdkrs::vmdk_reader::{CacheMode as VmdkCacheMode, VmdkReader, VmdkReaderOpti
     author,
     version,
     long_version = buildinfo::long_version!(),
-    about = "Serve an E01 or VMDK image over NBD",
+    about = "Serve an E01, VMDK or raw image over NBD",
     long_about = None
 )]
 struct Args {
-    /// Path to an E01 segment or VMDK descriptor/image (local path, glob, or s3:// URL).
-    /// Format is chosen by extension: .e01 -> E01, .vmdk -> VMDK.
+    /// Path to an E01 segment, a VMDK descriptor/image, or a raw image
+    /// (local path, glob, or s3:// URL). Format is chosen by extension:
+    /// .e01 -> E01, .vmdk -> VMDK, .raw/.dd/.img or a numbered segment
+    /// (disk.001) -> raw. Naming any segment of a split raw image opens the
+    /// whole image.
     image_path: String,
 
     /// Ignore chunk checksums while reading (E01 only; silently has no effect for VMDK).
@@ -419,13 +422,19 @@ mod tests {
     #[test]
     fn rejects_unknown_extension() {
         let err = detect_format("/data/image.qcow2").unwrap_err();
-        assert!(err.contains(".e01"), "unexpected error: {err}");
+        assert!(
+            err.contains("unsupported image extension"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
     fn rejects_missing_extension() {
         let err = detect_format("/data/image").unwrap_err();
-        assert!(err.contains(".e01"), "unexpected error: {err}");
+        assert!(
+            err.contains("unsupported image extension"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

@@ -30,6 +30,9 @@ diskimage-nbd 0.1.0             # -V: plain crate version
 
 ## Supported image formats
 
+E01 (`.e01`), VMDK (`.vmdk`), and raw/dd (`.raw`, `.dd`, `.img`, or a numbered
+segment such as `disk.001`). The format is chosen by the path's extension.
+
 ### Split raw images
 
 A raw image split across numbered segments is opened by naming any one of them:
@@ -38,9 +41,17 @@ A raw image split across numbered segments is opened by naming any one of them:
 diskimage-nbd /images/disk.001 --unix /tmp/nbd.sock
 ```
 
-Segments must be numbered with a `.` followed by digits (`disk.001`, `disk.dd.1`).
-The digit width is taken from the path you name, so `.001` pairs with `.002` but
-never with `.02`. Sequences may start at `000` or `001`.
+Segments must be numbered with a `.` followed by at least two digits, zero-padded
+to a fixed width (`disk.001`, `disk.dd.01`). The width is taken from the path you
+name, so `.001` pairs with `.002` but never with `.02`. Sequences may start at
+`000` or `001`.
+
+Unpadded numbering is deliberately not recognised. `img.1` and `img.2` are far
+more often two unrelated images than one split one, and no rule based on names
+alone can tell those apart -- guessing wrong would serve `img.2`'s bytes as the
+tail of `img.1` with no error at all. Files such as `backup.2024` are left alone
+for the same reason: consecutive, same-width, but unpadded, so they open as
+themselves rather than as a sequence with a missing start.
 
 A hole in the sequence makes opening fail, naming the missing file. A split
 image with a gap would otherwise read as a valid but short image, which parses
