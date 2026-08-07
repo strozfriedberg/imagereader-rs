@@ -1,212 +1,31 @@
 ---
+default:
+  # Cannot use slim, as ssl and crypto are missing: openssl-sys comes in via
+  # rust-s3 and needs the headers.
+  image: rust:latest
+  before_script:
+    - test -x "$CARGO_HOME/bin/sccache" || cargo install sccache
+    - export "PATH=$CARGO_HOME/bin:$PATH"
+    - export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
+    - rustc --version
+    - cargo --version
+    - sccache --version
+
 stages:
-  - clear_approval
   - build
   - test
 
 variables:
-  FULL_BUILD:
-    value: "false"
-    options:
-      - "true"
-      - "false"
-    description: "Whether to run a full build, including Windows E2E"
-  PENGUIN_BUILD:
-    value: "false"
-    options:
-      - "true"
-      - "false"
-    description: "Whether to run a penguin_ci build"
-  BUILD_LOCATION:
-    value: "staging"
-    options:
-      - "production"
-      - "staging"
-    description: "Where to build"
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  CARGO_TARGET_DIR: $CI_PROJECT_DIR/target
+  FF_USE_FASTZIP: true
+  CACHE_COMPRESSION_LEVEL: "fast"
+  ARTIFACT_COMPRESSION_LEVEL: "fast"
+  TRANSFER_METER_FREQUENCY: "2s"
+  CACHE_COMPRESSION_FORMAT: "zip"
 
 build:
   stage: build
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-  variables:
-    JOB_TYPE: "build"
-    MERGE_PROJECT: $CI_MERGE_REQUEST_PROJECT_PATH
-    MERGE_PROJECT_ID: $CI_MERGE_REQUEST_PROJECT_ID
-    MERGE_SOURCE_BRANCH: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
-    MERGE_TARGET_BRANCH: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
-    MERGE_REQUEST_IID: $CI_MERGE_REQUEST_IID
-    MERGE_SOURCE_COMMIT: $CI_COMMIT_SHA
-    SOURCE_HEAD_COMMIT: $CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
-    BUILD_LOCATION: "production"
-  trigger:
-    project: soldev/cyberdev/make_world
-    branch: $MAKE_WORLD_DEFAULT_BRANCH
-    strategy: depend
-
-build (penguin ci):
-  stage: build
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-  variables:
-    JOB_TYPE: "build"
-    MERGE_PROJECT: $CI_MERGE_REQUEST_PROJECT_PATH
-    MERGE_PROJECT_ID: $CI_MERGE_REQUEST_PROJECT_ID
-    MERGE_SOURCE_BRANCH: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
-    MERGE_TARGET_BRANCH: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
-    MERGE_REQUEST_IID: $CI_MERGE_REQUEST_IID
-    MERGE_SOURCE_COMMIT: $CI_COMMIT_SHA
-    SOURCE_HEAD_COMMIT: $CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
-    PENGUIN_BUILD: "true"
-    BUILD_LOCATION: "production"
-  trigger:
-    project: soldev/cyberdev/make_world
-    branch: $MAKE_WORLD_DEFAULT_BRANCH
-    strategy: depend
-
-build (full e2e):
-  stage: build
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-  variables:
-    JOB_TYPE: "build"
-    MERGE_PROJECT: $CI_MERGE_REQUEST_PROJECT_PATH
-    MERGE_PROJECT_ID: $CI_MERGE_REQUEST_PROJECT_ID
-    MERGE_SOURCE_BRANCH: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
-    MERGE_TARGET_BRANCH: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
-    MERGE_REQUEST_IID: $CI_MERGE_REQUEST_IID
-    MERGE_SOURCE_COMMIT: $CI_COMMIT_SHA
-    SOURCE_HEAD_COMMIT: $CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
-    FULL_BUILD: "true"
-    BUILD_LOCATION: "production"
-  trigger:
-    project: soldev/cyberdev/make_world
-    branch: $MAKE_WORLD_DEFAULT_BRANCH
-    strategy: depend
-
-STAGING build:
-  stage: build
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-  variables:
-    JOB_TYPE: "build"
-    MERGE_PROJECT: $CI_MERGE_REQUEST_PROJECT_PATH
-    MERGE_PROJECT_ID: $CI_MERGE_REQUEST_PROJECT_ID
-    MERGE_SOURCE_BRANCH: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
-    MERGE_TARGET_BRANCH: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
-    MERGE_REQUEST_IID: $CI_MERGE_REQUEST_IID
-    MERGE_SOURCE_COMMIT: $CI_COMMIT_SHA
-    SOURCE_HEAD_COMMIT: $CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
-    BUILD_LOCATION: "staging"
-  trigger:
-    project: soldev/cyberdev/make_world
-    branch: $MAKE_WORLD_DEFAULT_BRANCH
-    strategy: depend
-
-STAGING (penguin ci):
-  stage: build
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-  variables:
-    JOB_TYPE: "build"
-    MERGE_PROJECT: $CI_MERGE_REQUEST_PROJECT_PATH
-    MERGE_PROJECT_ID: $CI_MERGE_REQUEST_PROJECT_ID
-    MERGE_SOURCE_BRANCH: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
-    MERGE_TARGET_BRANCH: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
-    MERGE_REQUEST_IID: $CI_MERGE_REQUEST_IID
-    MERGE_SOURCE_COMMIT: $CI_COMMIT_SHA
-    SOURCE_HEAD_COMMIT: $CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
-    PENGUIN_BUILD: "true"
-    BUILD_LOCATION: "staging"
-  trigger:
-    project: soldev/cyberdev/make_world
-    branch: $MAKE_WORLD_DEFAULT_BRANCH
-    strategy: depend
-
-STAGING (full e2e):
-  stage: build
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-  variables:
-    JOB_TYPE: "build"
-    MERGE_PROJECT: $CI_MERGE_REQUEST_PROJECT_PATH
-    MERGE_PROJECT_ID: $CI_MERGE_REQUEST_PROJECT_ID
-    MERGE_SOURCE_BRANCH: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
-    MERGE_TARGET_BRANCH: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
-    MERGE_REQUEST_IID: $CI_MERGE_REQUEST_IID
-    MERGE_SOURCE_COMMIT: $CI_COMMIT_SHA
-    SOURCE_HEAD_COMMIT: $CI_MERGE_REQUEST_SOURCE_BRANCH_SHA
-    FULL_BUILD: "true"
-    BUILD_LOCATION: "staging"
-  trigger:
-    project: soldev/cyberdev/make_world
-    branch: $MAKE_WORLD_DEFAULT_BRANCH
-    strategy: depend
-
-
-# update submodule ref in make_world when an MR is merged
-update make_world:
-  stage: build
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-  variables:
-    JOB_TYPE: "update"
-    MERGE_PROJECT: $CI_PROJECT_NAME
-    MERGE_COMMIT: $CI_COMMIT_SHA
-    MERGE_COMMIT_MESSAGE: $CI_COMMIT_MESSAGE
-  trigger:
-    project: soldev/cyberdev/make_world
-    branch: $MAKE_WORLD_DEFAULT_BRANCH
-    strategy: depend
-
-remove build approval:
-  stage: clear_approval
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-  variables:
-    JOB_TYPE: "unapprove"
-    MERGE_PROJECT_ID: $CI_MERGE_REQUEST_PROJECT_ID
-    MERGE_REQUEST_IID: $CI_MERGE_REQUEST_IID
-  trigger:
-    project: soldev/cyberdev/make_world
-    branch: $MAKE_WORLD_DEFAULT_BRANCH
-    strategy: depend
-
-
-
-# Rust checks that run in this project's own pipeline rather than delegating to
-# make_world. They fill the gap left by .world/build.sh, which already runs
-# clippy and the C-API tests but neither rustfmt nor the plain test suite.
-.rust:
-  image: rust:latest          # not -slim: openssl-sys needs the ssl/crypto headers
-  variables:
-    CARGO_HOME: $CI_PROJECT_DIR/.cargo
-    CARGO_TARGET_DIR: $CI_PROJECT_DIR/target
-    FF_USE_FASTZIP: "true"
-    CACHE_COMPRESSION_LEVEL: "fast"
-    CACHE_COMPRESSION_FORMAT: "zip"
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-# Separate from `test` on purpose: formatting needs no compilation, so a
-# misformatted branch fails in seconds instead of behind a full workspace build.
-fmt:
-  extends: .rust
-  stage: test
-  needs: []
-  script:
-    - rustup component add rustfmt
-    - cargo fmt --all -- --check
-
-test:
-  extends: .rust
-  stage: test
   needs: []
   variables:
     SCCACHE_DIR: $CI_PROJECT_DIR/.sccache-test
@@ -215,7 +34,7 @@ test:
       paths:
         - .sccache-test/
       policy: pull-push
-    - key: "cargo-v1"
+    - key: "cargo-v2"
       paths:
         - .cargo/registry/index/
         - .cargo/registry/cache/
@@ -225,13 +44,43 @@ test:
       paths:
         - .cargo/bin/sccache
       policy: pull-push
-  before_script:
-    - test -x "$CARGO_HOME/bin/sccache" || cargo install sccache
-    - export "PATH=$CARGO_HOME/bin:$PATH"
-    - export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
-    - rustc --version && cargo --version && sccache --version
-  # --all-features picks up the capi modules; --locked keeps CI honest about
-  # Cargo.lock; --tests skips doctests, of which this workspace has none.
+  script:
+    - cargo build --workspace --all-targets --all-features --locked
+    - sccache --show-stats
+
+test:
+  stage: test
+  needs:
+    - job: build
+      artifacts: false
+  variables:
+    SCCACHE_DIR: $CI_PROJECT_DIR/.sccache-test
+  cache:
+    - key: "sccache-v1-test"
+      paths:
+        - .sccache-test/
+      policy: pull
+    - key: "cargo-v2"
+      paths:
+        - .cargo/registry/index/
+        - .cargo/registry/cache/
+        - .cargo/git/db/
+      policy: pull
+    - key: "cargo-bin-sccache"
+      paths:
+        - .cargo/bin/sccache
+      policy: pull
+  # --all-features covers the capi modules; --locked fails rather than silently
+  # updating Cargo.lock; --tests skips doctests, of which there are none.
   script:
     - cargo test --workspace --all-features --locked --tests
     - sccache --show-stats
+
+# Compiles nothing, so it skips the sccache setup and does not wait on build.
+fmt:
+  stage: test
+  needs: []
+  before_script: []
+  script:
+    - rustup component add rustfmt
+    - cargo fmt --all -- --check
