@@ -1,4 +1,14 @@
 ---
+# One pipeline per change: merge request pipelines when an MR is open, branch
+# pipelines otherwise. Without the middle rule a branch with an open MR gets
+# both.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
 default:
   # Cannot use slim, as ssl and crypto are missing: openssl-sys comes in via
   # rust-s3 and needs the headers.
@@ -24,8 +34,54 @@ variables:
   TRANSFER_METER_FREQUENCY: "2s"
   CACHE_COMPRESSION_FORMAT: "zip"
 
+# Shared registry cache. Pulled everywhere, written by build.
+.cargo-registry-cache: &cargo-registry-cache
+  key: "cargo-v2"
+  paths:
+    - .cargo/registry/index/
+    - .cargo/registry/cache/
+    - .cargo/git/db/
+
+.sccache-bin-cache: &sccache-bin-cache
+  key: "cargo-bin-sccache"
+  paths:
+    - .cargo/bin/sccache
+
+# scripts/build-release.sh refuses to build a dirty tree so the embedded commit
+# always identifies the source. The restored caches all sit under gitignored
+# paths, so the checkout stays clean.
+#
+# lto = true in the release profile, so this is slow. Nothing in the test stage
+# waits on it -- they all declare needs: [] and run alongside.
 build:
   stage: build
+  needs: []
+  variables:
+    SCCACHE_DIR: $CI_PROJECT_DIR/.sccache-release
+  cache:
+    - key: "sccache-v1-release"
+      paths:
+        - .sccache-release/
+      policy: pull-push
+    - <<: *cargo-registry-cache
+      policy: pull-push
+    - <<: *sccache-bin-cache
+      policy: pull-push
+  script:
+    - scripts/build-release.sh
+    - sccache --show-stats
+  artifacts:
+    name: "imagereader-$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - target/release/e01verify
+      - target/release/diskimage-nbd
+    when: on_success
+    expire_in: 3 days
+
+# --all-features covers the capi modules; --locked fails rather than silently
+# updating Cargo.lock; --tests skips doctests, of which all six crates have none.
+test:
+  stage: test
   needs: []
   variables:
     SCCACHE_DIR: $CI_PROJECT_DIR/.sccache-test
@@ -34,49 +90,64 @@ build:
       paths:
         - .sccache-test/
       policy: pull-push
-    - key: "cargo-v2"
-      paths:
-        - .cargo/registry/index/
-        - .cargo/registry/cache/
-        - .cargo/git/db/
-      policy: pull-push
-    - key: "cargo-bin-sccache"
-      paths:
-        - .cargo/bin/sccache
-      policy: pull-push
-  script:
-    - cargo build --workspace --all-targets --all-features --locked
-    - sccache --show-stats
-
-test:
-  stage: test
-  needs:
-    - job: build
-      artifacts: false
-  variables:
-    SCCACHE_DIR: $CI_PROJECT_DIR/.sccache-test
-  cache:
-    - key: "sccache-v1-test"
-      paths:
-        - .sccache-test/
+    - <<: *cargo-registry-cache
       policy: pull
-    - key: "cargo-v2"
-      paths:
-        - .cargo/registry/index/
-        - .cargo/registry/cache/
-        - .cargo/git/db/
+    - <<: *sccache-bin-cache
       policy: pull
-    - key: "cargo-bin-sccache"
-      paths:
-        - .cargo/bin/sccache
-      policy: pull
-  # --all-features covers the capi modules; --locked fails rather than silently
-  # updating Cargo.lock; --tests skips doctests, of which there are none.
   script:
     - cargo test --workspace --all-features --locked --tests
     - sccache --show-stats
 
-# Compiles nothing, so it skips the sccache setup and does not wait on build.
+clippy:
+  stage: test
+  needs: []
+  variables:
+    SCCACHE_DIR: $CI_PROJECT_DIR/.sccache-lint
+  cache:
+    # Some compilation here is clippy-specific, so we need to save that.
+    - key: "sccache-v1-lint"
+      paths:
+        - .sccache-lint/
+      policy: pull-push
+    - <<: *cargo-registry-cache
+      policy: pull
+    - <<: *sccache-bin-cache
+      policy: pull
+  script:
+    - rustup component add clippy
+    - cargo clippy --workspace --all-features --all-targets
+    - sccache --show-stats
+
+# The C API is built and exercised per crate, as cargo-c works one crate at a
+# time. This is the only thing that links the capi surface as a real C library;
+# `cargo test --all-features` only covers the Rust side of it.
+ctest:
+  stage: test
+  needs: []
+  variables:
+    SCCACHE_DIR: $CI_PROJECT_DIR/.sccache-capi
+  cache:
+    - key: "sccache-v1-capi"
+      paths:
+        - .sccache-capi/
+      policy: pull-push
+    - <<: *cargo-registry-cache
+      policy: pull
+    - <<: *sccache-bin-cache
+      policy: pull
+    - key: "cargo-bin-cargo-c"
+      paths:
+        - .cargo/bin/cargo-capi
+        - .cargo/bin/cargo-cbuild
+        - .cargo/bin/cargo-cinstall
+        - .cargo/bin/cargo-ctest
+      policy: pull-push
+  script:
+    - test -x "$CARGO_HOME/bin/cargo-ctest" || cargo install cargo-c
+    - for crate in vmdk e01 rawdisk; do (cd "$crate" && cargo ctest); done
+    - sccache --show-stats
+
+# Compiles nothing, so it skips the sccache setup and waits on nothing.
 fmt:
   stage: test
   needs: []
