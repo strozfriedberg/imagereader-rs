@@ -124,7 +124,7 @@ mod test {
     }
 
     /// A zero-length segment among others breaks the map's invariant: it shares
-    /// a start with its neighbour, which makes the binary search ambiguous.
+    /// a start with its neighbor, which makes the binary search ambiguous.
     /// `RawdiskReader` refuses one at open, so reaching here is a bug, and the
     /// map says so rather than quietly returning a zero-byte span.
     #[cfg(debug_assertions)]

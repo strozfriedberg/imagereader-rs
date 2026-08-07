@@ -78,7 +78,7 @@ fn detect_format(path: &str) -> Result<Format, String> {
         // is a perfectly ordinary way to name the segment you happen to have,
         // and rawdisk rewinds to the start of the sequence from any of them. A
         // false positive here costs nothing: raw means "serve these bytes", so
-        // an unrecognised file is served as-is rather than misparsed.
+        // an unrecognized file is served as-is rather than misparsed.
         Some(s) if s.bytes().all(|b| b.is_ascii_digit()) => Ok(Format::Raw),
         _ => Err(format!(
             "unsupported image extension in {path:?}; expected .e01, .vmdk, .raw, .dd, .img, or a numbered segment"

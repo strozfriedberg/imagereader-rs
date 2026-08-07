@@ -46,7 +46,7 @@ to a fixed width (`disk.001`, `disk.dd.01`). The width is taken from the path yo
 name, so `.001` pairs with `.002` but never with `.02`. Sequences may start at
 `000` or `001`.
 
-Unpadded numbering is deliberately not recognised. `img.1` and `img.2` are far
+Unpadded numbering is deliberately not recognized. `img.1` and `img.2` are far
 more often two unrelated images than one split one, and no rule based on names
 alone can tell those apart -- guessing wrong would serve `img.2`'s bytes as the
 tail of `img.1` with no error at all. Files such as `backup.2024` are left alone
@@ -65,4 +65,4 @@ the end of the sequence, and the image opens short. Naming the LAST segment
 rather than the first therefore gives the strongest check, because every
 segment then falls below the one you named.
 
-`split(1)`'s alphabetic output (`xaa`, `xab`) is not recognised.
+`split(1)`'s alphabetic output (`xaa`, `xab`) is not recognized.

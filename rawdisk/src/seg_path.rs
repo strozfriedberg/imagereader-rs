@@ -111,8 +111,8 @@ pub fn segment_paths<C: ExistsChecker>(
             return Ok(vec![example.to_string()]);
         }
 
-        // A padded name with an immediate neighbour is a sequence missing its
-        // start; lone files have no neighbours.
+        // A padded name with an immediate neighbor is a sequence missing its
+        // start; lone files have no neighbors.
         //
         // `num` still needs `checked_add`: a suffix wider than u64's 20 digits
         // (`d.018446744073709551615`) parses to u64::MAX and counts as padded,
@@ -317,7 +317,7 @@ mod test {
     /// with a missing start -- consecutive numbers, same width. Padding is what
     /// separates them: a splitter writes `.0024`, a date is just `2024`.
     #[test]
-    fn unpadded_neighbours_are_lone_files_not_a_broken_sequence() {
+    fn unpadded_neighbors_are_lone_files_not_a_broken_sequence() {
         let mut fs = FakeFs::new(&["/img/backup.2023", "/img/backup.2024", "/img/backup.2025"]);
         assert_eq!(
             segment_paths("/img/backup.2024", &mut fs).unwrap(),
@@ -327,7 +327,7 @@ mod test {
 
     /// An unpadded run is not a sequence from any of its members, so naming a
     /// later one cannot produce a spurious gap. Previously `d.20` of `d.1..d.20`
-    /// probed `d.00`/`d.01`, found `d.11` as a neighbour, and failed naming
+    /// probed `d.00`/`d.01`, found `d.11` as a neighbor, and failed naming
     /// `d.01` -- a file that never existed.
     #[test]
     fn an_unpadded_run_is_not_a_sequence_from_any_member() {
@@ -356,7 +356,7 @@ mod test {
     }
 
     /// A filename is not a promise that the number in it is sane. `u64::MAX`
-    /// parses, and probing the neighbour above it used to compute `num + 1` --
+    /// parses, and probing the neighbor above it used to compute `num + 1` --
     /// a panic in debug, a wrap to `d.000...000` in release. Reachable from
     /// nothing more exotic than a file sitting in a directory being triaged.
     #[test]
@@ -367,23 +367,23 @@ mod test {
     }
 
     /// u64::MAX is unpadded at its natural 20 digits, so it is a lone file and
-    /// the neighbour probes -- where the overflow lived -- are never reached.
+    /// the neighbor probes -- where the overflow lived -- are never reached.
     #[test]
-    fn a_top_of_u64_segment_with_a_neighbour_below_is_a_lone_file() {
+    fn a_top_of_u64_segment_with_a_neighbor_below_is_a_lone_file() {
         let below = format!("/img/d.{}", u64::MAX - 1);
         let name = format!("/img/d.{}", u64::MAX);
         let mut fs = FakeFs::new(&[&below, &name]);
         assert_eq!(segment_paths(&name, &mut fs).unwrap(), vec![name.clone()]);
     }
 
-    /// Padding it out past u64's 20 digits does reach the neighbour probes, so
+    /// Padding it out past u64's 20 digits does reach the neighbor probes, so
     /// `num + 1` still has to be guarded there.
     #[test]
     fn a_padded_over_wide_segment_number_does_not_overflow() {
         let name = format!("/img/d.0{}", u64::MAX);
         let below = format!("/img/d.0{}", u64::MAX - 1);
         let mut fs = FakeFs::new(&[&below, &name]);
-        // Reaches the neighbour probes: `below` exists, so this is a sequence
+        // Reaches the neighbor probes: `below` exists, so this is a sequence
         // with a missing start rather than a lone file.
         assert!(segment_paths(&name, &mut fs).is_err());
     }
@@ -427,7 +427,7 @@ mod test {
     }
 
     /// A sequence whose first segment is absent must not open as a short image
-    /// starting partway in. Detected from a neighbour above the named segment.
+    /// starting partway in. Detected from a neighbor above the named segment.
     #[test]
     fn a_missing_sequence_start_is_an_error() {
         let mut fs = FakeFs::new(&["/img/d.002", "/img/d.003", "/img/d.004"]);
@@ -445,7 +445,7 @@ mod test {
         assert_eq!(err.path, "/img/s.003");
     }
 
-    /// The same, spotted from the far end: the only neighbour is below.
+    /// The same, spotted from the far end: the only neighbor is below.
     #[test]
     fn a_missing_start_is_caught_from_the_last_segment() {
         let mut fs = FakeFs::new(&["/img/d.002", "/img/d.003"]);
@@ -525,7 +525,7 @@ mod test {
     }
 
     /// The same at the very first probe. This one used to be the worst case: a
-    /// failure here made both start candidates and both neighbours look absent,
+    /// failure here made both start candidates and both neighbors look absent,
     /// so a split image fell through to the lone-file path and opened as one
     /// segment of N.
     #[test]

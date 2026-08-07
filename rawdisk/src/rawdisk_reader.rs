@@ -134,7 +134,7 @@ fn discovery_error(e: DiscoveryError) -> OpenError {
 
 /// Why we could not resolve `path` to something openable at all.
 ///
-/// `path_or_url_to_url` canonicalises a plain path, and canonicalisation fails
+/// `path_or_url_to_url` canonicalizes a plain path, and canonicalization fails
 /// when the file is not there -- much the commonest way to land here, and one
 /// that "malformed path or URL" describes badly. It also fires before discovery
 /// runs, so for local images it pre-empted the "missing image segment" message
@@ -235,7 +235,7 @@ impl RawdiskReader {
         // candidate look absent, so the image would open as a single segment.
         //
         // Note this tests the INPUT STRING, not `url.scheme()`. `path_or_url_to_url`
-        // canonicalises every plain path into a `file://` URL, resolving symlinks
+        // canonicalizes every plain path into a `file://` URL, resolving symlinks
         // on the way, so keying off the parsed scheme would run discovery against
         // the canonical location rather than the names the caller gave -- and
         // segments symlinked into a case directory would open as a single segment.
@@ -437,7 +437,7 @@ mod test {
     }
 
     /// Naming a segment that is not there is an ordinary mistake and has to read
-    /// like one. Canonicalisation fails before discovery ever runs, so this used
+    /// like one. Canonicalization fails before discovery ever runs, so this used
     /// to surface as "Malformed path or URL" -- and with an empty path field, so
     /// the message opened with a bare colon.
     #[test]
@@ -605,7 +605,7 @@ mod test {
     }
 
     /// The same image named two ways must not give two different images.
-    /// Discovery probes the filesystem, so a `file://` URL has to be normalised
+    /// Discovery probes the filesystem, so a `file://` URL has to be normalized
     /// back to a path first or every candidate looks absent.
     #[test]
     fn file_url_and_plain_path_find_the_same_segments() {
@@ -638,9 +638,9 @@ mod test {
 
     /// Symlinking segments into a case directory -- an ordinary forensic
     /// workflow -- must discover them by the names the caller gave, not by the
-    /// canonical (symlink-resolved) path. Regression: normalising discovery off
+    /// canonical (symlink-resolved) path. Regression: normalizing discovery off
     /// `url.scheme() == "file"` fires for plain paths too, since
-    /// `path_or_url_to_url` canonicalises every path into a `file://` URL,
+    /// `path_or_url_to_url` canonicalizes every path into a `file://` URL,
     /// resolving symlinks along the way -- so discovery ran on the store path,
     /// found only one segment there, and the image opened as if unsplit.
     #[cfg(unix)]
