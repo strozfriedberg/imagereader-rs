@@ -46,8 +46,8 @@ struct Args {
     ///
     /// This is the control for measuring what `read_at_offset(&mut self)` costs.
     /// A server cannot do this today -- one image means one reader means one
-    /// lock, so every client serialises. Per-thread readers approximate what a
-    /// non-serialising API would allow. They do not share a block cache, so each
+    /// lock, so every client serializes. Per-thread readers approximate what a
+    /// non-serializing API would allow. They do not share a block cache, so each
     /// thread warms its own; that is the price of the comparison.
     #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
     reader_per_thread: bool,
@@ -236,7 +236,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (Some(shared), _, _) => {
                         shared.read_at_offset(offset, buf).expect("read failed")
                     }
-                    // The old design: every client serialises here.
+                    // The old design: every client serializes here.
                     (_, Some(locked), _) => locked
                         .lock()
                         .expect("reader lock poisoned")

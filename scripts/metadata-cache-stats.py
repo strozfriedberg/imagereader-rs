@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarise one metadata-cache A/B run.
+"""Summarize one metadata-cache A/B run.
 
 Two different questions, two different sources:
 
@@ -43,7 +43,7 @@ def blocks_of(beg, end, chunk):
     return range(first, end, chunk)
 
 
-def summarise(run_dir):
+def summarize(run_dir):
     run = Path(run_dir)
     timing = json.loads((run / "timing.json").read_text())
     chunk = timing["chunk"]
@@ -99,4 +99,4 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     for d in sys.argv[1:]:
-        summarise(d)
+        summarize(d)

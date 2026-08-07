@@ -147,7 +147,7 @@ fn open_e01(
             // Defaults, for now: parallel_chunk_reads/_threads bound the rayon
             // pool that decompresses a read's chunks, and decoded_chunk_cache is
             // the LRU of decompressed chunks. Both are worth revisiting for a
-            // server -- see docs/perf-notes.md -- but keep behaviour unchanged here.
+            // server -- see docs/perf-notes.md -- but keep behavior unchanged here.
             ..Default::default()
         },
     )

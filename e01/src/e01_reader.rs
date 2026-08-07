@@ -603,7 +603,7 @@ pub struct E01Reader {
     ///
     /// This is the *only* thing `read_at_offset` ever needed `&mut self` for --
     /// and that `&mut` forced a server to put the whole reader behind one lock,
-    /// so every client serialised on it: 8 concurrent clients got *less*
+    /// so every client serialized on it: 8 concurrent clients got *less*
     /// throughput than one (34 vs 38 MiB/s) with a p99 of 28ms against 0.35ms.
     ///
     /// A ReadWorker is a zlib decoder plus a `chunk_size + 4` buffer (~32 KiB),

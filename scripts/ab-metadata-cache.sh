@@ -71,7 +71,7 @@ T3=$(date +%s.%N)
 # during the metadata phase it would have put 512 MiB of pure file content into
 # the metadata tier and destroyed the footprint measurement; run between the flip
 # and the re-walk it would have inflated the post-flip S3 count that IS the
-# retention result. So it goes at the end, and the analyser ignores everything
+# retention result. So it goes at the end, and the analyzer ignores everything
 # at or after HASH_TS.
 HASH_TS=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
 sudo dd if=/dev/nbd0 bs=4M count=536870912 skip=1073741824 \

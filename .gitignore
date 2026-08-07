@@ -3,3 +3,4 @@
 /.bench-ab/
 /.claude/
 /.superpowers/
+__pycache__/

@@ -355,7 +355,7 @@ impl FoyerCache<DefaultHasher> {
 /// returned (foyer's `get_or_fetch` inserts that one). The siblings are
 /// speculative, and being separate entries, an LRU evicts them *first* -- they
 /// are never touched, while the demanded blocks keep getting hit. Under a full
-/// cache this degrades toward the old behaviour instead of trampling it.
+/// cache this degrades toward the old behavior instead of trampling it.
 ///
 /// Concurrent misses on different blocks of one group are joined by [`GroupLatch`]
 /// into a single GET, so a multi-block read or a readahead burst that lands inside
