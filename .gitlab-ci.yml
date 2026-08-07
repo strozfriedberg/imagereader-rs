@@ -177,3 +177,61 @@ remove build approval:
     branch: $MAKE_WORLD_DEFAULT_BRANCH
     strategy: depend
 
+
+
+# Rust checks that run in this project's own pipeline rather than delegating to
+# make_world. They fill the gap left by .world/build.sh, which already runs
+# clippy and the C-API tests but neither rustfmt nor the plain test suite.
+.rust:
+  image: rust:latest          # not -slim: openssl-sys needs the ssl/crypto headers
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo
+    CARGO_TARGET_DIR: $CI_PROJECT_DIR/target
+    FF_USE_FASTZIP: "true"
+    CACHE_COMPRESSION_LEVEL: "fast"
+    CACHE_COMPRESSION_FORMAT: "zip"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Separate from `test` on purpose: formatting needs no compilation, so a
+# misformatted branch fails in seconds instead of behind a full workspace build.
+fmt:
+  extends: .rust
+  stage: test
+  needs: []
+  script:
+    - rustup component add rustfmt
+    - cargo fmt --all -- --check
+
+test:
+  extends: .rust
+  stage: test
+  needs: []
+  variables:
+    SCCACHE_DIR: $CI_PROJECT_DIR/.sccache-test
+  cache:
+    - key: "sccache-v1-test"
+      paths:
+        - .sccache-test/
+      policy: pull-push
+    - key: "cargo-v1"
+      paths:
+        - .cargo/registry/index/
+        - .cargo/registry/cache/
+        - .cargo/git/db/
+      policy: pull-push
+    - key: "cargo-bin-sccache"
+      paths:
+        - .cargo/bin/sccache
+      policy: pull-push
+  before_script:
+    - test -x "$CARGO_HOME/bin/sccache" || cargo install sccache
+    - export "PATH=$CARGO_HOME/bin:$PATH"
+    - export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
+    - rustc --version && cargo --version && sccache --version
+  # --all-features picks up the capi modules; --locked keeps CI honest about
+  # Cargo.lock; --tests skips doctests, of which this workspace has none.
+  script:
+    - cargo test --workspace --all-features --locked --tests
+    - sccache --show-stats
