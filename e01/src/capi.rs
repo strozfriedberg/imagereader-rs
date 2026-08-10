@@ -47,6 +47,12 @@ fn guard<T>(err: *mut *mut E01Error, fallback: T, f: impl FnOnce() -> T) -> T {
     }
 }
 
+/// Free an error returned through the `err` out-parameter of another entry
+/// point.
+///
+/// # Safety
+/// `err` must be null or an `E01Error` written by one of the other entry
+/// points and not yet freed. It is dangling once this returns.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_free_error(err: *mut E01Error) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -58,8 +64,12 @@ pub unsafe extern "C" fn e01_free_error(err: *mut E01Error) {
     }));
 }
 
+// The variant names of these two enums are part of the C API: they appear as
+// enum constants in the generated header, so camel-casing them to satisfy
+// `non_camel_case_types` would break every C caller.
 #[repr(C)]
 #[derive(Copy, Clone)]
+#[allow(non_camel_case_types)]
 pub enum CorruptSectionPolicy {
     CSP_ERROR,
     CSP_DAMN_THE_TORPEDOES,
@@ -67,6 +77,7 @@ pub enum CorruptSectionPolicy {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+#[allow(non_camel_case_types)]
 pub enum CorruptChunkPolicy {
     CCP_ERROR,
     CCP_ZERO,
@@ -262,6 +273,16 @@ impl Drop for E01Handle {
     }
 }
 
+/// Open an E01 image from an explicit list of segment paths. Returns null on
+/// failure, having written an error to `err`; the returned handle must be freed
+/// with `e01_close`.
+///
+/// # Safety
+/// `segment_paths` must be null or point to `segment_paths_count` valid
+/// NUL-terminated C strings. `options` must be null or point to a valid,
+/// aligned `E01ReaderOptions`. `err` must be null or point to a writable,
+/// aligned `*mut E01Error`; anything already stored there is overwritten, not
+/// freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_open(
     segment_paths: *const *const c_char,
@@ -331,6 +352,15 @@ pub unsafe extern "C" fn e01_open(
     })
 }
 
+/// Open an E01 image, discovering its segments from the path of any one of
+/// them. Returns null on failure, having written an error to `err`; the
+/// returned handle must be freed with `e01_close`.
+///
+/// # Safety
+/// `example_segment_path` must be null or a valid NUL-terminated C string.
+/// `options` must be null or point to a valid, aligned `E01ReaderOptions`.
+/// `err` must be null or point to a writable, aligned `*mut E01Error`; anything
+/// already stored there is overwritten, not freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_open_glob(
     example_segment_path: *const c_char,
@@ -382,6 +412,13 @@ pub unsafe extern "C" fn e01_open_glob(
     })
 }
 
+/// Close a handle from `e01_open` or `e01_open_glob`.
+///
+/// # Safety
+/// `reader` must be null or a handle from `e01_open` or `e01_open_glob` which
+/// has not yet been closed. It is dangling once this returns, as are the
+/// `segment_paths`, `stored_md5`, and `stored_sha1` pointers it exposed and any
+/// outstanding reads through it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -391,6 +428,13 @@ pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
     }));
 }
 
+/// Read up to `buflen` bytes from `offset`. Returns the number of bytes read,
+/// which is zero on failure, with an error written to `err`.
+///
+/// # Safety
+/// `handle` must be null or an open handle from `e01_open` or `e01_open_glob`.
+/// `buf` must be null or point to at least `buflen` writable bytes. `err` must
+/// be null or point to a writable, aligned `*mut E01Error`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_read(
     handle: *mut E01Handle,
@@ -1051,7 +1095,7 @@ mod test {
 
         let r = unsafe { e01_read(h.ptr, 0, buf.as_mut_ptr(), buf.len(), &mut err) };
 
-        let handle = h.into_box();
+        let _handle = h.into_box();
 
         assert_eq!(r, 0);
         assert_err_contains(err, c"Chunk 0 checksum failed");

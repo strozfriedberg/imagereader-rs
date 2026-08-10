@@ -440,7 +440,7 @@ mod test {
         );
 
         let path = dir.path().join("multi.vmdk");
-        let mut reader = VmdkReader::open(path.to_str().unwrap()).unwrap();
+        let reader = VmdkReader::open(path.to_str().unwrap()).unwrap();
         assert_eq!(reader.image_size, 2048);
 
         let mut buf = vec![0u8; 2048];
@@ -465,7 +465,7 @@ mod test {
         );
 
         let path = dir.path().join("off.vmdk");
-        let mut reader = VmdkReader::open(path.to_str().unwrap()).unwrap();
+        let reader = VmdkReader::open(path.to_str().unwrap()).unwrap();
         assert_eq!(reader.image_size, 1024);
 
         let mut buf = vec![0u8; 1024];
@@ -520,7 +520,7 @@ mod test {
         );
 
         let path = dir.path().join("multi.vmdk");
-        let mut reader = VmdkReader::open(path.to_str().unwrap()).unwrap();
+        let reader = VmdkReader::open(path.to_str().unwrap()).unwrap();
         assert_eq!(reader.image_size, 20 * 1024 * 1024);
 
         let mut hasher = Sha1::new();

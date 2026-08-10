@@ -312,6 +312,7 @@ impl ReadWorker {
             })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn read_cached<WS: WorkerSource>(
         &mut self,
         chunk: &Chunk,

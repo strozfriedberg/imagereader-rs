@@ -46,6 +46,12 @@ fn guard<T>(err: *mut *mut RawdiskError, fallback: T, f: impl FnOnce() -> T) -> 
     }
 }
 
+/// Free an error returned through the `err` out-parameter of another entry
+/// point.
+///
+/// # Safety
+/// `err` must be null or a `RawdiskError` written by one of the other entry
+/// points and not yet freed. It is dangling once this returns.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rawdisk_free_error(err: *mut RawdiskError) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -114,6 +120,13 @@ fn fill_error<E: ToString>(e: E, err: *mut *mut RawdiskError) {
     }
 }
 
+/// Open a raw disk image. Returns null on failure, having written an error to
+/// `err`; the returned handle must be freed with `rawdisk_close`.
+///
+/// # Safety
+/// `image_path` must be null or a valid NUL-terminated C string. `err` must be
+/// null or point to a writable, aligned `*mut RawdiskError`; anything already
+/// stored there is overwritten, not freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rawdisk_open(
     image_path: *const c_char,
@@ -150,6 +163,12 @@ pub unsafe extern "C" fn rawdisk_open(
     })
 }
 
+/// Close a handle from `rawdisk_open`.
+///
+/// # Safety
+/// `reader` must be null or a handle from `rawdisk_open` which has not yet been
+/// closed. It is dangling once this returns, as are the `image_path` pointer it
+/// exposed and any outstanding reads through it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rawdisk_close(reader: *mut RawdiskHandle) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -159,6 +178,13 @@ pub unsafe extern "C" fn rawdisk_close(reader: *mut RawdiskHandle) {
     }));
 }
 
+/// Read up to `buflen` bytes from `offset`. Returns the number of bytes read,
+/// which is zero on failure, with an error written to `err`.
+///
+/// # Safety
+/// `handle` must be null or an open handle from `rawdisk_open`. `buf` must be
+/// null or point to at least `buflen` writable bytes. `err` must be null or
+/// point to a writable, aligned `*mut RawdiskError`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rawdisk_read(
     handle: *mut RawdiskHandle,

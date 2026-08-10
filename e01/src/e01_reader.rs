@@ -970,7 +970,7 @@ impl E01Reader {
         // don't start reading past the end
         let image_end = self.image_size;
         if offset > image_end {
-            return Err(ReadErrorKind::OffsetBeyondEnd(offset, image_end))?;
+            return Err(ReadErrorKind::OffsetBeyondEnd(offset, image_end).into());
         }
 
         // limit the buffer to the image end
@@ -1195,7 +1195,7 @@ mod test {
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
             decoded_chunk_cache: true,
         };
-        let mut reader =
+        let reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
         let chunk_size = reader.chunk_size as u64;
         let base = chunk_size * 3;
@@ -1232,7 +1232,7 @@ mod test {
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
             decoded_chunk_cache: true,
         };
-        let mut reader =
+        let reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
         let chunk_size = reader.chunk_size as u64;
         let base = chunk_size * 2;

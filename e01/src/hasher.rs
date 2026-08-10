@@ -57,13 +57,18 @@ impl FromStr for HashType {
     }
 }
 
+/// One hashing worker: the hash type it computes, the channel which hands it a
+/// filled buffer, the channel by which it hands the buffer back, and its thread,
+/// which yields the finished digest.
+type HasherHandle = (
+    HashType,
+    SyncSender<(usize, Arc<Vec<u8>>)>,
+    Receiver<Arc<Vec<u8>>>,
+    JoinHandle<Box<[u8]>>,
+);
+
 pub struct MultiHasher {
-    handles: Vec<(
-        HashType,
-        SyncSender<(usize, Arc<Vec<u8>>)>,
-        Receiver<Arc<Vec<u8>>>,
-        JoinHandle<Box<[u8]>>,
-    )>,
+    handles: Vec<HasherHandle>,
 }
 
 impl MultiHasher {

@@ -383,7 +383,7 @@ mod test {
         let data = patterned(64 * 1024 + 17);
         let path = write_image(dir.path(), "img.raw", &data);
 
-        let mut reader = RawdiskReader::open(&path).unwrap();
+        let reader = RawdiskReader::open(&path).unwrap();
         assert_eq!(reader.image_size, data.len() as u64);
 
         let mut buf = vec![0u8; data.len()];
@@ -404,7 +404,7 @@ mod test {
         let data = patterned(8192);
         let path = write_image(dir.path(), "img.raw", &data);
 
-        let mut reader = RawdiskReader::open(&path).unwrap();
+        let reader = RawdiskReader::open(&path).unwrap();
 
         let mut buf = vec![0xAAu8; 4096];
         let n = reader.read_at_offset(6000, &mut buf).unwrap();
@@ -422,7 +422,7 @@ mod test {
         let data = patterned(4096);
         let path = write_image(dir.path(), "img.raw", &data);
 
-        let mut reader = RawdiskReader::open(&path).unwrap();
+        let reader = RawdiskReader::open(&path).unwrap();
 
         let mut buf = vec![0u8; 16];
         match reader.read_at_offset(4097, &mut buf) {

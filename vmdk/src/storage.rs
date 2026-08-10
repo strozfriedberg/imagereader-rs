@@ -297,7 +297,7 @@ mod test {
     /// can set it to zero. `local / grain_size` then divides by zero.
     #[test]
     fn zero_grain_size_is_an_error_not_a_divide_by_zero() {
-        let mut storage = sparse(0, HashMap::from([(0, 1)]));
+        let storage = sparse(0, HashMap::from([(0, 1)]));
         let mut buf = [0u8; 16];
 
         let err = storage.read(0, &mut buf).unwrap_err();
@@ -308,7 +308,7 @@ mod test {
     /// grain is missing from it must not take the whole process down.
     #[test]
     fn missing_grain_is_an_error_not_a_panic() {
-        let mut storage = sparse(8, HashMap::new());
+        let storage = sparse(8, HashMap::new());
         let mut buf = [0u8; 16];
 
         let err = storage.read(0, &mut buf).unwrap_err();

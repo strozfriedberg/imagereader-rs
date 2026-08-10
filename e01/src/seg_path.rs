@@ -110,7 +110,7 @@ where
             continue;
         }
 
-        let seg_path_lc = format!("{base_path}.{}", &ext.to_ascii_lowercase());
+        let seg_path_lc = format!("{base_path}.{}", ext.to_ascii_lowercase());
         debug!("checking {seg_path_lc}");
         if checker.exists(&seg_path_lc)? {
             paths.push(seg_path_lc);

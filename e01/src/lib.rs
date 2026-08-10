@@ -38,7 +38,7 @@ mod test {
 
     #[track_caller]
     fn assert_eq_test_data(exp: &TestData, options: &E01ReaderOptions) {
-        let mut reader = E01Reader::open_glob(exp.segment_paths[0], options).unwrap();
+        let reader = E01Reader::open_glob(exp.segment_paths[0], options).unwrap();
 
         let image_size = reader.image_size;
 
@@ -81,7 +81,7 @@ mod test {
     #[track_caller]
     #[allow(dead_code)]
     fn assert_eq_test_data_nonglob(exp: &TestData, options: &E01ReaderOptions) {
-        let mut reader = E01Reader::open(exp.segment_paths, options).unwrap();
+        let reader = E01Reader::open(exp.segment_paths, options).unwrap();
 
         let image_size = reader.image_size;
 
