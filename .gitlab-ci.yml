@@ -115,7 +115,7 @@ clippy:
       policy: pull
   script:
     - rustup component add clippy
-    - cargo clippy --workspace --all-features --all-targets
+    - cargo clippy --workspace --all-features --all-targets -- -D warnings
     - sccache --show-stats
 
 # The C API is built and exercised per crate, as cargo-c works one crate at a
