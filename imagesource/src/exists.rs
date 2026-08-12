@@ -2,6 +2,8 @@ use std::io;
 use std::sync::Arc;
 
 use s3::bucket::Bucket;
+use s3::error::S3Error;
+use s3::serde_types::HeadObjectResult;
 use tokio::runtime::Runtime;
 use tracing::warn;
 use url::Url;
@@ -139,27 +141,50 @@ impl ExistsChecker for S3Checker {
 
         self.sync_credentials().map_err(&err)?;
 
-        // rust-s3 does not treat a non-2xx status as an error, so the status has
-        // to be classified here.
-        match self.runtime.block_on(self.bucket.head_object(&key)) {
-            Ok((_, code)) => match classify_head_status(code) {
-                HeadVerdict::Present => Ok(true),
-                HeadVerdict::Absent => Ok(false),
-                HeadVerdict::AbsentOrForbidden => {
-                    warn!(
-                        "HEAD {path} returned 403; treating the segment as absent. \
-                         Expected if this bucket grants GetObject without ListBucket, \
-                         but a genuine permission problem here ends the segment \
-                         sequence early and opens a short image."
-                    );
-                    Ok(false)
-                }
-                HeadVerdict::Undetermined => {
-                    Err(err(io::Error::other(format!("HEAD returned HTTP {code}"))))
-                }
-            },
-            Err(e) => Err(err(io::Error::other(e))),
+        let outcome = self.runtime.block_on(self.bucket.head_object(&key));
+        match head_verdict(outcome).map_err(|e| err(io::Error::other(e)))? {
+            HeadVerdict::Present => Ok(true),
+            HeadVerdict::Absent => Ok(false),
+            HeadVerdict::AbsentOrForbidden => {
+                warn!(
+                    "HEAD {path} returned 403; treating the segment as absent. \
+                     Expected if this bucket grants GetObject without ListBucket, \
+                     but a genuine permission problem here ends the segment \
+                     sequence early and opens a short image."
+                );
+                Ok(false)
+            }
+            HeadVerdict::Undetermined => unreachable!("head_verdict returns Err instead"),
         }
+    }
+}
+
+/// Reads a `head_object` outcome as an existence verdict.
+///
+/// The status does not always arrive as a status. rust-s3 is built with its
+/// default `fail-on-err` feature on, so any non-2xx HEAD comes back as
+/// `Err(HttpFailWithBody(status, body))`, not as `Ok((_, status))` -- and the
+/// 404 that ends every segment sequence is exactly such a status. It has to be
+/// unwrapped back out of the error before [`classify_head_status`] can read it,
+/// or the end of the sequence looks like a failed probe and the open aborts.
+///
+/// An `Undetermined` status is returned as an error rather than as a verdict,
+/// so the original error keeps its response body for the message.
+fn head_verdict(outcome: Result<(HeadObjectResult, u16), S3Error>) -> Result<HeadVerdict, S3Error> {
+    let (code, reported) = match outcome {
+        Ok((_, code)) => (code, None),
+        Err(S3Error::HttpFailWithBody(code, body)) => (code, Some((code, body))),
+        // Anything else -- a transport failure, a signing failure -- carries no
+        // status to read, and is undetermined by definition.
+        Err(e) => return Err(e),
+    };
+
+    match classify_head_status(code) {
+        HeadVerdict::Undetermined => Err(match reported {
+            Some((code, body)) => S3Error::HttpFailWithBody(code, body),
+            None => S3Error::HttpFailWithBody(code, String::new()),
+        }),
+        verdict => Ok(verdict),
     }
 }
 
@@ -256,6 +281,54 @@ mod test {
                 "HTTP {code} must not be read as the end of a sequence"
             );
         }
+    }
+
+    /// The regression this fixed: with rust-s3's `fail-on-err` feature on (it is
+    /// on by default, and this crate does not turn it off), the 404 that ends a
+    /// segment sequence arrives as an error rather than as a status. Read as a
+    /// failed probe, it aborts the open of every single-segment S3 image.
+    #[test]
+    fn a_404_delivered_as_an_error_is_still_absent() {
+        let got = head_verdict(Err(S3Error::HttpFailWithBody(404, String::new())))
+            .expect("a 404 ends the sequence; it is not a failed probe");
+        assert_eq!(got, HeadVerdict::Absent);
+    }
+
+    /// Same delivery path as the 404, and the same reason it cannot be an error:
+    /// a bucket granting GetObject without ListBucket answers 403 for a key that
+    /// is not there.
+    #[test]
+    fn a_403_delivered_as_an_error_is_absent_or_forbidden() {
+        let got = head_verdict(Err(S3Error::HttpFailWithBody(403, String::new())))
+            .expect("403 is resolved by policy, not surfaced as a probe failure");
+        assert_eq!(got, HeadVerdict::AbsentOrForbidden);
+    }
+
+    #[test]
+    fn a_200_is_present() {
+        let got = head_verdict(Ok((HeadObjectResult::default(), 200))).unwrap();
+        assert_eq!(got, HeadVerdict::Present);
+    }
+
+    /// The statuses that must stop the open keep stopping it -- including their
+    /// response body, which is often the only clue about what went wrong.
+    #[test]
+    fn an_undetermined_status_stays_an_error_with_its_body() {
+        for code in [429, 500, 503] {
+            let err = head_verdict(Err(S3Error::HttpFailWithBody(code, "slow down".into())))
+                .expect_err("HTTP {code} must not be read as the end of a sequence");
+            let msg = err.to_string();
+            assert!(msg.contains(&code.to_string()), "{msg}");
+            assert!(msg.contains("slow down"), "{msg}");
+        }
+    }
+
+    /// An error with no status in it -- a connection reset, a signing failure --
+    /// has nothing to classify and must not become "absent".
+    #[test]
+    fn a_statusless_error_is_not_absent() {
+        let err = head_verdict(Err(S3Error::HttpFail)).expect_err("no status means no verdict");
+        assert!(matches!(err, S3Error::HttpFail));
     }
 
     /// The regression: an unreadable directory used to report every candidate as
