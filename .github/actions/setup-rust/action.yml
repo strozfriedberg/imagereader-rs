@@ -1,0 +1,20 @@
+name: Setup Rust
+description: Install the Rust toolchain pinned in rust-toolchain.toml
+inputs:
+  components:
+    description: Comma-separated rustup components (e.g. rustfmt, clippy)
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - id: rust-toolchain
+      run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> $GITHUB_OUTPUT
+      shell: bash
+    # No apt step: openssl-sys (via rust-s3) needs libssl-dev and pkg-config,
+    # both preinstalled on the ubuntu-24.04 image. Nothing here uses bindgen,
+    # so clang is not required either.
+    - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      with:
+        toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+        components: ${{ inputs.components }}
