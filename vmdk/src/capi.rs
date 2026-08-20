@@ -46,6 +46,12 @@ fn guard<T>(err: *mut *mut VmdkError, fallback: T, f: impl FnOnce() -> T) -> T {
     }
 }
 
+/// Free an error returned through the `err` out-parameter of another entry
+/// point.
+///
+/// # Safety
+/// `err` must be null or a `VmdkError` written by one of the other entry
+/// points and not yet freed. It is dangling once this returns.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmdk_free_error(err: *mut VmdkError) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -114,6 +120,13 @@ fn fill_error<E: ToString>(e: E, err: *mut *mut VmdkError) {
     }
 }
 
+/// Open a VMDK image. Returns null on failure, having written an error to
+/// `err`; the returned handle must be freed with `vmdk_close`.
+///
+/// # Safety
+/// `image_path` must be null or a valid NUL-terminated C string. `err` must be
+/// null or point to a writable, aligned `*mut VmdkError`; anything already
+/// stored there is overwritten, not freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmdk_open(
     image_path: *const c_char,
@@ -150,6 +163,12 @@ pub unsafe extern "C" fn vmdk_open(
     })
 }
 
+/// Close a handle from `vmdk_open`.
+///
+/// # Safety
+/// `reader` must be null or a handle from `vmdk_open` which has not yet been
+/// closed. It is dangling once this returns, as are the `image_path` pointer it
+/// exposed and any outstanding reads through it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmdk_close(reader: *mut VmdkHandle) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -159,6 +178,13 @@ pub unsafe extern "C" fn vmdk_close(reader: *mut VmdkHandle) {
     }));
 }
 
+/// Read up to `buflen` bytes from `offset`. Returns the number of bytes read,
+/// which is zero on failure, with an error written to `err`.
+///
+/// # Safety
+/// `handle` must be null or an open handle from `vmdk_open`. `buf` must be
+/// null or point to at least `buflen` writable bytes. `err` must be null or
+/// point to a writable, aligned `*mut VmdkError`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vmdk_read(
     handle: *mut VmdkHandle,
@@ -179,7 +205,7 @@ pub unsafe extern "C" fn vmdk_read(
         }
 
         let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-        unsafe { &mut *(*handle).reader }
+        unsafe { &*(*handle).reader }
             .read_at_offset(offset, buf)
             .unwrap_or_else(|e| {
                 fill_error(e, err);

@@ -56,14 +56,27 @@ fn validate_proto_extension<T: AsRef<str>>(path: T) -> Result<String, Unrecogniz
         .ok_or(UnrecognizedExtension(path.as_ref().into()))
 }
 
-pub trait ExistsChecker {
-    fn exists<T: AsRef<str>>(&mut self, path: T) -> bool;
+pub use imagesource::exists::{ExistsChecker, ExistsError};
+
+/// Why globbing could not produce a segment list.
+#[derive(Debug, thiserror::Error)]
+pub enum SegPathError {
+    #[error("{0}")]
+    UnrecognizedExtension(#[from] UnrecognizedExtension),
+    /// The checker could not answer. Never folded into "absent": the glob stops
+    /// at the first name that is not there, so an unanswerable probe reported as
+    /// absent ends the segment list early and opens a short image.
+    #[error("{0}")]
+    Undetermined(#[from] ExistsError),
 }
 
+/// Collected eagerly rather than returned as a lazy iterator: a probe can fail,
+/// and a failure has to reach the caller as an error rather than as a shorter
+/// sequence.
 pub fn validated_segment_paths<T, C>(
     example_segment_path: T,
     mut checker: C,
-) -> Result<impl IntoIterator<Item: AsRef<str>>, UnrecognizedExtension>
+) -> Result<Vec<String>, SegPathError>
 where
     T: AsRef<str>,
     C: ExistsChecker,
@@ -84,21 +97,30 @@ where
         .map(|(base, _)| base.to_owned())
         .ok_or(UnrecognizedExtension(proto_path.into()))?;
 
-    Ok(segment_ext_iter(ext_start).map_while(move |ext| {
+    let mut paths = Vec::new();
+    for ext in segment_ext_iter(ext_start) {
         // Hilariously, EnCase will create .E02 etc. if you start with
         // .e01, so the extensions can actually differ in case through
         // the sequence...
         let seg_path_uc = format!("{base_path}.{ext}");
         debug!("checking {seg_path_uc}");
 
-        if checker.exists(&seg_path_uc) {
-            Some(seg_path_uc)
-        } else {
-            let seg_path_lc = format!("{base_path}.{}", &ext.to_ascii_lowercase());
-            debug!("checking {seg_path_lc}");
-            checker.exists(&seg_path_lc).then_some(seg_path_lc)
+        if checker.exists(&seg_path_uc)? {
+            paths.push(seg_path_uc);
+            continue;
         }
-    }))
+
+        let seg_path_lc = format!("{base_path}.{}", ext.to_ascii_lowercase());
+        debug!("checking {seg_path_lc}");
+        if checker.exists(&seg_path_lc)? {
+            paths.push(seg_path_lc);
+            continue;
+        }
+
+        break;
+    }
+
+    Ok(paths)
 }
 
 #[cfg(test)]

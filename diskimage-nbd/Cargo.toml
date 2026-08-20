@@ -1,0 +1,29 @@
+[package]
+name = "diskimage-nbd"
+version = "0.1.0"
+authors = ["LevelBlue"]
+edition = "2024"
+description = "NBD server for disk image formats (E01, VMDK, raw and split raw)"
+autobins = false
+
+[[bin]]
+name = "diskimage-nbd"
+path = "src/bin/diskimage-nbd.rs"
+
+[build-dependencies]
+buildinfo.workspace = true
+
+[dependencies]
+buildinfo.workspace = true
+e01-rs = { path = "../e01" }
+vmdk-rs = { path = "../vmdk" }
+rawdisk-rs = { path = "../rawdisk" }
+byteorder = "1.5"
+clap = { version = "4.5", features = ["derive"] }
+signal-hook = "0.3"
+time.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

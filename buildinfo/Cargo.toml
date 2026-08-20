@@ -1,0 +1,6 @@
+[package]
+name = "buildinfo"
+version = "0.1.0"
+authors = ["LevelBlue"]
+edition = "2024"
+description = "Shared build-time helpers for embedding the git commit in a binary"

@@ -13,7 +13,8 @@ use std::{
 };
 
 #[derive(Parser)]
-#[command(author, version, about, long_about)]
+// long_version (shown by `--version`) adds the build commit; `-V` stays plain.
+#[command(author, version, long_version = buildinfo::long_version!(), about, long_about)]
 struct Args {
     /// Path to input file.
     input: String,
@@ -36,6 +37,15 @@ struct Args {
     #[arg(long, default_value_t = e01::e01_reader::DEFAULT_PARALLEL_CHUNK_THREADS)]
     parallel_threads: usize,
 
+    /// Keep an LRU of decompressed chunks in front of the block cache.
+    ///
+    /// Off by default here, unlike the library: verifying reads the image
+    /// straight through, so every chunk is touched exactly once and the cache
+    /// can never hit. It only costs -- an allocation, an insert and an eviction
+    /// per chunk (~2% of CPU on a 28 GiB image). Clients with locality want it;
+    /// measured at +55% throughput for a workload re-reading each chunk ~10x.
+    #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+    decoded_chunk_cache: bool,
 }
 
 fn check_hash<H1: AsRef<[u8]>, H2: AsRef<[u8]>>(
@@ -80,7 +90,7 @@ fn display_progress(
 }
 
 fn run(args: Args) -> Result<ExitCode, E01Error> {
-    let mut e01_reader = E01Reader::open_glob(
+    let e01_reader = E01Reader::open_glob(
         &args.input,
         &E01ReaderOptions {
             corrupt_section_policy: CorruptSectionPolicy::Error,
@@ -91,6 +101,7 @@ fn run(args: Args) -> Result<ExitCode, E01Error> {
             },
             parallel_chunk_reads: args.parallel_chunks,
             parallel_chunk_threads: args.parallel_threads,
+            decoded_chunk_cache: args.decoded_chunk_cache,
             ..Default::default()
         },
     )?;

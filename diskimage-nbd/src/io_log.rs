@@ -1,0 +1,273 @@
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Instant,
+};
+
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+
+/// Per-read cache outcome collected while serving one `read_at_offset`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ReadTrace {
+    pub foyer_miss: bool,
+}
+
+impl ReadTrace {
+    pub fn foyer_label(self) -> &'static str {
+        if self.foyer_miss { "miss" } else { "hit" }
+    }
+}
+
+pub fn chunk_cache_label(hit: Option<bool>) -> &'static str {
+    match hit {
+        None => "n/a",
+        Some(true) => "hit",
+        Some(false) => "miss",
+    }
+}
+
+/// Append-only JSONL trace of NBD traffic and backing-store fetches.
+///
+/// S3 fetches during open are written then discarded on the first NBD
+/// client connect (`begin_serving`), so the log reflects post-connect workload.
+#[derive(Debug)]
+pub struct IoLog {
+    path: PathBuf,
+    writer: Mutex<BufWriter<File>>,
+    serving: AtomicBool,
+    nbd_reads: AtomicU64,
+    nbd_read_bytes: AtomicU64,
+    s3_fetches: AtomicU64,
+    s3_bytes: AtomicU64,
+    prefetch_enqueued: AtomicU64,
+}
+
+impl IoLog {
+    pub fn open(path: &Path) -> std::io::Result<Arc<Self>> {
+        let file = File::options().create(true).append(true).open(path)?;
+        Ok(Arc::new(Self {
+            path: path.to_path_buf(),
+            writer: Mutex::new(BufWriter::new(file)),
+            serving: AtomicBool::new(false),
+            nbd_reads: AtomicU64::new(0),
+            nbd_read_bytes: AtomicU64::new(0),
+            s3_fetches: AtomicU64::new(0),
+            s3_bytes: AtomicU64::new(0),
+            prefetch_enqueued: AtomicU64::new(0),
+        }))
+    }
+
+    pub fn record_prefetch_enqueued(&self, count: u64) {
+        if count > 0 {
+            self.prefetch_enqueued.fetch_add(count, Ordering::Relaxed);
+        }
+    }
+
+    pub fn log_prefetch(&self, segment: usize, block_off: u64, offsets: &[u64]) {
+        if !self.serving.load(Ordering::Relaxed) || offsets.is_empty() {
+            return;
+        }
+        let count = offsets.len() as u64;
+        self.prefetch_enqueued.fetch_add(count, Ordering::Relaxed);
+        use std::fmt::Write as _;
+        let mut offs = String::new();
+        for (i, o) in offsets.iter().enumerate() {
+            if i > 0 {
+                offs.push(',');
+            }
+            let _ = write!(offs, "{o}");
+        }
+        let _ = self.write_line(&format!(
+            r#"{{"kind":"prefetch","segment":{segment},"block":{block_off},"offsets":[{offs}],"count":{count}}}"#
+        ));
+    }
+
+    /// Called on each client connect. The first call truncates the file so it
+    /// drops open-phase events; every call resets the counters so each
+    /// session's summary covers only that session. Sessions are serialized by
+    /// the connection-wide reader lock, so resets never race with logging.
+    pub fn begin_serving(&self) -> std::io::Result<()> {
+        // Zero all counters before setting serving=true so that a concurrent
+        // log_nbd_read that observes serving=true never races with a reset.
+        self.nbd_reads.store(0, Ordering::Relaxed);
+        self.nbd_read_bytes.store(0, Ordering::Relaxed);
+        self.s3_fetches.store(0, Ordering::Relaxed);
+        self.s3_bytes.store(0, Ordering::Relaxed);
+        self.prefetch_enqueued.store(0, Ordering::Relaxed);
+
+        if !self.serving.load(Ordering::Acquire) {
+            // Truncate and reopen the file before publishing serving=true.
+            let file = File::options()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&self.path)?;
+            {
+                let mut w = self
+                    .writer
+                    .lock()
+                    .map_err(|_| std::io::Error::other("io log lock poisoned"))?;
+                *w = BufWriter::new(file);
+            }
+            // SeqCst: all counter resets and the file swap are visible to any
+            // thread that subsequently observes serving=true.
+            self.serving.store(true, Ordering::SeqCst);
+        }
+        self.write_line(r#"{"kind":"marker","event":"nbd_connected"}"#)
+    }
+
+    pub fn log_nbd_read(&self, offset: u64, len: u32, dur_us: u64) {
+        if !self.serving.load(Ordering::Relaxed) {
+            return;
+        }
+        self.nbd_reads.fetch_add(1, Ordering::Relaxed);
+        self.nbd_read_bytes.fetch_add(len as u64, Ordering::Relaxed);
+        let _ = self.write_line(&format!(
+            r#"{{"kind":"nbd_read","offset":{offset},"len":{len},"dur_us":{dur_us}}}"#
+        ));
+    }
+
+    pub fn log_s3_fetch(&self, segment: usize, beg: u64, end: u64, dur_us: u64) {
+        if !self.serving.load(Ordering::Relaxed) {
+            return;
+        }
+        let bytes = end.saturating_sub(beg);
+        self.s3_fetches.fetch_add(1, Ordering::Relaxed);
+        self.s3_bytes.fetch_add(bytes, Ordering::Relaxed);
+        let _ = self.write_line(&format!(
+            r#"{{"kind":"s3","segment":{segment},"beg":{beg},"end":{end},"bytes":{bytes},"dur_us":{dur_us}}}"#
+        ));
+    }
+
+    pub fn log_summary(&self) {
+        if !self.serving.load(Ordering::Relaxed) {
+            return;
+        }
+        let nbd_reads = self.nbd_reads.load(Ordering::Relaxed);
+        let nbd_read_bytes = self.nbd_read_bytes.load(Ordering::Relaxed);
+        let s3_fetches = self.s3_fetches.load(Ordering::Relaxed);
+        let s3_bytes = self.s3_bytes.load(Ordering::Relaxed);
+        let prefetch_enqueued = self.prefetch_enqueued.load(Ordering::Relaxed);
+        let _ = self.write_line(&format!(
+            r#"{{"kind":"summary","nbd_reads":{nbd_reads},"nbd_read_bytes":{nbd_read_bytes},"s3_fetches":{s3_fetches},"s3_bytes":{s3_bytes},"prefetch_enqueued":{prefetch_enqueued}}}"#
+        ));
+        tracing::info!(
+            nbd_reads,
+            nbd_read_bytes,
+            s3_fetches,
+            s3_bytes,
+            prefetch_enqueued,
+            "io trace summary"
+        );
+        let _ = self.flush();
+    }
+
+    fn write_line(&self, line: &str) -> std::io::Result<()> {
+        let line = stamp_json_line(line);
+        let mut w = self
+            .writer
+            .lock()
+            .map_err(|_| std::io::Error::other("io log lock poisoned"))?;
+        w.write_all(line.as_bytes())?;
+        w.write_all(b"\n")
+    }
+
+    fn flush(&self) -> std::io::Result<()> {
+        self.writer
+            .lock()
+            .map_err(|_| std::io::Error::other("io log lock poisoned"))?
+            .flush()
+    }
+}
+
+fn utc_timestamp_rfc3339() -> String {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "unknown".into())
+}
+
+/// Prepend `"ts":"<RFC3339>",` to a JSON object line (must start with `{`).
+fn stamp_json_line(line: &str) -> String {
+    if let Some(rest) = line.strip_prefix('{') {
+        let ts = utc_timestamp_rfc3339();
+        format!(r#"{{"ts":"{ts}",{rest}"#)
+    } else {
+        line.to_string()
+    }
+}
+
+pub struct ReadTimer {
+    start: Instant,
+}
+
+impl ReadTimer {
+    pub fn start() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+
+    pub fn elapsed_us(&self) -> u64 {
+        self.start.elapsed().as_micros().min(u64::MAX as u128) as u64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IoLog, stamp_json_line};
+
+    #[test]
+    fn stamp_json_line_prepends_ts() {
+        let out = stamp_json_line(r#"{"kind":"read","offset":0}"#);
+        assert!(out.starts_with(r#"{"ts":""#));
+        assert!(out.contains(r#""kind":"read""#));
+        assert!(out.ends_with(r#""offset":0}"#));
+    }
+
+    /// Each session's summary must count only that session; the second connect
+    /// must not truncate lines the first session already wrote.
+    #[test]
+    fn summary_counters_reset_per_session() {
+        let path = std::env::temp_dir().join(format!(
+            "diskimage-nbd-test-summary-reset-{}.jsonl",
+            std::process::id()
+        ));
+        let log = IoLog::open(&path).unwrap();
+
+        log.begin_serving().unwrap();
+        log.log_nbd_read(0, 512, 10);
+        log.log_summary();
+
+        log.begin_serving().unwrap(); // second session connects
+        log.log_summary();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        let summaries: Vec<&str> = content
+            .lines()
+            .filter(|l| l.contains(r#""kind":"summary""#))
+            .collect();
+        assert_eq!(summaries.len(), 2, "log: {content}");
+        assert!(
+            summaries[0].contains(r#""nbd_reads":1"#),
+            "{}",
+            summaries[0]
+        );
+        assert!(
+            summaries[1].contains(r#""nbd_reads":0"#),
+            "second session summary must start from zero: {}",
+            summaries[1]
+        );
+        assert!(
+            content.contains(r#""kind":"nbd_read""#),
+            "second connect must not truncate session 1 lines: {content}"
+        );
+    }
+}

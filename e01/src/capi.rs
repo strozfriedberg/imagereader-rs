@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    ffi::{CStr, CString, c_char},
+    ffi::{CStr, CString, c_char, c_int},
     mem::ManuallyDrop,
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
@@ -47,6 +47,12 @@ fn guard<T>(err: *mut *mut E01Error, fallback: T, f: impl FnOnce() -> T) -> T {
     }
 }
 
+/// Free an error returned through the `err` out-parameter of another entry
+/// point.
+///
+/// # Safety
+/// `err` must be null or an `E01Error` written by one of the other entry
+/// points and not yet freed. It is dangling once this returns.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_free_error(err: *mut E01Error) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -58,42 +64,24 @@ pub unsafe extern "C" fn e01_free_error(err: *mut E01Error) {
     }));
 }
 
+// The variant names of these two enums are part of the C API: they appear as
+// enum constants in the generated header, so camel-casing them to satisfy
+// `non_camel_case_types` would break every C caller.
 #[repr(C)]
 #[derive(Copy, Clone)]
+#[allow(non_camel_case_types)]
 pub enum CorruptSectionPolicy {
     CSP_ERROR,
     CSP_DAMN_THE_TORPEDOES,
 }
 
-impl From<CorruptSectionPolicy> for e01_reader::CorruptSectionPolicy {
-    fn from(policy: CorruptSectionPolicy) -> e01_reader::CorruptSectionPolicy {
-        match policy {
-            CorruptSectionPolicy::CSP_ERROR => e01_reader::CorruptSectionPolicy::Error,
-            CorruptSectionPolicy::CSP_DAMN_THE_TORPEDOES => {
-                e01_reader::CorruptSectionPolicy::DamnTheTorpedoes
-            }
-        }
-    }
-}
-
 #[repr(C)]
 #[derive(Copy, Clone)]
+#[allow(non_camel_case_types)]
 pub enum CorruptChunkPolicy {
     CCP_ERROR,
     CCP_ZERO,
     CCP_RAW_IF_POSSIBLE,
-}
-
-impl From<CorruptChunkPolicy> for e01_reader::CorruptChunkPolicy {
-    fn from(policy: CorruptChunkPolicy) -> e01_reader::CorruptChunkPolicy {
-        match policy {
-            CorruptChunkPolicy::CCP_ERROR => e01_reader::CorruptChunkPolicy::Error,
-            CorruptChunkPolicy::CCP_ZERO => e01_reader::CorruptChunkPolicy::Zero,
-            CorruptChunkPolicy::CCP_RAW_IF_POSSIBLE => {
-                e01_reader::CorruptChunkPolicy::RawIfPossible
-            }
-        }
-    }
 }
 
 #[repr(C)]
@@ -103,21 +91,59 @@ pub struct E01ReaderOptions {
     corrupt_chunk_policy: CorruptChunkPolicy,
 }
 
-impl From<E01ReaderOptions> for e01_reader::E01ReaderOptions {
-    fn from(options: E01ReaderOptions) -> e01_reader::E01ReaderOptions {
-        e01_reader::E01ReaderOptions {
-            corrupt_section_policy: options.corrupt_section_policy.into(),
-            corrupt_chunk_policy: options.corrupt_chunk_policy.into(),
-            foyer_readahead: 0,
-            s3_concurrency: e01_reader::DEFAULT_S3_CONCURRENCY,
-            cache_mem_mib: e01_reader::DEFAULT_CACHE_MEM_MIB,
-            cache_mode: e01_reader::CacheMode::default(),
-            cache_dir: None,
-            io_log: None,
-            parallel_chunk_reads: true,
-            parallel_chunk_threads: e01_reader::DEFAULT_PARALLEL_CHUNK_THREADS,
-        }
-    }
+/// Build the Rust reader options from the C caller's struct, validating the
+/// policy fields.
+///
+/// The `corrupt_*_policy` fields are declared as `#[repr(C)]` enums, but C is
+/// free to store any integer there. Materializing an out-of-range value as a
+/// Rust enum — which `*options` or a by-value `.into()` would do — is undefined
+/// behavior before any `match` can reject it. Reading the discriminant as a
+/// `c_int` through the field pointer is always valid, so validation runs on a
+/// plain integer.
+///
+/// # Safety
+/// `options` must point to a valid, aligned `E01ReaderOptions`.
+unsafe fn rust_options(
+    options: *const E01ReaderOptions,
+) -> Result<e01_reader::E01ReaderOptions, String> {
+    let section_raw = unsafe {
+        std::ptr::addr_of!((*options).corrupt_section_policy)
+            .cast::<c_int>()
+            .read()
+    };
+    let chunk_raw = unsafe {
+        std::ptr::addr_of!((*options).corrupt_chunk_policy)
+            .cast::<c_int>()
+            .read()
+    };
+
+    let corrupt_section_policy = match section_raw {
+        0 => e01_reader::CorruptSectionPolicy::Error,
+        1 => e01_reader::CorruptSectionPolicy::DamnTheTorpedoes,
+        n => return Err(format!("invalid corrupt_section_policy value {n}")),
+    };
+    let corrupt_chunk_policy = match chunk_raw {
+        0 => e01_reader::CorruptChunkPolicy::Error,
+        1 => e01_reader::CorruptChunkPolicy::Zero,
+        2 => e01_reader::CorruptChunkPolicy::RawIfPossible,
+        n => return Err(format!("invalid corrupt_chunk_policy value {n}")),
+    };
+
+    Ok(e01_reader::E01ReaderOptions {
+        corrupt_section_policy,
+        corrupt_chunk_policy,
+        foyer_readahead: 0,
+        s3_concurrency: e01_reader::DEFAULT_S3_CONCURRENCY,
+        cache_mem_mib: e01_reader::DEFAULT_CACHE_MEM_MIB,
+        cache_block_size: e01_reader::DEFAULT_CACHE_BLOCK_SIZE,
+        cache_fetch_size: e01_reader::DEFAULT_CACHE_FETCH_SIZE,
+        cache_mode: e01_reader::CacheMode::default(),
+        cache_dir: None,
+        io_log: None,
+        parallel_chunk_reads: true,
+        parallel_chunk_threads: e01_reader::DEFAULT_PARALLEL_CHUNK_THREADS,
+        decoded_chunk_cache: true,
+    })
 }
 
 fn fill_error<E: ToString>(e: E, err: *mut *mut E01Error) {
@@ -247,6 +273,16 @@ impl Drop for E01Handle {
     }
 }
 
+/// Open an E01 image from an explicit list of segment paths. Returns null on
+/// failure, having written an error to `err`; the returned handle must be freed
+/// with `e01_close`.
+///
+/// # Safety
+/// `segment_paths` must be null or point to `segment_paths_count` valid
+/// NUL-terminated C strings. `options` must be null or point to a valid,
+/// aligned `E01ReaderOptions`. `err` must be null or point to a writable,
+/// aligned `*mut E01Error`; anything already stored there is overwritten, not
+/// freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_open(
     segment_paths: *const *const c_char,
@@ -261,7 +297,13 @@ pub unsafe extern "C" fn e01_open(
             return std::ptr::null_mut();
         }
 
-        let options = unsafe { (*options).into() };
+        let options = match unsafe { rust_options(options) } {
+            Ok(o) => o,
+            Err(e) => {
+                fill_error(e, err);
+                return std::ptr::null_mut();
+            }
+        };
 
         // convert paths
         if segment_paths.is_null() {
@@ -310,6 +352,15 @@ pub unsafe extern "C" fn e01_open(
     })
 }
 
+/// Open an E01 image, discovering its segments from the path of any one of
+/// them. Returns null on failure, having written an error to `err`; the
+/// returned handle must be freed with `e01_close`.
+///
+/// # Safety
+/// `example_segment_path` must be null or a valid NUL-terminated C string.
+/// `options` must be null or point to a valid, aligned `E01ReaderOptions`.
+/// `err` must be null or point to a writable, aligned `*mut E01Error`; anything
+/// already stored there is overwritten, not freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_open_glob(
     example_segment_path: *const c_char,
@@ -323,7 +374,13 @@ pub unsafe extern "C" fn e01_open_glob(
             return std::ptr::null_mut();
         }
 
-        let options = unsafe { (*options).into() };
+        let options = match unsafe { rust_options(options) } {
+            Ok(o) => o,
+            Err(e) => {
+                fill_error(e, err);
+                return std::ptr::null_mut();
+            }
+        };
 
         // convert path
         if example_segment_path.is_null() {
@@ -355,6 +412,13 @@ pub unsafe extern "C" fn e01_open_glob(
     })
 }
 
+/// Close a handle from `e01_open` or `e01_open_glob`.
+///
+/// # Safety
+/// `reader` must be null or a handle from `e01_open` or `e01_open_glob` which
+/// has not yet been closed. It is dangling once this returns, as are the
+/// `segment_paths`, `stored_md5`, and `stored_sha1` pointers it exposed and any
+/// outstanding reads through it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -364,6 +428,13 @@ pub unsafe extern "C" fn e01_close(reader: *mut E01Handle) {
     }));
 }
 
+/// Read up to `buflen` bytes from `offset`. Returns the number of bytes read,
+/// which is zero on failure, with an error written to `err`.
+///
+/// # Safety
+/// `handle` must be null or an open handle from `e01_open` or `e01_open_glob`.
+/// `buf` must be null or point to at least `buflen` writable bytes. `err` must
+/// be null or point to a writable, aligned `*mut E01Error`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e01_read(
     handle: *mut E01Handle,
@@ -384,7 +455,7 @@ pub unsafe extern "C" fn e01_read(
         }
 
         let buf = unsafe { slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-        unsafe { &mut *(*handle).reader }
+        unsafe { &*(*handle).reader }
             .read_at_offset(offset, buf)
             .unwrap_or_else(|e| {
                 fill_error(e, err);
@@ -403,6 +474,48 @@ mod test {
         corrupt_section_policy: CorruptSectionPolicy::CSP_ERROR,
         corrupt_chunk_policy: CorruptChunkPolicy::CCP_ERROR,
     };
+
+    /// A C caller can put any integer in the `#[repr(C)]` policy enum fields.
+    /// rust_options must reject an out-of-range discriminant with an error
+    /// rather than reading it as an enum (which would be undefined behavior).
+    #[test]
+    fn rust_options_rejects_out_of_range_policy() {
+        // Same layout as E01ReaderOptions: two c_int-sized policy fields.
+        #[repr(C)]
+        struct RawOpts {
+            section: c_int,
+            chunk: c_int,
+        }
+
+        let bad = RawOpts {
+            section: 99,
+            chunk: 0,
+        };
+        let err = unsafe { rust_options((&bad as *const RawOpts).cast()) }.unwrap_err();
+        assert!(err.contains("corrupt_section_policy"), "got {err}");
+
+        let bad = RawOpts {
+            section: 0,
+            chunk: 7,
+        };
+        let err = unsafe { rust_options((&bad as *const RawOpts).cast()) }.unwrap_err();
+        assert!(err.contains("corrupt_chunk_policy"), "got {err}");
+
+        // valid discriminants still map through
+        let good = RawOpts {
+            section: 1,
+            chunk: 2,
+        };
+        let opts = unsafe { rust_options((&good as *const RawOpts).cast()) }.unwrap();
+        assert!(matches!(
+            opts.corrupt_section_policy,
+            e01_reader::CorruptSectionPolicy::DamnTheTorpedoes
+        ));
+        assert!(matches!(
+            opts.corrupt_chunk_policy,
+            e01_reader::CorruptChunkPolicy::RawIfPossible
+        ));
+    }
 
     struct Holder<T> {
         ptr: *mut T,
@@ -982,7 +1095,7 @@ mod test {
 
         let r = unsafe { e01_read(h.ptr, 0, buf.as_mut_ptr(), buf.len(), &mut err) };
 
-        let handle = h.into_box();
+        let _handle = h.into_box();
 
         assert_eq!(r, 0);
         assert_err_contains(err, c"Chunk 0 checksum failed");

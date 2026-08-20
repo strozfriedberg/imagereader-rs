@@ -1,3 +1,11 @@
 /target
 /.world/build_config.sh
 /.bench-ab/
+/.claude/
+/.superpowers/
+__pycache__/
+
+# CI cache directories (CARGO_HOME/SCCACHE_DIR are redirected into the
+# project dir so GitLab can cache them; see .gitlab-ci.yml)
+/.cargo
+/.sccache-*

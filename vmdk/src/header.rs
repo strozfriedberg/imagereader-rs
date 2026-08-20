@@ -6,6 +6,16 @@ use imagesource::ReadSeek;
 
 const SECTOR_SIZE: u64 = 512;
 
+/// Multiply a chain of `u64`s, returning `None` on overflow.
+///
+/// The header size sanity checks below compare a product of attacker-controlled
+/// fields against a fixed cap. A plain `a * b * c * d` can wrap past `u64::MAX`
+/// and land back under the cap, so a hostile capacity would sail through the
+/// very check meant to reject it. Treating overflow as "too big" closes that.
+fn checked_product(vals: [u64; 4]) -> Option<u64> {
+    vals.into_iter().try_fold(1u64, |acc, v| acc.checked_mul(v))
+}
+
 #[derive(Debug)]
 #[allow(dead_code)]
 struct Vmdk3Header {
@@ -193,7 +203,9 @@ impl TryFrom<Vmdk3Header> for VmdkSparseMeta {
             cluster_sectors: h.granularity as u64,
         };
 
-        if meta.l1_len * meta.l2_len * meta.cluster_sectors * SECTOR_SIZE > (1 << 41) {
+        if checked_product([meta.l1_len, meta.l2_len, meta.cluster_sectors, SECTOR_SIZE])
+            .is_none_or(|size| size > (1 << 41))
+        {
             // 2TB is the maximum supported size for VMDK3
             return Err(OpenErrorKind::InvalidFileHeader);
         }
@@ -218,7 +230,12 @@ impl TryFrom<Vmdk4Header> for VmdkSparseMeta {
             h.gd_offset
         } * SECTOR_SIZE;
 
-        let sectors_per_l1_entry = (h.num_gtes_per_gt as u64) * h.granularity;
+        // num_gtes_per_gt and granularity are both nonzero (checked above), but
+        // granularity has no upper bound, so the product can overflow u64 and
+        // even wrap to 0 -- which would panic div_ceil. Reject overflow.
+        let sectors_per_l1_entry = (h.num_gtes_per_gt as u64)
+            .checked_mul(h.granularity)
+            .ok_or(OpenErrorKind::InvalidFileHeader)?;
         let l1_len = h.capacity.div_ceil(sectors_per_l1_entry);
 
         let meta = Self {
@@ -231,7 +248,9 @@ impl TryFrom<Vmdk4Header> for VmdkSparseMeta {
             cluster_sectors: h.granularity,
         };
 
-        if meta.l1_len * meta.l2_len * meta.cluster_sectors * SECTOR_SIZE > (1 << 41) {
+        if checked_product([meta.l1_len, meta.l2_len, meta.cluster_sectors, SECTOR_SIZE])
+            .is_none_or(|size| size > (1 << 41))
+        {
             // 2TB is the maximum supported size for VMDK4
             return Err(OpenErrorKind::InvalidFileHeader);
         }
@@ -269,18 +288,30 @@ impl TryFrom<VmdkSeSparseConstHeader> for VmdkSeSparseMeta {
             return Err(OpenErrorKind::InvalidFileHeader);
         }
 
+        // grain_dir_size is unbounded, so grain_dir_size * SECTOR_SIZE can
+        // overflow u64 and wrap l1_len small enough to slip past the size cap
+        // below. Reject the overflow. (l2_len and cluster_sectors derive from
+        // grain_table_size and grain_size, both pinned above, so they cannot.)
+        let l1_len = h
+            .grain_dir_size
+            .checked_mul(SECTOR_SIZE)
+            .ok_or(OpenErrorKind::InvalidFileHeader)?
+            / 8;
+
         // possibly the 8's here are the grain_size?
         let meta = Self {
             sectors: h.capacity,
             l1_offset: h.grain_dir_offset * SECTOR_SIZE,
-            l1_len: h.grain_dir_size * SECTOR_SIZE / 8,
+            l1_len,
             l2_tables_offset: h.grain_tables_offset * SECTOR_SIZE,
             l2_len: h.grain_table_size * SECTOR_SIZE / 8,
             cluster_sectors: h.grain_size,
             clusters_offset: h.grains_offset,
         };
 
-        if meta.l1_len * meta.l2_len * meta.cluster_sectors * SECTOR_SIZE > (1 << 46) {
+        if checked_product([meta.l1_len, meta.l2_len, meta.cluster_sectors, SECTOR_SIZE])
+            .is_none_or(|size| size > (1 << 46))
+        {
             // 64TB is the maximum supported size for SESPARSE
             return Err(OpenErrorKind::InvalidFileHeader);
         }
@@ -377,5 +408,67 @@ pub fn read_header_sesparse<T: Read + Seek + Clone + Send + 'static>(
             .try_into()
     } else {
         Err(OpenErrorKind::InvalidFileHeader)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn base_v4() -> Vmdk4Header {
+        Vmdk4Header {
+            magic: VMDK4_MAGIC,
+            version: 1,
+            flags: 0,
+            capacity: 2048, // 1 MiB
+            granularity: 128,
+            desc_offset: 0,
+            desc_size: 0,
+            num_gtes_per_gt: 512,
+            rgd_offset: 0,
+            gd_offset: 1,
+            grain_offset: 0,
+            filler: 0,
+            check_bytes: [0; 4],
+            compress_algorithm: 0,
+        }
+    }
+
+    #[test]
+    fn checked_product_reports_overflow() {
+        assert_eq!(checked_product([2, 3, 5, 7]), Some(210));
+        assert_eq!(checked_product([u64::MAX, 2, 1, 1]), None);
+    }
+
+    #[test]
+    fn sane_v4_header_is_accepted() {
+        assert!(VmdkSparseMeta::try_from(base_v4()).is_ok());
+    }
+
+    /// A capacity whose size product overflows u64 must be rejected. The old
+    /// `a * b * c * d > cap` could wrap back under the cap and accept it.
+    #[test]
+    fn overflowing_v4_capacity_is_rejected_not_wrapped() {
+        let mut h = base_v4();
+        h.granularity = 1;
+        h.num_gtes_per_gt = 512;
+        h.capacity = u64::MAX;
+        assert!(matches!(
+            VmdkSparseMeta::try_from(h),
+            Err(OpenErrorKind::InvalidFileHeader)
+        ));
+    }
+
+    /// num_gtes_per_gt * granularity can overflow and wrap to zero, which would
+    /// panic the div_ceil that computes l1_len. It must be rejected instead.
+    #[test]
+    fn overflowing_sectors_per_l1_entry_is_rejected_not_a_panic() {
+        let mut h = base_v4();
+        h.num_gtes_per_gt = 512;
+        h.granularity = u64::MAX;
+        assert!(matches!(
+            VmdkSparseMeta::try_from(h),
+            Err(OpenErrorKind::InvalidFileHeader)
+        ));
     }
 }

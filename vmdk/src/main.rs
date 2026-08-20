@@ -35,7 +35,7 @@ fn do_hash<P>(path: P) -> Result<Vec<u8>, VmdkError>
 where
     P: AsRef<str>,
 {
-    let mut vmdk_reader = VmdkReader::open(path.as_ref())?;
+    let vmdk_reader = VmdkReader::open(path.as_ref())?;
     let mut hasher = Sha1::new();
     let mut buf: Vec<u8> = vec![0; 1048576];
     let mut offset = 0;

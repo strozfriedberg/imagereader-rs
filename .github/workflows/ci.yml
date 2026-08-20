@@ -1,0 +1,79 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main] # post-merge safety net only; avoids duplicate runs on PR branches
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy # required: not read from rust-toolchain.toml
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          cache-on-failure: true
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
+
+  # --all-features covers the capi modules; --tests skips doctests, of which
+  # all six crates have none.
+  build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-rust
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          cache-on-failure: true
+      - run: cargo build --workspace --all-targets --all-features --locked
+      - run: cargo test --workspace --all-features --locked --tests
+
+  # The C API is built and exercised per crate, as cargo-c works one crate at a
+  # time. This is the only thing that links the capi surface as a real C
+  # library; `cargo test --all-features` only covers the Rust side of it.
+  ctest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-rust
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          cache-on-failure: true
+          cache-bin: true # keeps cargo-c out of a rebuild on every run
+      - run: command -v cargo-ctest >/dev/null || cargo install cargo-c --locked
+      - run: for crate in vmdk e01 rawdisk; do (cd "$crate" && cargo ctest); done
+
+  # scripts/build-release.sh refuses to build a dirty tree so the embedded
+  # commit always identifies the source. lto = true in the release profile, so
+  # this is slow; nothing above waits on it.
+  build-artifact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-rust
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          cache-on-failure: true
+      - run: scripts/build-release.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: imagereader-${{ github.sha }}
+          path: |
+            target/release/e01verify
+            target/release/diskimage-nbd
+          retention-days: 30
+          if-no-files-found: error

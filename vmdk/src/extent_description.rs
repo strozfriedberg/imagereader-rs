@@ -96,11 +96,10 @@ impl FromStr for ExtentDescriptionLine {
             .ok_or(ParseExtentDescriptionError)?;
         let sectors = tok.parse::<u64>().or(Err(ParseExtentDescriptionError))?;
 
-        // read the extent kind
-        let (tok, s) = s
-            .trim_start()
-            .split_once(' ')
-            .ok_or(ParseExtentDescriptionError)?;
+        // read the extent kind. It may be the final token on the line: a ZERO
+        // extent has no filename, so there is nothing after it.
+        let s = s.trim_start();
+        let (tok, s) = s.split_once(' ').unwrap_or((s, ""));
         let kind = tok
             .parse::<ExtentKind>()
             .or(Err(ParseExtentDescriptionError))?;
@@ -173,14 +172,18 @@ pub struct ExtentDescription {
 }
 
 impl ExtentDescription {
-    pub fn filename(&self) -> &str {
+    /// The backing filename for this extent, or `None` for a ZERO extent,
+    /// which has no file (its bytes are all zero).
+    pub fn filename(&self) -> Option<&str> {
         match &self.kind {
             ExtentDescriptionInner::Sparse { filename }
             | ExtentDescriptionInner::SeSparse { filename }
             | ExtentDescriptionInner::Flat { filename, .. }
             | ExtentDescriptionInner::Vmfs { filename }
-            | ExtentDescriptionInner::VmfsSparse { filename } => filename,
-            _ => todo!("TODO: {:?} support", self.kind),
+            | ExtentDescriptionInner::VmfsSparse { filename }
+            | ExtentDescriptionInner::VmfsRaw { filename }
+            | ExtentDescriptionInner::VmfsRdm { filename } => Some(filename),
+            ExtentDescriptionInner::Zero => None,
         }
     }
 }
@@ -362,28 +365,46 @@ mod test {
         );
     }
 
-    /*
-        #[test]
-        fn read_extent_description_line_zero() {
-            let ed = r#"RW 12345 ZERO"#;
-            assert_eq!(
-                ed.parse::<ExtentDescriptionLine>().unwrap(),
-                ExtentDescriptionLine {
-                    sectors: 12345,
-                    kind: ExtentKind::ZERO,
-                    filename: "test-f001.vmdk",
-                    offset: Some(0)
-                }
-            );
-        }
-    */
+    #[test]
+    fn read_extent_description_line_zero() {
+        // A ZERO extent is the final token on the line with no filename.
+        let ed = r#"RW 12345 ZERO"#;
+        assert_eq!(
+            ed.parse::<ExtentDescriptionLine>().unwrap(),
+            ExtentDescriptionLine {
+                access_mode: AccessMode::Rw,
+                sectors: 12345,
+                kind: ExtentKind::Zero,
+                filename: None,
+                offset: None,
+            }
+        );
+    }
+
+    #[test]
+    fn zero_extent_has_no_filename() {
+        let eds = extract_extent_descriptions("RW 12345 ZERO\n").unwrap();
+        assert_eq!(eds.len(), 1);
+        assert_eq!(eds[0].kind, ExtentDescriptionInner::Zero);
+        assert_eq!(eds[0].filename(), None);
+    }
+
+    #[test]
+    fn vmfsraw_and_vmfsrdm_keep_their_filename() {
+        let raw = r#"RW 100 VMFSRAW "/vmfs/devices/disks/naa.raw""#
+            .parse::<ExtentDescriptionLine>()
+            .and_then(ExtentDescription::try_from)
+            .unwrap();
+        assert_eq!(raw.filename(), Some("/vmfs/devices/disks/naa.raw"));
+
+        let rdm = r#"RW 100 VMFSRDM "rdm-pointer.vmdk""#
+            .parse::<ExtentDescriptionLine>()
+            .and_then(ExtentDescription::try_from)
+            .unwrap();
+        assert_eq!(rdm.filename(), Some("rdm-pointer.vmdk"));
+    }
 
     /*
-    TODO: extent description tests for:
-        ZERO,
-        VMFSRDM
-        VMFSRAW
-
     TODO: What happens if the filename has a double quote in it?
     TODO: What happens if the filename has a space in it?
     TODO: extent description test for filename containing a space

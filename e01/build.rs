@@ -21,6 +21,9 @@ fn remove_inner_attrs(file: &str) {
 }
 
 fn main() {
+    // Embed the current commit hash (shared logic with the other binaries).
+    buildinfo::emit_git_commit();
+
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=src/");

@@ -19,14 +19,17 @@ mod seg_path;
 mod segment;
 mod workersource;
 
-pub use imagesource::{IoLog, ReadTimer, ReadTrace, chunk_cache_label, init_tracing};
+pub use imagesource::{
+    IoLog, ReadTimer, ReadTrace, aligned_fetch_size, chunk_cache_label, init_tracing,
+};
 
 #[cfg(test)]
 mod test {
     use crate::{
         e01_reader::{
-            CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, DEFAULT_CACHE_MEM_MIB,
-            DEFAULT_PARALLEL_CHUNK_THREADS, DEFAULT_S3_CONCURRENCY, E01Reader, E01ReaderOptions,
+            CacheMode, CorruptChunkPolicy, CorruptSectionPolicy, DEFAULT_CACHE_BLOCK_SIZE,
+            DEFAULT_CACHE_FETCH_SIZE, DEFAULT_CACHE_MEM_MIB, DEFAULT_PARALLEL_CHUNK_THREADS,
+            DEFAULT_S3_CONCURRENCY, E01Reader, E01ReaderOptions,
         },
         hasher::HashType,
         test_data::*,
@@ -35,7 +38,7 @@ mod test {
 
     #[track_caller]
     fn assert_eq_test_data(exp: &TestData, options: &E01ReaderOptions) {
-        let mut reader = E01Reader::open_glob(exp.segment_paths[0], options).unwrap();
+        let reader = E01Reader::open_glob(exp.segment_paths[0], options).unwrap();
 
         let image_size = reader.image_size;
 
@@ -78,7 +81,7 @@ mod test {
     #[track_caller]
     #[allow(dead_code)]
     fn assert_eq_test_data_nonglob(exp: &TestData, options: &E01ReaderOptions) {
-        let mut reader = E01Reader::open(exp.segment_paths, options).unwrap();
+        let reader = E01Reader::open(exp.segment_paths, options).unwrap();
 
         let image_size = reader.image_size;
 
@@ -125,11 +128,14 @@ mod test {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
+            cache_fetch_size: DEFAULT_CACHE_FETCH_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         }
     }
 
@@ -140,11 +146,14 @@ mod test {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
+            cache_fetch_size: DEFAULT_CACHE_FETCH_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         }
     }
 

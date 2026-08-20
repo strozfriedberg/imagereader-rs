@@ -11,10 +11,6 @@ use crate::e01_reader::{CorruptChunkPolicy, ReadErrorKind};
 use crate::sec_read::Chunk;
 use crate::workersource::WorkerSource;
 
-// Secondary decoded-chunk LRU cache (full decompressed chunks).
-// Toggle off to A/B test against backing-byte cache (FoyerCache) alone.
-pub const ENABLE_DECODED_CHUNK_CACHE: bool = true;
-
 #[derive(Debug)]
 pub struct DecodedChunkCache {
     capacity: usize,
@@ -210,7 +206,7 @@ impl ReadWorker {
             error!("checksum mismatch reading chunk {}", chunk_index);
             match self.corrupt_chunk_policy {
                 CorruptChunkPolicy::Error => {
-                    return Err(ReadErrorKind::BadChecksum(chunk_index, crc_stored, crc));
+                    return Err(ReadErrorKind::BadChecksum(chunk_index, crc, crc_stored));
                 }
                 CorruptChunkPolicy::Zero => {
                     out.fill(0);
@@ -300,6 +296,23 @@ impl ReadWorker {
         Ok(())
     }
 
+    /// Chunk offsets come from the image's table sections and are untrusted:
+    /// a corrupt table can invert a chunk's bounds or claim a length past the
+    /// worker's chunk_size + 4 buffers.
+    fn checked_chunk_len(&self, chunk: &Chunk, chunk_index: usize) -> Result<usize, ReadErrorKind> {
+        chunk
+            .end_offset
+            .checked_sub(chunk.data_offset)
+            .filter(|len| *len <= self.chunk_size as u64 + 4)
+            .map(|len| len as usize)
+            .ok_or(ReadErrorKind::BadChunkBounds {
+                chunk: chunk_index,
+                data_offset: chunk.data_offset,
+                end_offset: chunk.end_offset,
+            })
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn read_cached<WS: WorkerSource>(
         &mut self,
         chunk: &Chunk,
@@ -310,11 +323,7 @@ impl ReadWorker {
         end_in_chunk: usize,
         cache: &Mutex<DecodedChunkCache>,
     ) -> Result<(), ReadErrorKind> {
-        if !ENABLE_DECODED_CHUNK_CACHE {
-            return self.read(chunk, src, chunk_index, buf, beg_in_chunk, end_in_chunk);
-        }
-
-        let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
+        let chunk_len = self.checked_chunk_len(chunk, chunk_index)?;
         let chunk_off = chunk.data_offset;
 
         debug!("reading chunk {chunk_index} [{beg_in_chunk},{end_in_chunk})");
@@ -353,7 +362,7 @@ impl ReadWorker {
         beg_in_chunk: usize,
         end_in_chunk: usize,
     ) -> Result<(), ReadErrorKind> {
-        let chunk_len = (chunk.end_offset - chunk.data_offset) as usize;
+        let chunk_len = self.checked_chunk_len(chunk, chunk_index)?;
         let chunk_off = chunk.data_offset;
 
         debug!("reading chunk {chunk_index} [{beg_in_chunk},{end_in_chunk})");
@@ -511,5 +520,62 @@ mod tests {
             .unwrap();
         assert_eq!(&second, &data[4096..8192]);
         assert_eq!(src.read_count, 1);
+    }
+
+    /// Chunk offsets come straight from the image's table sections; a corrupt
+    /// table can put a chunk's end before its start. That must surface as a
+    /// read error, not an arithmetic panic or a giant allocation.
+    #[test]
+    fn inverted_chunk_bounds_is_an_error_not_a_panic() {
+        let chunk_size = 32768;
+        let chunk = Chunk {
+            segment: 0,
+            data_offset: 0x1000,
+            end_offset: 0x800,
+            compressed: false,
+        };
+        let mut src = VecSource {
+            data: vec![0; chunk_size],
+            read_count: 0,
+        };
+        let mut worker = ReadWorker::new(chunk_size, chunk_size as u64, CorruptChunkPolicy::Error);
+        let mut out = vec![0; 512];
+
+        let err = worker
+            .read(&chunk, &mut src, 0, &mut out, 0, 512)
+            .unwrap_err();
+        assert!(
+            matches!(err, ReadErrorKind::BadChunkBounds { .. }),
+            "got {err:?}"
+        );
+    }
+
+    /// A chunk longer than chunk_size + 4 cannot be valid (the payload is at
+    /// most a full chunk plus its checksum) and overruns the worker's
+    /// fixed-size buffer if trusted.
+    #[test]
+    fn oversized_chunk_is_an_error_not_a_panic() {
+        let chunk_size = 32768;
+        let chunk = Chunk {
+            segment: 0,
+            data_offset: 0,
+            end_offset: chunk_size as u64 + 5,
+            compressed: true,
+        };
+        let mut src = VecSource {
+            data: vec![0; chunk_size * 2],
+            read_count: 0,
+        };
+        let mut worker = ReadWorker::new(chunk_size, chunk_size as u64, CorruptChunkPolicy::Error);
+        let cache = Mutex::new(DecodedChunkCache::new(8));
+        let mut out = vec![0; 512];
+
+        let err = worker
+            .read_cached(&chunk, &mut src, 0, &mut out, 0, 512, &cache)
+            .unwrap_err();
+        assert!(
+            matches!(err, ReadErrorKind::BadChunkBounds { .. }),
+            "got {err:?}"
+        );
     }
 }

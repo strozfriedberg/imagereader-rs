@@ -1,36 +1,50 @@
 use kaitai::{BytesReader, KError, ReadSeek};
 use rayon::prelude::*;
-use s3::{bucket::Bucket, region::Region};
 use std::{
+    collections::HashMap,
     fmt::Debug,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex, Weak},
 };
 use tokio::runtime::Runtime;
 use tracing::{debug, warn};
-use url::{self, Url};
 
 use crate::{
     cacheworkersource::CacheWorkerSource,
     error::{IoError, LibError},
     readworker::{DecodedChunkCache, ReadWorker},
     sec_read::{Chunk, Section, SectionIterator, VolumeSection},
-    seg_path::{ExistsChecker, UnrecognizedExtension, validated_segment_paths},
+    seg_path::{SegPathError, UnrecognizedExtension, validated_segment_paths},
     segment::SegmentFileHeader,
 };
 use imagesource::{
     Cache, CacheReadSeek, FoyerCache, IoLog, ReadTimer, ReadTrace, chunk_cache_label,
-    s3_creds::{S3Auth, resolve_s3_auth, snapshot_credentials_sync},
-    urlsource::{path_or_url_to_url, s3_bucket, source_for_url},
+    exists::{ExistsError, FileChecker, S3Checker},
+    s3_creds::{S3Auth, resolve_s3_auth},
+    urlsource::{path_or_url_to_url, source_for_url},
 };
 
 // Re-exported so existing consumers keep their `e01::e01_reader::…` paths.
 pub use imagesource::{CacheMode, InitError};
 
+impl From<SegPathError> for OpenError {
+    fn from(e: SegPathError) -> Self {
+        match e {
+            SegPathError::UnrecognizedExtension(e) => Self::PathGlobError(e),
+            SegPathError::Undetermined(e) => Self::SegmentProbeFailed(e),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error("{0}")]
     PathGlobError(#[from] UnrecognizedExtension),
+    /// A segment probe during globbing gave no definite answer. Distinct from
+    /// `NoSegmentFiles`: the sequence may well be complete, we just could not
+    /// see it, and silently globbing a shorter one would open a short image.
+    #[error("{0}")]
+    SegmentProbeFailed(#[from] ExistsError),
     #[error("No segment files given")]
     NoSegmentFiles,
     #[error("Missing volume section in {0}")]
@@ -46,6 +60,11 @@ pub enum OpenError {
     TooManyChunks(usize, usize),
     #[error("Too few chunks found: actual {0}, expected {1}")]
     TooFewChunks(usize, usize),
+    #[error("Declared image size {image_size} exceeds chunk coverage {chunk_coverage}")]
+    DeclaredSizeExceedsChunks {
+        image_size: u64,
+        chunk_coverage: u64,
+    },
     #[error("Error reading {path}: {source}")]
     IoError {
         path: String,
@@ -132,6 +151,12 @@ pub enum ReadErrorKind {
     BadChecksum(usize, u32, u32),
     #[error("Decompression of chunk {0} failed: {1}")]
     DecompressionFailed(usize, #[source] std::io::Error),
+    #[error("Chunk {chunk} has corrupt bounds: data offset {data_offset}, end offset {end_offset}")]
+    BadChunkBounds {
+        chunk: usize,
+        data_offset: u64,
+        end_offset: u64,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -332,9 +357,10 @@ fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
         match (seg.volume, &volume) {
             // we have no volume section, and saw one
             (Some(sv), None) => {
-                // we can size the chunks vec now
+                // we can size the chunks vec now; chunk_count is untrusted
+                // image data, so cap the up-front reservation
                 let unread_chunks = (sv.chunk_count as usize).saturating_sub(chunks.len());
-                chunks.reserve_exact(unread_chunks);
+                chunks.reserve_exact(unread_chunks.min(1 << 20));
                 volume = Some(sv);
             }
             // we have a volume section, and didn't see a new one
@@ -406,6 +432,26 @@ fn validate_volume(volume: &VolumeSection) -> Result<(), OpenError> {
     Ok(())
 }
 
+/// The declared image size (`total_sector_count * bytes_per_sector`) and the
+/// chunk table are independent fields of the image. `read_at_offset` indexes
+/// `self.chunks` by `offset / chunk_size`, so a declared size larger than the
+/// chunks actually cover would let a read near the end index past the chunk
+/// array and panic. Reject that at open.
+fn validate_chunk_coverage(
+    image_size: u64,
+    chunk_count: usize,
+    chunk_size: usize,
+) -> Result<(), OpenError> {
+    let chunk_coverage = (chunk_count as u64).saturating_mul(chunk_size as u64);
+    if image_size > chunk_coverage {
+        return Err(OpenError::DeclaredSizeExceedsChunks {
+            image_size,
+            chunk_coverage,
+        });
+    }
+    Ok(())
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CorruptSectionPolicy {
     #[default]
@@ -442,19 +488,51 @@ pub const DEFAULT_S3_CONCURRENCY: usize = 8;
 /// (sys time: 2m58 at 32 threads, 13s at 4).
 pub const DEFAULT_PARALLEL_CHUNK_THREADS: usize = 4;
 
-/// Default foyer memory cache capacity (~1 MiB entries when chunk size is 1 MiB).
+/// Default foyer memory cache capacity, in MiB.
 pub const DEFAULT_CACHE_MEM_MIB: usize = 1024;
+
+/// Default size of a foyer block: one byte range fetched from the backing store.
+///
+/// This is the unit of *fetch*, not of decompression -- an e01 chunk is ~32 KiB,
+/// and a block holds many of them. It is worth tuning against the backing store,
+/// because it decides how many round trips a workload costs. Measured against an
+/// S3-backed image, a range GET's cost is almost entirely fixed latency: 1 MiB
+/// took 221 ms and 16 MiB took 153 ms, so the bytes are nearly free and it is the
+/// *number* of GETs that sets the runtime. Larger blocks fetch more and wait less.
+///
+/// It stays 1 MiB by default because that is only true of a high-latency store.
+/// Against a local file, a larger block is wasted bandwidth on scattered reads.
+pub const DEFAULT_CACHE_BLOCK_SIZE: usize = 1024 * 1024;
+
+/// Default bytes pulled from the backing store per cache miss.
+///
+/// Distinct from the block size on purpose. Fetching wants to be big -- an S3
+/// range GET is almost pure fixed latency, so the runtime tracks round trips, not
+/// bytes. Caching wants to stay small -- on a large image the metadata working
+/// set already fills the cache, and a coarse block evicts useful blocks to hold
+/// bytes nobody asked for. When this exceeds the block size, one GET fills
+/// several blocks, and the unused ones are separate entries an LRU drops first.
+///
+/// Equal to the block size by default: coalescing pays only against a
+/// high-latency store, and against a local file it is wasted bandwidth.
+pub const DEFAULT_CACHE_FETCH_SIZE: usize = DEFAULT_CACHE_BLOCK_SIZE;
 
 #[derive(Debug, Clone)]
 pub struct E01ReaderOptions {
     pub corrupt_section_policy: CorruptSectionPolicy,
     pub corrupt_chunk_policy: CorruptChunkPolicy,
-    /// Foyer backing-cache readahead in 1 MiB blocks (S3/file segment fetch). 0 disables.
+    /// Foyer backing-cache readahead in blocks (S3/file segment fetch). 0 disables.
     pub foyer_readahead: usize,
     /// Max concurrent in-flight S3 segment byte-range fetches. 0 = serial.
     pub s3_concurrency: usize,
-    /// Foyer in-memory cache capacity in ~1 MiB entries (see [`DEFAULT_CACHE_MEM_MIB`]).
+    /// Foyer in-memory cache capacity in MiB (see [`DEFAULT_CACHE_MEM_MIB`]).
+    /// Divided by the block size to get foyer's entry count.
     pub cache_mem_mib: usize,
+    /// Cache/eviction granularity, in bytes (see [`DEFAULT_CACHE_BLOCK_SIZE`]).
+    pub cache_block_size: usize,
+    /// Bytes read from the backing store per miss (see [`DEFAULT_CACHE_FETCH_SIZE`]).
+    /// When larger than `cache_block_size`, one fetch fills several blocks.
+    pub cache_fetch_size: usize,
     /// Cache structure for this session (single vs dedicated-metadata).
     pub cache_mode: CacheMode,
     /// Base directory for foyer's on-disk cache (created as a random subdir
@@ -469,7 +547,22 @@ pub struct E01ReaderOptions {
     /// to one thread per core gives each ~30us of work and then parks them all
     /// again; the park/unpark futexes cost more than the inflate does. See
     /// [`DEFAULT_PARALLEL_CHUNK_THREADS`] for the sweep.
+    ///
+    /// Capped by `available_parallelism()`, so a pinned or cgroup-limited
+    /// process doesn't oversubscribe its cores. The pool is shared between
+    /// readers asking for the same count, so opening many images doesn't spawn
+    /// many pools.
     pub parallel_chunk_threads: usize,
+
+    /// Keep a secondary LRU of *decompressed* chunks, in front of the foyer
+    /// block cache.
+    ///
+    /// It only pays when a chunk is read more than once -- e.g. a filesystem
+    /// issuing 4 KiB reads inside a 32 KiB chunk. On a sequential whole-image
+    /// scan every chunk is touched exactly once, so the hit rate is zero and it
+    /// is pure overhead: an Arc<Vec<u8>> allocation, an insert and an eviction
+    /// per chunk, for a lookup that never comes.
+    pub decoded_chunk_cache: bool,
 
     /// Decompress a multi-chunk read's chunks in parallel, over rayon.
     ///
@@ -489,11 +582,14 @@ impl Default for E01ReaderOptions {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
+            cache_fetch_size: DEFAULT_CACHE_FETCH_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         }
     }
 }
@@ -516,9 +612,22 @@ pub struct E01Reader {
     corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy,
 
-    workers: Vec<ReadWorker>,
+    /// Decoder scratch, checked out per read.
+    ///
+    /// This is the *only* thing `read_at_offset` ever needed `&mut self` for --
+    /// and that `&mut` forced a server to put the whole reader behind one lock,
+    /// so every client serialized on it: 8 concurrent clients got *less*
+    /// throughput than one (34 vs 38 MiB/s) with a p99 of 28ms against 0.35ms.
+    ///
+    /// A ReadWorker is a zlib decoder plus a `chunk_size + 4` buffer (~32 KiB),
+    /// so pooling them costs a little memory per concurrent read and nothing
+    /// else. The lock is held only to pop and push, never across a read.
+    worker_pool: Mutex<Vec<ReadWorker>>,
     cache: Arc<dyn Cache>,
-    decoded_chunk_cache: Arc<Mutex<DecodedChunkCache>>,
+    /// `None` disables the decoded-chunk cache entirely -- there is then no
+    /// lock to take and no chunk to insert, rather than a cache that is merely
+    /// never asked for anything.
+    decoded_chunk_cache: Option<Arc<Mutex<DecodedChunkCache>>>,
     runtime: Arc<Runtime>,
     io_log: Option<Arc<IoLog>>,
     parallel_chunk_reads: bool,
@@ -535,7 +644,7 @@ type ChunkTask<'a> = (
     usize,
     &'a Chunk,
     CacheWorkerSource,
-    Arc<Mutex<DecodedChunkCache>>,
+    Option<Arc<Mutex<DecodedChunkCache>>>,
     &'a mut [u8],
     usize,
     usize,
@@ -543,18 +652,73 @@ type ChunkTask<'a> = (
     &'a mut ReadWorker,
 );
 
-/// A bounded pool for chunk decompression, or `None` to use rayon's global one.
-fn build_chunk_pool(threads: usize) -> Result<Option<Arc<rayon::ThreadPool>>, OpenError> {
-    if threads == 0 {
+/// Threads this process may actually use.
+///
+/// Respects `sched_setaffinity` (`taskset`) and cgroup CPU quotas, which is the
+/// whole point: a fixed thread count oversubscribes a pinned or containerised
+/// process and thrashes. Pinned to 2 CPUs, a 4-thread pool made e01's benches
+/// 5x slower.
+fn available_parallelism() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+}
+
+/// Chunk-decompression pools, shared across readers and keyed by thread count.
+///
+/// A thread pool is a process-level resource, so building one per `E01Reader`
+/// spawns N OS threads on every open and holds them idle for the reader's life.
+/// A server that opens an image per client would pay that every time. Held by
+/// `Weak`, so a pool goes away once the last reader using it does.
+static CHUNK_POOLS: LazyLock<Mutex<HashMap<usize, Weak<rayon::ThreadPool>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The shared pool for `requested` threads, or `None` to use rayon's global one.
+fn chunk_pool(requested: usize) -> Result<Option<Arc<rayon::ThreadPool>>, OpenError> {
+    if requested == 0 {
         return Ok(None);
     }
 
-    rayon::ThreadPoolBuilder::new()
+    let threads = requested.min(available_parallelism()).max(1);
+
+    let mut pools = CHUNK_POOLS.lock().expect("chunk pool registry poisoned");
+
+    if let Some(pool) = pools.get(&threads).and_then(Weak::upgrade) {
+        return Ok(Some(pool));
+    }
+
+    let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .thread_name(|i| format!("e01-chunk-{i}"))
         .build()
-        .map(|p| Some(Arc::new(p)))
-        .map_err(|e| OpenError::from(std::io::Error::other(e)))
+        .map(Arc::new)
+        .map_err(|e| OpenError::from(std::io::Error::other(e)))?;
+
+    pools.insert(threads, Arc::downgrade(&pool));
+    Ok(Some(pool))
+}
+
+impl E01Reader {
+    /// `n` workers, reusing pooled ones and building the rest.
+    fn checkout_workers(&self, n: usize) -> Vec<ReadWorker> {
+        let mut pool = self.worker_pool.lock().expect("worker pool poisoned");
+
+        let keep = pool.len().saturating_sub(n);
+        let mut workers: Vec<ReadWorker> = pool.drain(keep..).collect();
+        drop(pool);
+
+        workers.resize_with(n, || {
+            ReadWorker::new(self.chunk_size, self.image_size, self.corrupt_chunk_policy)
+        });
+        workers
+    }
+
+    fn return_workers(&self, workers: Vec<ReadWorker>) {
+        self.worker_pool
+            .lock()
+            .expect("worker pool poisoned")
+            .extend(workers);
+    }
 }
 
 fn run_chunk_task(task: ChunkTask<'_>) -> Result<(), ReadError> {
@@ -570,18 +734,27 @@ fn run_chunk_task(task: ChunkTask<'_>) -> Result<(), ReadError> {
         worker,
     ) = task;
 
-    worker
-        .read_cached(
+    match decoded_chunk_cache {
+        Some(cache) => worker.read_cached(
             chunk,
             &mut src,
             chunk_index,
             sbuf,
             beg_in_chunk,
             end_in_chunk,
-            &decoded_chunk_cache,
-        )
-        .map_err(ReadError::from)
-        .map_err(|e| e.with_path(seg_path))
+            &cache,
+        ),
+        None => worker.read(
+            chunk,
+            &mut src,
+            chunk_index,
+            sbuf,
+            beg_in_chunk,
+            end_in_chunk,
+        ),
+    }
+    .map_err(ReadError::from)
+    .map_err(|e| e.with_path(seg_path))
 }
 
 impl Debug for E01Reader {
@@ -600,57 +773,6 @@ impl Debug for E01Reader {
             .field("corrupt_section_policy", &self.corrupt_section_policy)
             .field("corrupt_chunk_policy", &self.corrupt_chunk_policy)
             .finish()
-    }
-}
-
-struct FileChecker;
-
-impl ExistsChecker for FileChecker {
-    fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
-        Path::new(path.as_ref()).is_file()
-    }
-}
-
-struct S3Checker {
-    bucket_name: String,
-    region: Region,
-    runtime: Arc<Runtime>,
-    auth: Arc<S3Auth>,
-}
-
-impl S3Checker {
-    fn new(url: &Url, runtime: Arc<Runtime>, auth: Arc<S3Auth>) -> Result<Self, OpenError> {
-        let name = url.host_str().ok_or(OpenError::BadPath(url.to_string()))?;
-        let bucket = s3_bucket(name, url.as_ref(), &runtime, &auth)?;
-        Ok(Self {
-            bucket_name: name.to_string(),
-            region: bucket.region().clone(),
-            runtime,
-            auth,
-        })
-    }
-}
-
-impl ExistsChecker for S3Checker {
-    fn exists<T: AsRef<str>>(&mut self, path: T) -> bool {
-        Url::parse(path.as_ref())
-            .map(|url| {
-                let bucket = snapshot_credentials_sync(&self.runtime, &self.auth)
-                    .ok()
-                    .and_then(|credentials| {
-                        Bucket::new(&self.bucket_name, self.region.clone(), credentials)
-                            .ok()
-                            .map(|b| *b)
-                    });
-                bucket
-                    .map(|bucket| {
-                        self.runtime
-                            .block_on(bucket.head_object(url.path().trim_start_matches('/')))
-                            .is_ok_and(|(_, code)| code == 200)
-                    })
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false)
     }
 }
 
@@ -723,7 +845,13 @@ impl E01Reader {
             return Err(OpenError::NoSegmentFiles);
         }
 
-        let cache_chunk_size = 1024 * 1024;
+        // Not clamped to 1: a zero here means "unset", and the cache's own
+        // fallback is the 1 MiB default. `.max(1)` produced a *1-byte* block size
+        // instead -- a memory budget of a billion entries, and one cache entry per
+        // byte of every read -- while vmdk and rawdisk, which pass the value
+        // straight through, got the sane fallback.
+        let cache_chunk_size = options.cache_block_size;
+        let cache_fetch_size = options.cache_fetch_size.max(cache_chunk_size);
         let cache_mem_size = options.cache_mem_mib;
         let foyer_readahead = options.foyer_readahead;
         let s3_concurrency = options.s3_concurrency;
@@ -731,6 +859,7 @@ impl E01Reader {
             CacheMode::SingleMemory => runtime
                 .block_on(FoyerCache::single_memory(
                     cache_chunk_size,
+                    cache_fetch_size,
                     cache_mem_size,
                     foyer_readahead,
                     s3_concurrency,
@@ -745,6 +874,7 @@ impl E01Reader {
             } => runtime
                 .block_on(FoyerCache::dual_hybrid(
                     cache_chunk_size,
+                    cache_fetch_size,
                     cache_mem_size,
                     content_disk_mib,
                     metadata_mem_mib,
@@ -803,6 +933,8 @@ impl E01Reader {
         let sector_size = meta.volume.bytes_per_sector as usize;
         let image_size = meta.volume.max_offset() as u64;
 
+        validate_chunk_coverage(image_size, chunk_count, chunk_size)?;
+
         Ok(Self {
             segments: meta.segments,
             chunks: meta.chunks,
@@ -816,29 +948,29 @@ impl E01Reader {
             segment_paths: meta.segment_paths,
             corrupt_section_policy: options.corrupt_section_policy,
             corrupt_chunk_policy: options.corrupt_chunk_policy,
-            workers: vec![],
+            worker_pool: Mutex::new(vec![]),
             cache,
-            decoded_chunk_cache: Arc::new(Mutex::new(DecodedChunkCache::new(
-                DECODED_CHUNK_CACHE_CHUNKS,
-            ))),
+            decoded_chunk_cache: options.decoded_chunk_cache.then(|| {
+                Arc::new(Mutex::new(DecodedChunkCache::new(
+                    DECODED_CHUNK_CACHE_CHUNKS,
+                )))
+            }),
             runtime,
             io_log: options.io_log.clone(),
             parallel_chunk_reads: options.parallel_chunk_reads,
-            chunk_pool: build_chunk_pool(options.parallel_chunk_threads)?,
+            chunk_pool: chunk_pool(options.parallel_chunk_threads)?,
         })
     }
 
-    pub fn read_at_offset(
-        &mut self,
-        mut offset: u64,
-        mut buf: &mut [u8],
-    ) -> Result<usize, ReadError> {
+    /// Takes `&self`: a reader can serve concurrent reads without a lock around
+    /// it. See `worker_pool` for what used to require `&mut`.
+    pub fn read_at_offset(&self, mut offset: u64, mut buf: &mut [u8]) -> Result<usize, ReadError> {
         let timer = self.io_log.as_ref().map(|_| ReadTimer::start());
         let read_offset = offset;
         // don't start reading past the end
         let image_end = self.image_size;
         if offset > image_end {
-            return Err(ReadErrorKind::OffsetBeyondEnd(offset, image_end))?;
+            return Err(ReadErrorKind::OffsetBeyondEnd(offset, image_end).into());
         }
 
         // limit the buffer to the image end
@@ -854,30 +986,24 @@ impl E01Reader {
         let beg_chunk_index = (buf_beg / chunk_size) as usize;
         let end_chunk_index = (buf_end / chunk_size + (buf_end % chunk_size).min(1)) as usize;
 
-        let chunk_hit = if crate::readworker::ENABLE_DECODED_CHUNK_CACHE {
-            let mut cache = self.decoded_chunk_cache.lock().unwrap();
-            Some((beg_chunk_index..end_chunk_index).all(|idx| cache.get(idx).is_some()))
+        let tracing = self.io_log.is_some();
+
+        let chunk_hit = if tracing {
+            self.decoded_chunk_cache.as_ref().map(|cache| {
+                let mut cache = cache.lock().unwrap();
+                (beg_chunk_index..end_chunk_index).all(|idx| cache.get(idx).is_some())
+            })
         } else {
             None
         };
 
-        let foyer_trace = Arc::new(Mutex::new(ReadTrace::default()));
+        let foyer_trace = tracing.then(|| Arc::new(Mutex::new(ReadTrace::default())));
 
-        // TODO: Number of workers should have some fixed/configured maximum,
-        // should not scale with the number of chunks to be fetched.
-        // resize_with, not resize: the latter eagerly builds a template ReadWorker
-        // -- allocating a chunk_size+4 buffer -- on every call, even when no
-        // resize is needed and the template is dropped unused.
-        if end_chunk_index - beg_chunk_index > self.workers.len() {
-            let (chunk_size, policy) = (self.chunk_size, self.corrupt_chunk_policy);
-            self.workers
-                .resize_with(end_chunk_index - beg_chunk_index, || {
-                    ReadWorker::new(chunk_size, image_end, policy)
-                });
-        }
+        // TODO: worker count still scales with the number of chunks in the read.
+        let mut workers = self.checkout_workers(end_chunk_index - beg_chunk_index);
 
         let mut tasks = Vec::with_capacity(end_chunk_index - beg_chunk_index);
-        let mut w = &mut self.workers[..];
+        let mut w = &mut workers[..];
 
         while offset < buf_end {
             // get the next chunk
@@ -905,7 +1031,7 @@ impl E01Reader {
                 cache: self.cache.clone(),
                 runtime: self.runtime.clone(),
                 idx: chunk.segment,
-                foyer_trace: Some(foyer_trace.clone()),
+                foyer_trace: foyer_trace.clone(),
             };
             let decoded_chunk_cache = self.decoded_chunk_cache.clone();
             tasks.push((
@@ -926,21 +1052,25 @@ impl E01Reader {
         // A single chunk is driven inline either way; there is nothing to fan out.
         let fan_out = self.parallel_chunk_reads && tasks.len() > 1;
 
-        if fan_out {
+        let result = if fan_out {
             match &self.chunk_pool {
-                Some(pool) => {
-                    pool.install(|| tasks.into_par_iter().try_for_each(run_chunk_task))?
-                }
-                None => tasks.into_par_iter().try_for_each(run_chunk_task)?,
+                Some(pool) => pool.install(|| tasks.into_par_iter().try_for_each(run_chunk_task)),
+                None => tasks.into_par_iter().try_for_each(run_chunk_task),
             }
         } else {
-            tasks.into_iter().try_for_each(run_chunk_task)?;
-        }
+            tasks.into_iter().try_for_each(run_chunk_task)
+        };
+
+        // Back to the pool even if a chunk failed, or a bad image would drain it.
+        self.return_workers(workers);
+        result?;
 
         let read_len = (offset - buf_beg) as usize;
         if let Some(log) = &self.io_log {
             let dur_us = timer.as_ref().map(ReadTimer::elapsed_us).unwrap_or(0);
-            let foyer = foyer_trace.lock().unwrap().foyer_label();
+            let foyer = foyer_trace
+                .as_ref()
+                .map_or("n/a", |t| t.lock().unwrap().foyer_label());
             log.log_read(
                 read_offset,
                 read_len,
@@ -958,6 +1088,96 @@ impl E01Reader {
 mod test {
     use super::*;
 
+    /// A zero block size means "unset", and has to land on the cache's 1 MiB
+    /// fallback the way vmdk and rawdisk do. Clamping it to 1 instead gave a
+    /// 1-byte block size: a memory budget of ~10^9 entries, and one cache entry
+    /// per byte of every read. The read below would not finish in any useful time.
+    #[test]
+    fn zero_block_size_uses_the_default_not_a_one_byte_block() {
+        let options = E01ReaderOptions {
+            cache_block_size: 0,
+            cache_fetch_size: 0,
+            ..Default::default()
+        };
+        let reader =
+            E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
+
+        let mut buf = vec![0u8; 4096];
+        reader.read_at_offset(0, &mut buf).unwrap();
+    }
+
+    /// The per-read residency probe and the shared `ReadTrace` are built only
+    /// when tracing is on, and their sole consumer is this trace line. Nothing
+    /// else in the tree exercises the tracing-on path, so if the gating were
+    /// wrong the fields would silently degrade to "n/a" and no test would notice.
+    #[test]
+    fn read_trace_reports_decoded_chunk_and_foyer_verdicts() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("io.jsonl");
+        let io_log = IoLog::open(&log_path).unwrap();
+        io_log.begin_serving().unwrap();
+
+        let options = E01ReaderOptions {
+            io_log: Some(io_log.clone()),
+            ..Default::default()
+        };
+        let reader =
+            E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
+
+        let mut buf = vec![0u8; 4096];
+        // First read decodes the chunk; the second must be served from the
+        // decoded-chunk cache.
+        reader.read_at_offset(0, &mut buf).unwrap();
+        reader.read_at_offset(0, &mut buf).unwrap();
+
+        drop(reader);
+        drop(io_log);
+
+        let body = std::fs::read_to_string(&log_path).unwrap();
+        let reads: Vec<&str> = body
+            .lines()
+            .filter(|l| l.contains(r#""kind":"read""#))
+            .collect();
+        assert_eq!(reads.len(), 2, "one record per read: {body}");
+        assert!(
+            reads[0].contains(r#""chunk":"miss""#),
+            "the first read has to decode: {}",
+            reads[0]
+        );
+        assert!(
+            reads[1].contains(r#""chunk":"hit""#),
+            "the second read comes from the decoded-chunk cache: {}",
+            reads[1]
+        );
+        assert!(
+            !reads[1].contains(r#""foyer":"n/a""#),
+            "the foyer verdict must be a real hit/miss, not the unset fallback: {}",
+            reads[1]
+        );
+    }
+
+    /// A declared size that fits within the chunks is fine; one larger than
+    /// the chunks cover would index past self.chunks on a read near the end,
+    /// so it must be rejected at open.
+    #[test]
+    fn chunk_coverage_rejects_oversized_declared_size() {
+        // 4 chunks * 32 KiB = 128 KiB of coverage.
+        let chunk_size = 32 * 1024;
+        let chunk_count = 4;
+        let coverage = (chunk_count * chunk_size) as u64;
+
+        // exactly covered, and one byte short, are both fine
+        assert!(validate_chunk_coverage(coverage, chunk_count, chunk_size).is_ok());
+        assert!(validate_chunk_coverage(coverage - 1, chunk_count, chunk_size).is_ok());
+
+        // one byte past the coverage indexes a non-existent chunk
+        let err = validate_chunk_coverage(coverage + 1, chunk_count, chunk_size).unwrap_err();
+        assert!(
+            matches!(err, OpenError::DeclaredSizeExceedsChunks { .. }),
+            "got {err:?}"
+        );
+    }
+
     #[test]
     fn repeated_partial_reads_match_single_read() {
         let options = E01ReaderOptions {
@@ -966,13 +1186,16 @@ mod test {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
+            cache_fetch_size: DEFAULT_CACHE_FETCH_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         };
-        let mut reader =
+        let reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
         let chunk_size = reader.chunk_size as u64;
         let base = chunk_size * 3;
@@ -1000,13 +1223,16 @@ mod test {
             foyer_readahead: 0,
             s3_concurrency: DEFAULT_S3_CONCURRENCY,
             cache_mem_mib: DEFAULT_CACHE_MEM_MIB,
+            cache_block_size: DEFAULT_CACHE_BLOCK_SIZE,
+            cache_fetch_size: DEFAULT_CACHE_FETCH_SIZE,
             cache_mode: CacheMode::default(),
             cache_dir: None,
             io_log: None,
             parallel_chunk_reads: true,
             parallel_chunk_threads: DEFAULT_PARALLEL_CHUNK_THREADS,
+            decoded_chunk_cache: true,
         };
-        let mut reader =
+        let reader =
             E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap();
         let chunk_size = reader.chunk_size as u64;
         let base = chunk_size * 2;
@@ -1018,6 +1244,92 @@ mod test {
         reader.read_at_offset(base + 8192, &mut again).unwrap();
 
         assert_eq!(&again[..], &cross[8192..8192 + 4096]);
+    }
+
+    /// A pool is a process-level resource. Building one per reader spawns N OS
+    /// threads on every open -- which is why the cold benches, which construct a
+    /// fresh reader per iteration, regressed 66-193% when the pool was added.
+    /// The whole point of `read_at_offset(&self)`: a server can share one reader
+    /// across clients with no lock. If this stops compiling, the API has
+    /// regressed to forcing a Mutex around the reader.
+    #[test]
+    fn reader_is_shareable_across_threads() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<E01Reader>();
+    }
+
+    /// Concurrent reads through a shared `&self` reader must return the same
+    /// bytes a serial read would -- the worker pool is the only mutable state,
+    /// and handing the same worker to two threads would corrupt both.
+    #[test]
+    fn concurrent_reads_through_one_reader_agree_with_serial_reads() {
+        let options = E01ReaderOptions::default();
+        let reader = Arc::new(
+            E01Reader::open_glob(crate::test_data::IMAGE_E01.segment_paths[0], &options).unwrap(),
+        );
+
+        let offsets: Vec<u64> = (0..16).map(|i| i * 4096).collect();
+
+        // What each offset should read, serially.
+        let expected: Vec<Vec<u8>> = offsets
+            .iter()
+            .map(|&off| {
+                let mut buf = vec![0u8; 4096];
+                let n = reader.read_at_offset(off, &mut buf).unwrap();
+                buf.truncate(n);
+                buf
+            })
+            .collect();
+
+        // The same reads, all at once, through one shared reader.
+        let handles: Vec<_> = offsets
+            .iter()
+            .map(|&off| {
+                let reader = reader.clone();
+                std::thread::spawn(move || {
+                    let mut buf = vec![0u8; 4096];
+                    let n = reader.read_at_offset(off, &mut buf).unwrap();
+                    buf.truncate(n);
+                    buf
+                })
+            })
+            .collect();
+
+        for (i, h) in handles.into_iter().enumerate() {
+            let got = h.join().expect("reader thread panicked");
+            assert_eq!(
+                got, expected[i],
+                "concurrent read at {} differed",
+                offsets[i]
+            );
+        }
+    }
+
+    #[test]
+    fn readers_asking_for_the_same_thread_count_share_a_pool() {
+        let a = chunk_pool(2).unwrap().expect("a pool");
+        let b = chunk_pool(2).unwrap().expect("a pool");
+
+        assert!(Arc::ptr_eq(&a, &b), "each reader built its own pool");
+    }
+
+    /// A fixed thread count oversubscribes a pinned or cgroup-limited process:
+    /// 4 threads on the 2 CPUs of `taskset -c 2,3` made the benches 5x slower.
+    #[test]
+    fn the_pool_never_exceeds_available_parallelism() {
+        let pool = chunk_pool(1024).unwrap().expect("a pool");
+
+        assert!(
+            pool.current_num_threads() <= available_parallelism(),
+            "{} threads on {} available CPUs",
+            pool.current_num_threads(),
+            available_parallelism(),
+        );
+    }
+
+    #[test]
+    fn zero_threads_means_rayons_global_pool() {
+        assert!(chunk_pool(0).unwrap().is_none());
     }
 
     #[test]

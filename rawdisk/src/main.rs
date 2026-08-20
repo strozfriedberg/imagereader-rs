@@ -35,7 +35,7 @@ fn do_hash<P>(path: P) -> Result<Vec<u8>, RawdiskError>
 where
     P: AsRef<str>,
 {
-    let mut rawdisk_reader = RawdiskReader::open(path.as_ref())?;
+    let rawdisk_reader = RawdiskReader::open(path.as_ref())?;
     let mut hasher = Sha1::new();
     let mut buf: Vec<u8> = vec![0; 1048576];
     let mut offset = 0;

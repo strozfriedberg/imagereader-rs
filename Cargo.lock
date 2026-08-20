@@ -610,6 +610,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "buildinfo"
+version = "0.1.0"
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1032,6 +1036,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "diskimage-nbd"
+version = "0.1.0"
+dependencies = [
+ "buildinfo",
+ "byteorder",
+ "clap",
+ "e01-rs",
+ "rawdisk-rs",
+ "signal-hook",
+ "tempfile",
+ "time",
+ "tracing",
+ "tracing-subscriber",
+ "vmdk-rs",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1062,6 +1083,7 @@ name = "e01-rs"
 version = "0.1.1"
 dependencies = [
  "adler32",
+ "buildinfo",
  "byteorder",
  "bytesize",
  "clap",
@@ -1867,6 +1889,7 @@ dependencies = [
  "foyer",
  "foyer-common",
  "futures",
+ "percent-encoding",
  "rust-s3",
  "tempfile",
  "thiserror",
@@ -1966,8 +1989,8 @@ dependencies = [
 
 [[package]]
 name = "kaitai"
-version = "0.2.0"
-source = "git+https://github.com/uckelman-sf/kaitai_struct_rust_runtime.git?branch=master#88e824cafd6bc42b75e7d5a3879272c58c2dab1c"
+version = "0.11.0"
+source = "git+https://github.com/strozfriedberg/kaitai_struct_rust_runtime.git?rev=14ab334ec9a188561924cd3cb5a6ac00d16fc4e8#14ab334ec9a188561924cd3cb5a6ac00d16fc4e8"
 dependencies = [
  "cp437",
  "encoding-next",
@@ -3056,6 +3079,16 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "signal-hook"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
 
 [[package]]
 name = "signal-hook-registry"

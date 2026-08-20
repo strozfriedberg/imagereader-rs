@@ -1,4 +1,6 @@
 pub mod rawdisk_reader;
+pub mod seg_path;
+pub mod spans;
 
 #[cfg(feature = "capi")]
 pub mod capi;
@@ -17,7 +19,7 @@ mod test {
 
     #[track_caller]
     fn assert_eq_test_data(exp: &TestData) {
-        let mut reader = RawdiskReader::open(exp.image_path).unwrap();
+        let reader = RawdiskReader::open(exp.image_path).unwrap();
         let image_size = reader.image_size;
 
         let sha1 = do_hash(

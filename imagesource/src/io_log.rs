@@ -52,6 +52,8 @@ pub struct IoLog {
     chunk_hits: AtomicU64,
     chunk_misses: AtomicU64,
     prefetch_enqueued: AtomicU64,
+    md_inserts: AtomicU64,
+    md_insert_bytes: AtomicU64,
 }
 
 impl IoLog {
@@ -72,6 +74,8 @@ impl IoLog {
             chunk_hits: AtomicU64::new(0),
             chunk_misses: AtomicU64::new(0),
             prefetch_enqueued: AtomicU64::new(0),
+            md_inserts: AtomicU64::new(0),
+            md_insert_bytes: AtomicU64::new(0),
         }))
     }
 
@@ -113,6 +117,8 @@ impl IoLog {
         self.chunk_hits.store(0, Ordering::Relaxed);
         self.chunk_misses.store(0, Ordering::Relaxed);
         self.prefetch_enqueued.store(0, Ordering::Relaxed);
+        self.md_inserts.store(0, Ordering::Relaxed);
+        self.md_insert_bytes.store(0, Ordering::Relaxed);
 
         let file = File::options()
             .create(true)
@@ -181,6 +187,22 @@ impl IoLog {
         ));
     }
 
+    /// One block entering the protected metadata tier: either the demanded block
+    /// of a fetch, or a content-tier hit being promoted. Block offsets are logged
+    /// rather than only counted because the footprint is the number of *distinct*
+    /// blocks -- concurrent readers can race the same key and log it twice.
+    pub fn log_metadata_insert(&self, segment: usize, block: u64, bytes: usize, promoted: bool) {
+        if !self.serving.load(Ordering::Relaxed) {
+            return;
+        }
+        self.md_inserts.fetch_add(1, Ordering::Relaxed);
+        self.md_insert_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
+        let _ = self.write_line(&format!(
+            r#"{{"kind":"md_insert","segment":{segment},"block":{block},"bytes":{bytes},"promoted":{promoted}}}"#
+        ));
+    }
+
     pub fn log_summary(&self) {
         if !self.serving.load(Ordering::Relaxed) {
             return;
@@ -196,8 +218,10 @@ impl IoLog {
         let chunk_hits = self.chunk_hits.load(Ordering::Relaxed);
         let chunk_misses = self.chunk_misses.load(Ordering::Relaxed);
         let prefetch_enqueued = self.prefetch_enqueued.load(Ordering::Relaxed);
+        let md_inserts = self.md_inserts.load(Ordering::Relaxed);
+        let md_insert_bytes = self.md_insert_bytes.load(Ordering::Relaxed);
         let _ = self.write_line(&format!(
-            r#"{{"kind":"summary","nbd_reads":{nbd_reads},"nbd_read_bytes":{nbd_read_bytes},"reads":{reads},"read_bytes":{read_bytes},"s3_fetches":{s3_fetches},"s3_bytes":{s3_bytes},"foyer_hits":{foyer_hits},"foyer_misses":{foyer_misses},"chunk_hits":{chunk_hits},"chunk_misses":{chunk_misses},"prefetch_enqueued":{prefetch_enqueued}}}"#
+            r#"{{"kind":"summary","nbd_reads":{nbd_reads},"nbd_read_bytes":{nbd_read_bytes},"reads":{reads},"read_bytes":{read_bytes},"s3_fetches":{s3_fetches},"s3_bytes":{s3_bytes},"foyer_hits":{foyer_hits},"foyer_misses":{foyer_misses},"chunk_hits":{chunk_hits},"chunk_misses":{chunk_misses},"prefetch_enqueued":{prefetch_enqueued},"md_inserts":{md_inserts},"md_insert_bytes":{md_insert_bytes}}}"#
         ));
         tracing::info!(
             nbd_reads,
@@ -211,6 +235,8 @@ impl IoLog {
             chunk_hits,
             chunk_misses,
             prefetch_enqueued,
+            md_inserts,
+            md_insert_bytes,
             "io trace summary"
         );
     }

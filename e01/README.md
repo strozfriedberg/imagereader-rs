@@ -10,7 +10,6 @@ This project is in active development and should be considered beta quality, wit
 * EWF
 * EWF-E01
 * EWF-S01
-* EWF-L01
 
 ### Supported features
 
@@ -85,7 +84,7 @@ env vars were unset).
 
 **EC2 instance role:** works without local AWS config files via IMDS in the chain.
 
-**Public buckets on laptops:** when no AWS config is present, the chain may probe
+**Public buckets:** when no AWS config is present, the chain may probe
 IMDS before falling back to anonymous (~1–5s on first open). For faster anonymous
 access, set `AWS_EC2_METADATA_DISABLED=true`.
 

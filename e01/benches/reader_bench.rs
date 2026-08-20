@@ -17,7 +17,7 @@ fn open(options: &E01ReaderOptions) -> E01Reader {
 }
 
 /// Read the whole image front to back through `buf`.
-fn read_all(reader: &mut E01Reader, buf: &mut [u8]) {
+fn read_all(reader: &E01Reader, buf: &mut [u8]) {
     let mut offset = 0u64;
     loop {
         let n = reader.read_at_offset(offset, buf).unwrap();
@@ -59,14 +59,14 @@ fn warm_sequential_read(c: &mut Criterion) {
     configure(&mut group);
 
     for buf_size in BUF_SIZES {
-        let mut reader = open(&options);
+        let reader = open(&options);
         group.throughput(Throughput::Bytes(reader.image_size));
         group.bench_with_input(
             BenchmarkId::from_parameter(buf_size),
             &buf_size,
             |b, &buf_size| {
                 let mut buf = vec![0u8; buf_size];
-                b.iter(|| read_all(&mut reader, &mut buf));
+                b.iter(|| read_all(&reader, &mut buf));
             },
         );
     }
@@ -75,7 +75,7 @@ fn warm_sequential_read(c: &mut Criterion) {
 
 fn warm_random_read(c: &mut Criterion) {
     let options = E01ReaderOptions::default();
-    let mut reader = open(&options);
+    let reader = open(&options);
     let offsets = random_offsets(reader.image_size);
 
     let mut group = c.benchmark_group("e01 random read (warm cache)");
@@ -103,6 +103,16 @@ fn warm_random_read(c: &mut Criterion) {
 // backing file is still in the OS page cache, so this measures decode and
 // cache-fill cost, not device I/O. For the latency-bound case (S3), see
 // imagesource's cache_bench, which injects latency at the BytesSource.
+//
+// Expect run-to-run variance here, and do not read a cross-session comparison as
+// a code change. At a 1 MiB block size a few-MiB image is only a handful of
+// misses, and each miss costs several cross-thread handoffs through tokio and
+// foyer -- so these benchmarks are dominated by scheduling latency, not by read
+// work. Measured on a 2-vCPU VM: one cold 4 KiB read took 30-42 ms where a whole
+// warm pass over the same image took 2.4 ms, and consecutive cold passes inside
+// one process ranged 122-171 ms. The same benchmarks track bare metal within 5%
+// on the warm path. Judge a change by recording the baseline and the comparison
+// back-to-back in one session.
 // ---------------------------------------------------------------------------
 
 fn cold_sequential_read(c: &mut Criterion) {
@@ -119,7 +129,10 @@ fn cold_sequential_read(c: &mut Criterion) {
                 let mut buf = vec![0u8; buf_size];
                 b.iter_batched(
                     || open(&options),
-                    |mut reader| read_all(&mut reader, &mut buf),
+                    |reader| {
+                        read_all(&reader, &mut buf);
+                        reader
+                    },
                     BatchSize::PerIteration,
                 );
             },
@@ -140,10 +153,12 @@ fn cold_random_read(c: &mut Criterion) {
         let mut buf = vec![0u8; RANDOM_BUF_SIZE];
         b.iter_batched(
             || open(&options),
-            |mut reader| {
+            |reader| {
                 for &offset in &offsets {
                     reader.read_at_offset(offset, &mut buf).unwrap();
                 }
+                // Return this so that reader teardown isn't part of the bench timing
+                reader
             },
             BatchSize::PerIteration,
         );

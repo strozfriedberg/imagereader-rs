@@ -21,6 +21,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
+percent-encoding = "2.3"
 
 [dev-dependencies]
 criterion = "0.7"
