@@ -280,7 +280,13 @@ impl VmdkReader {
                 runtime.clone(),
                 s3_auth.as_ref(),
                 io_log.as_ref(),
-            )?;
+            )
+            // Extent errors already name the extent file; everything else
+            // (descriptor, header, source) is about this image.
+            .map_err(|e| match e.path.is_empty() {
+                true => e.with_path(current_url.as_ref()),
+                false => e,
+            })?;
 
             idx += 1;
 
