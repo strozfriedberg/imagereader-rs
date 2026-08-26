@@ -33,8 +33,7 @@ a malformed extent chain).
 ### `Cache`
 
 `Cache` is the trait the readers hold: `read(idx, off, buf, trace)`, `end(idx)`,
-`add_source(idx, src)`. Two implementations ship: `FoyerCache`, the real one, and
-`DummyCache`, which passes straight through to the source for benchmarking.
+`add_source(idx, src)`. `FoyerCache` is the one implementation.
 
 `FoyerCache` wraps [foyer](https://github.com/foyer-rs/foyer) and separates two
 sizes:

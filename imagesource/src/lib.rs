@@ -6,7 +6,6 @@ pub mod bytessource;
 pub mod cache;
 pub mod cachemode;
 pub mod cachereadseek;
-pub mod dummycache;
 pub mod errors;
 pub mod exists;
 pub mod fetch_limit;
@@ -27,7 +26,6 @@ pub use cachemode::{
     DEFAULT_S3_CONCURRENCY,
 };
 pub use cachereadseek::CacheReadSeek;
-pub use dummycache::DummyCache;
 pub use errors::{InitError, OpenError, OpenErrorKind};
 pub use fetch_limit::FetchLimiter;
 pub use filesource::FileSource;
