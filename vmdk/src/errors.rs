@@ -2,10 +2,6 @@ pub use imagesource::errors::InitError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DescriptorError {
-    #[error("failed to parse '{0}' as a u64")]
-    U64ParseError(String),
-    #[error("failed to parse '{0}' as Kind enum")]
-    KindParseError(String),
     #[error("")]
     ParseExtentDescriptionError,
     #[error("failed to recognize descriptor")]

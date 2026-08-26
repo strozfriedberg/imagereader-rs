@@ -331,16 +331,6 @@ pub enum FileType {
     VmdkSeSparse,
 }
 
-impl FileType {
-    #[allow(dead_code)]
-    pub fn sig_len(&self) -> usize {
-        match self {
-            FileType::Vmdk3 | FileType::Vmdk4 => 4,
-            FileType::VmdkSeSparse => 8,
-        }
-    }
-}
-
 fn signature_to_file_type(sig: &[u8; 8]) -> Option<FileType> {
     match *sig {
         _ if sig.starts_with(&VMDK3_MAGIC) => Some(FileType::Vmdk3),

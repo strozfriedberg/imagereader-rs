@@ -62,7 +62,6 @@ impl FromStr for ExtentKind {
 
 #[derive(Debug, PartialEq, Eq)]
 struct ExtentDescriptionLine {
-    access_mode: AccessMode,
     sectors: u64,
     kind: ExtentKind,
     filename: Option<String>,
@@ -80,13 +79,13 @@ impl FromStr for ExtentDescriptionLine {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
 
-        // read the access mode
+        // read the access mode. Nothing downstream distinguishes RW from
+        // RDONLY -- this reader never writes -- so it is only validated.
         let (tok, s) = s
             .trim_start()
             .split_once(' ')
             .ok_or(ParseExtentDescriptionError)?;
-        let access_mode = tok
-            .parse::<AccessMode>()
+        tok.parse::<AccessMode>()
             .or(Err(ParseExtentDescriptionError))?;
 
         // read the sector count
@@ -128,7 +127,6 @@ impl FromStr for ExtentDescriptionLine {
         };
 
         Ok(ExtentDescriptionLine {
-            access_mode,
             sectors,
             kind,
             filename,
@@ -149,24 +147,8 @@ pub enum ExtentDescriptionInner {
     Zero,
 }
 
-impl From<&ExtentDescriptionInner> for ExtentKind {
-    fn from(edi: &ExtentDescriptionInner) -> Self {
-        match edi {
-            ExtentDescriptionInner::Flat { .. } => ExtentKind::Flat,
-            ExtentDescriptionInner::SeSparse { .. } => ExtentKind::SeSparse,
-            ExtentDescriptionInner::Sparse { .. } => ExtentKind::Sparse,
-            ExtentDescriptionInner::Vmfs { .. } => ExtentKind::Vmfs,
-            ExtentDescriptionInner::VmfsRaw { .. } => ExtentKind::VmfsRaw,
-            ExtentDescriptionInner::VmfsRdm { .. } => ExtentKind::VmfsRdm,
-            ExtentDescriptionInner::VmfsSparse { .. } => ExtentKind::VmfsSparse,
-            ExtentDescriptionInner::Zero => ExtentKind::Zero,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct ExtentDescription {
-    pub access_mode: AccessMode,
     pub sectors: u64,
     pub kind: ExtentDescriptionInner,
 }
@@ -193,7 +175,6 @@ impl TryFrom<ExtentDescriptionLine> for ExtentDescription {
 
     fn try_from(edl: ExtentDescriptionLine) -> Result<Self, Self::Error> {
         Ok(ExtentDescription {
-            access_mode: edl.access_mode,
             sectors: edl.sectors,
             kind: match edl {
                 ExtentDescriptionLine {
@@ -281,7 +262,6 @@ mod test {
         assert_eq!(
             ed.parse::<ExtentDescriptionLine>().unwrap(),
             ExtentDescriptionLine {
-                access_mode: AccessMode::Rw,
                 sectors: 4192256,
                 kind: ExtentKind::Sparse,
                 filename: Some("test-f001.vmdk".into()),
@@ -296,7 +276,6 @@ mod test {
         assert_eq!(
             ed.parse::<ExtentDescriptionLine>().unwrap(),
             ExtentDescriptionLine {
-                access_mode: AccessMode::RdOnly,
                 sectors: 2048,
                 kind: ExtentKind::Sparse,
                 filename: Some("call-me-stream.vmdk".into()),
@@ -311,7 +290,6 @@ mod test {
         assert_eq!(
             ed.parse::<ExtentDescriptionLine>().unwrap(),
             ExtentDescriptionLine {
-                access_mode: AccessMode::Rw,
                 sectors: 1048576,
                 kind: ExtentKind::Flat,
                 filename: Some("test-f001.vmdk".into()),
@@ -326,7 +304,6 @@ mod test {
         assert_eq!(
             ed.parse::<ExtentDescriptionLine>().unwrap(),
             ExtentDescriptionLine {
-                access_mode: AccessMode::Rw,
                 sectors: 209715200,
                 kind: ExtentKind::Vmfs,
                 filename: Some("vdisk-PhysicalDrive0-flat.vmdk".into()),
@@ -341,7 +318,6 @@ mod test {
         assert_eq!(
             ed.parse::<ExtentDescriptionLine>().unwrap(),
             ExtentDescriptionLine {
-                access_mode: AccessMode::Rw,
                 sectors: 4096,
                 kind: ExtentKind::VmfsSparse,
                 filename: Some("vmfs_thick-000001-delta.vmdk".into()),
@@ -356,7 +332,6 @@ mod test {
         assert_eq!(
             ed.parse::<ExtentDescriptionLine>().unwrap(),
             ExtentDescriptionLine {
-                access_mode: AccessMode::Rw,
                 sectors: 314572800,
                 kind: ExtentKind::SeSparse,
                 filename: Some("sesparse.vmdk".into()),
@@ -372,7 +347,6 @@ mod test {
         assert_eq!(
             ed.parse::<ExtentDescriptionLine>().unwrap(),
             ExtentDescriptionLine {
-                access_mode: AccessMode::Rw,
                 sectors: 12345,
                 kind: ExtentKind::Zero,
                 filename: None,

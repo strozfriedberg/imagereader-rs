@@ -273,13 +273,11 @@ where
         }
         ExtentDescriptionInner::Vmfs { .. } => ExtentStorage::Flat(FlatStorage {
             source: Box::new(src) as Box<dyn ReadSeekSource>,
-            filename,
             offset: 0,
             start_sector,
         }),
         ExtentDescriptionInner::Flat { offset, .. } => ExtentStorage::Flat(FlatStorage {
             source: Box::new(src) as Box<dyn ReadSeekSource>,
-            filename,
             offset: *offset,
             start_sector,
         }),

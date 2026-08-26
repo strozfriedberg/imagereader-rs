@@ -37,7 +37,6 @@ where
 #[derive(Debug)]
 pub struct SparseStorage {
     pub source: Box<dyn ReadSeekSource>,
-    #[allow(dead_code)]
     pub filename: String,
     pub grain_table: HashMap<u64 /*grain index in extent*/, u64 /*real sector in file*/>,
     // grain size in sectors; grain byte size is grain_size * 512
@@ -50,8 +49,6 @@ pub struct SparseStorage {
 #[derive(Debug)]
 pub struct FlatStorage {
     pub source: Box<dyn ReadSeekSource>,
-    #[allow(dead_code)]
-    pub filename: String,
     pub offset: u64,
     pub start_sector: u64,
 }
