@@ -1,7 +1,6 @@
 # e01-rs
 
 `e01-rs` is a Rust library to read data from Expert Witness Format (E01) files.
-This project is in active development and should be considered beta quality, with no known issues.
 
 # [Expert Witness Compression Format (EWF)](https://github.com/libyal/libewf/blob/main/documentation/Expert%20Witness%20Compression%20Format%20(EWF).asciidoc)
 
@@ -72,15 +71,10 @@ Segment paths may use `s3://bucket/key` URLs. Credentials are resolved via the
 AWS SDK Rust [`DefaultCredentialsChain`](https://docs.rs/aws-config/latest/aws_config/default_provider/credentials/struct.DefaultCredentialsChain.html)
 (profile files, environment variables, SSO, ECS, EC2 instance role).
 
-**Resolution policy:** the chain is always attempted for `s3://` opens. If
-resolution fails and AWS auth is expected (environment variables, `AWS_CONFIG_FILE`,
-`AWS_SHARED_CREDENTIALS_FILE`, or `~/.aws/credentials` / `~/.aws/config`), open
-fails with an explicit error. If no auth is configured, the reader falls back to
-anonymous access (public buckets).
-
-**Behavior change:** a default profile in `~/.aws/credentials` may be used
-without setting `AWS_PROFILE` or other env vars (previously anonymous-only when
-env vars were unset).
+**Resolution policy:** the chain is always attempted for `s3://` opens (environment variables, `AWS_CONFIG_FILE`,
+`AWS_SHARED_CREDENTIALS_FILE`, or `~/.aws/credentials` / `~/.aws/config`). If
+resolution fails and AWS auth is expected, open fails with an explicit error. 
+If no auth is configured, the reader falls back to anonymous access (public buckets).
 
 **EC2 instance role:** works without local AWS config files via IMDS in the chain.
 
@@ -98,4 +92,4 @@ library queries the bucket location before reading rather than assuming one.
 
 ### Copyright
 
-Copyright 2025, LevelBlue. `e01-rs` is licensed under the Apache License, Version 2.0.
+Copyright 2025–2026, LevelBlue. `e01-rs` is licensed under the Apache License, Version 2.0.

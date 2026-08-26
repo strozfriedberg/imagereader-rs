@@ -3,12 +3,15 @@
 Cargo workspace of disk-image readers with local-file and direct-from-S3
 support, backed by a shared foyer-based caching layer.
 
-- `imagesource` — shared infrastructure: byte sources (file, S3), hybrid
-  memory/disk caching with a protected metadata tier, AWS credential
-  resolution, and I/O logging.
-- `vmdk` — VMDK reader (`vmdk-rs`, C API prefix `vmdk_*`).
-- `e01` — EWF/E01 reader (`e01-rs`, C API prefix `e01_*`).
-- `rawdisk` — raw (dd) image reader (`rawdisk-rs`, C API prefix `rawdisk_*`).
+- [`imagesource`](imagesource/README.md) — shared infrastructure: byte sources
+  (file, S3), hybrid memory/disk caching with a protected metadata tier, AWS
+  credential resolution, and I/O logging.
+- [`vmdk`](vmdk/README.md) — VMDK reader (`vmdk-rs`, C API prefix `vmdk_*`).
+- [`e01`](e01/README.md) — EWF/E01 reader (`e01-rs`, C API prefix `e01_*`).
+- [`rawdisk`](rawdisk/README.md) — raw (dd) image reader (`rawdisk-rs`, C API
+  prefix `rawdisk_*`).
+- [`diskimage-nbd`](diskimage-nbd/README.md) — read-only NBD server for all
+  three formats.
 
 Each reader crate builds a C library via cargo-c (`cargo cinstall` from the
 crate directory).
@@ -19,7 +22,7 @@ crate directory).
 `diskimage-nbd` (the NBD server) — in release mode. It refuses to build when any
 tracked file has uncommitted changes and embeds the commit it built from, so a
 binary always identifies its exact source. Each binary reports that commit via
-its long version string (and it is greppable with `strings`):
+its long version string:
 
 ```
 $ diskimage-nbd --version
@@ -33,26 +36,6 @@ diskimage-nbd 0.1.0             # -V: plain crate version
 E01 (`.e01`), VMDK (`.vmdk`), and raw/dd (`.raw`, `.dd`, `.img`, or a numbered
 segment such as `disk.001`). The format is chosen by the path's extension.
 
-### Split raw images
-
-A raw image split across numbered segments is opened by naming any one of them:
-
-```
-diskimage-nbd /images/disk.001 --unix /tmp/nbd.sock
-```
-
-Segments must be numbered with a `.` followed by at least two digits, zero-padded
-to a fixed width (`disk.001`, `disk.dd.01`). The width is taken from the path you
-name, so `.001` pairs with `.002` but not `.02`. Sequences may start at `000` or `001`.
-
-Missing files: 
-A one-segment hole after the segment you name is caught: a gap two or more segments 
-wide cannot be distinguished from the end of the sequence, and the image opens short.
-Naming the LAST segment rather than the first therefore gives the strongest check,
-because every segment then falls below the one you named.
-
-`split(1)`'s alphabetic output (`xaa`, `xab`) is not recognized.
-
 ### Copyright
 
-Copyright 2025, LevelBlue. `imagereader-rs` is licensed under the Apache License, Version 2.0.
+Copyright 2025–2026, LevelBlue. `imagereader-rs` is licensed under the Apache License, Version 2.0.
