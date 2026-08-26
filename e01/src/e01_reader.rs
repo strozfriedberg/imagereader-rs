@@ -296,10 +296,9 @@ fn make_bytes_reader(
 
     let src = source_for_url(&url, idx, &runtime, s3_auth, io_log.as_ref())?;
 
-    let seg_len = src.end();
     cache.add_source(idx, src);
 
-    let crs = CacheReadSeek::new(cache, runtime, idx, seg_len, None);
+    let crs = CacheReadSeek::new(cache, runtime, idx, None);
 
     // Kaitai's generated struct parser issues reads a few bytes at a time
     // (one per primitive field) while walking segment headers/tables.

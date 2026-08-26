@@ -21,7 +21,6 @@ impl CacheReadSeek {
         cache: Arc<dyn Cache>,
         runtime: Arc<Runtime>,
         idx: usize,
-        _len: u64,
         io_log: Option<Arc<IoLog>>,
     ) -> Self {
         Self {
@@ -143,7 +142,7 @@ mod tests {
         let data: Vec<u8> = (0..100).map(|i| i as u8).collect();
         let cache: Arc<dyn Cache> = Arc::new(FixedCache { data: data.clone() });
         let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
-        let mut crs = CacheReadSeek::new(cache, runtime, 0, data.len() as u64, None);
+        let mut crs = CacheReadSeek::new(cache, runtime, 0, None);
 
         crs.seek(SeekFrom::Start(90)).unwrap();
         let mut buf = [0xAAu8; 64];

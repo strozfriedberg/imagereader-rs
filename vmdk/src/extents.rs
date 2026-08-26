@@ -336,17 +336,9 @@ pub fn read_extents(
                 }
             )?;
 
-        let seg_len = src.end();
-
         cache.add_source(idx, src);
 
-        let crs = CacheReadSeek::new(
-            cache.clone(),
-            runtime.clone(),
-            idx,
-            seg_len,
-            io_log.cloned(),
-        );
+        let crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, io_log.cloned());
 
         let storage =
             read_extent(ed, start_sector, filename, crs).map_err(|e| e.with_path(ed_url))?;

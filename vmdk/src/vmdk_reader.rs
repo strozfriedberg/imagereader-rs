@@ -80,17 +80,9 @@ fn handle_image(
     io_log: Option<&Arc<IoLog>>,
 ) -> Result<(Vec<Extent>, Option<Url>), OpenError> {
     let src = source_for_url(current_url, idx, &runtime, s3_auth, io_log)?;
-    let seg_len = src.end();
-
     cache.add_source(idx, src);
 
-    let mut crs = CacheReadSeek::new(
-        cache.clone(),
-        runtime.clone(),
-        idx,
-        seg_len,
-        io_log.cloned(),
-    );
+    let mut crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, io_log.cloned());
 
     idx += 1;
 
