@@ -1,3 +1,4 @@
+use crate::SECTOR_SIZE;
 use std::{
     collections::{BTreeMap, HashSet},
     fmt::Debug,
@@ -29,8 +30,6 @@ pub use imagesource::{
     CacheMode, DEFAULT_CACHE_CHUNK_SIZE, DEFAULT_CACHE_FETCH_SIZE, DEFAULT_CACHE_MEM_MIB,
     DEFAULT_S3_CONCURRENCY, source_for_url,
 };
-
-const SECTOR_SIZE: u64 = 512;
 
 pub struct VmdkReader {
     pub image_path: PathBuf,

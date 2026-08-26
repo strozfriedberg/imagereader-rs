@@ -1,3 +1,4 @@
+use crate::SECTOR_SIZE;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::{
     collections::HashMap,
@@ -67,8 +68,6 @@ impl Extent {
         !matches!(self.storage, ExtentStorage::Zero)
     }
 }
-
-const SECTOR_SIZE: u64 = 512;
 
 fn read_grain_table_sparse<R>(
     h: &VmdkSparseMeta,

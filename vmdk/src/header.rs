@@ -1,10 +1,9 @@
+use crate::SECTOR_SIZE;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Read, Seek, SeekFrom};
 
 use crate::errors::{DeserializationError, OpenErrorKind};
 use imagesource::ReadSeek;
-
-const SECTOR_SIZE: u64 = 512;
 
 /// Multiply a chain of `u64`s, returning `None` on overflow.
 ///

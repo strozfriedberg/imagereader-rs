@@ -1,8 +1,7 @@
+use crate::SECTOR_SIZE;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 use crate::errors::{DescriptorError, OpenErrorKind};
-
-const SECTOR_SIZE: u64 = 512;
 
 pub fn read_descriptor_internal<R>(src: &mut R, offset: u64) -> Result<String, std::io::Error>
 where

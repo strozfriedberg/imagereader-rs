@@ -1,3 +1,4 @@
+use crate::SECTOR_SIZE;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use flate2::read::DeflateDecoder;
 use std::{
@@ -8,8 +9,6 @@ use std::{
 
 use crate::vmdk_reader::ReadError;
 use imagesource::ReadSeek;
-
-const SECTOR_SIZE: u64 = 512;
 
 /// Something that can hand out a fresh cursor over an extent's bytes.
 ///
