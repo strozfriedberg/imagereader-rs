@@ -660,7 +660,6 @@ mod test {
                 read
             },
             handle.image_size,
-            false,
         );
 
         let act = TestData {

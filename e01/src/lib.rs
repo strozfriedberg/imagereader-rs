@@ -55,7 +55,6 @@ mod test {
         let hashes = do_hash(
             |offset, buf: &mut [u8]| reader.read_at_offset(offset, buf).unwrap(),
             image_size,
-            false,
         );
 
         let stored_md5 = reader.stored_md5.map(hex::encode);

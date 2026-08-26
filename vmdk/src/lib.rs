@@ -37,7 +37,6 @@ mod test {
                 reader.read_at_offset(offset, &mut buf[..buf_len]).unwrap()
             },
             image_size,
-            false,
         );
 
         let act = TestData {
