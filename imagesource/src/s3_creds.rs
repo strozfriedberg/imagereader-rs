@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use aws_config::BehaviorVersion;
-use aws_config::default_provider::credentials::DefaultCredentialsChain;
-use aws_config::provider_config::ProviderConfig;
+use aws_config::{BehaviorVersion, SdkConfig};
 use aws_credential_types::Credentials as AwsCredentials;
-use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::provider::error::CredentialsError;
+use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use s3::creds::{Credentials, Rfc3339OffsetDateTime};
 use time::OffsetDateTime;
 use tokio::runtime::Runtime;
@@ -26,14 +24,16 @@ const AWS_AUTH_ENV_VARS: &[&str] = &[
 
 const EXPIRY_SKEW: Duration = Duration::from_secs(5 * 60);
 
-static CHAIN_CACHE: Mutex<Option<HashMap<String, std::sync::Arc<DefaultCredentialsChain>>>> =
-    Mutex::new(None);
+/// Loading the SDK config reads the profile files and probes every credential
+/// source in the default chain; do it once per profile, not once per open.
+static CONFIG_CACHE: LazyLock<Mutex<HashMap<String, SdkConfig>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct S3Auth {
     pub shared_creds: std::sync::Arc<RwLock<Credentials>>,
     /// Region from `AWS_REGION` / profile config (via aws-config), if resolved at open.
     pub region: Option<String>,
-    chain: Option<std::sync::Arc<DefaultCredentialsChain>>,
+    chain: Option<SharedCredentialsProvider>,
     refresh_lock: AsyncMutex<()>,
 }
 
@@ -73,10 +73,6 @@ fn aws_auth_configured() -> bool {
         || path_configured(default_config_path())
 }
 
-fn auth_expected() -> bool {
-    aws_auth_configured()
-}
-
 fn map_provider_error(err: CredentialsError) -> std::io::Error {
     std::io::Error::other(format!("S3 credentials could not be resolved: {err}"))
 }
@@ -105,42 +101,29 @@ fn is_expired(creds: &Credentials) -> bool {
     }
 }
 
-fn profile_region_from_config(runtime: &Runtime) -> Option<String> {
-    let sdk_config = runtime.block_on(aws_config::defaults(BehaviorVersion::latest()).load());
-    sdk_config
-        .region()
-        .map(|region| region.as_ref().to_string())
+/// The region named in the environment, if any.
+fn env_region() -> Option<String> {
+    std::env::var("AWS_REGION")
+        .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+        .ok()
 }
 
-fn chain_for_profile(
-    runtime: &Runtime,
-    profile_key: &str,
-) -> Result<std::sync::Arc<DefaultCredentialsChain>, std::io::Error> {
-    let mut cache = CHAIN_CACHE
-        .lock()
-        .map_err(|_| std::io::Error::other("S3 credential chain cache lock poisoned"))?;
-    if cache.is_none() {
-        *cache = Some(HashMap::new());
-    }
-    let map = cache.as_mut().expect("initialized above");
-    if let Some(chain) = map.get(profile_key) {
-        return Ok(chain.clone());
+/// The SDK config for a profile: its credential chain and its region, both
+/// resolved by aws-config from the environment and the profile files.
+fn sdk_config_for_profile(runtime: &Runtime, profile_key: &str) -> SdkConfig {
+    // The map holds no invariant a panic could break; recover from poisoning.
+    let mut cache = CONFIG_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(config) = cache.get(profile_key) {
+        return config.clone();
     }
 
-    // `without_region()` is `empty()` plus aws-config's default tokio sleep
-    // (feature `rt-tokio`); the region is set below.
-    let conf = ProviderConfig::without_region();
-    let mut builder = DefaultCredentialsChain::builder().configure(conf);
+    let mut loader = aws_config::defaults(BehaviorVersion::latest());
     if profile_key != "default" {
-        builder = builder.profile_name(profile_key);
+        loader = loader.profile_name(profile_key);
     }
-    if let Ok(region) = std::env::var("AWS_REGION").or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
-    {
-        builder = builder.region(aws_config::Region::new(region));
-    }
-    let chain = std::sync::Arc::new(runtime.block_on(builder.build()));
-    map.insert(profile_key.to_string(), chain.clone());
-    Ok(chain)
+    let config = runtime.block_on(loader.load());
+    cache.insert(profile_key.to_string(), config.clone());
+    config
 }
 
 pub fn resolve_s3_auth(runtime: &Runtime) -> Result<S3Auth, std::io::Error> {
@@ -149,11 +132,11 @@ pub fn resolve_s3_auth(runtime: &Runtime) -> Result<S3Auth, std::io::Error> {
     ));
     let refresh_lock = AsyncMutex::new(());
     let profile_key = std::env::var("AWS_PROFILE").unwrap_or_else(|_| "default".into());
-    let chain = chain_for_profile(runtime, &profile_key)?;
-    let region = std::env::var("AWS_REGION")
-        .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
-        .ok()
-        .or_else(|| profile_region_from_config(runtime));
+    let config = sdk_config_for_profile(runtime, &profile_key);
+    let region = config.region().map(|r| r.as_ref().to_string());
+    let chain = config.credentials_provider().ok_or_else(|| {
+        std::io::Error::other("S3 credentials could not be resolved: no provider")
+    })?;
 
     match runtime.block_on(chain.provide_credentials()) {
         Ok(aws_creds) => {
@@ -168,7 +151,7 @@ pub fn resolve_s3_auth(runtime: &Runtime) -> Result<S3Auth, std::io::Error> {
                 refresh_lock,
             })
         }
-        Err(err) if auth_expected() => Err(map_provider_error(err)),
+        Err(err) if aws_auth_configured() => Err(map_provider_error(err)),
         Err(_) => {
             let anon = Credentials::anonymous().map_err(std::io::Error::other)?;
             runtime.block_on(async {
@@ -188,10 +171,7 @@ pub fn resolve_s3_auth(runtime: &Runtime) -> Result<S3Auth, std::io::Error> {
 /// region resolved into [`S3Auth`]. Returns `None` when no region is configured,
 /// so callers can discover the bucket's real region rather than assuming one.
 pub fn s3_region_name(auth: Option<&S3Auth>) -> Option<String> {
-    std::env::var("AWS_REGION")
-        .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
-        .ok()
-        .or_else(|| auth.and_then(|a| a.region.clone()))
+    env_region().or_else(|| auth.and_then(|a| a.region.clone()))
 }
 
 /// Whether a bucket holding `current` needs to be handed `fresh`.
@@ -212,12 +192,6 @@ pub fn snapshot_credentials_sync(
 ) -> Result<Credentials, std::io::Error> {
     ensure_fresh_sync(runtime, auth)?;
     Ok(runtime.block_on(async { auth.shared_creds.read().await.clone() }))
-}
-
-#[allow(dead_code)]
-pub async fn snapshot_credentials_async(auth: &S3Auth) -> Result<Credentials, std::io::Error> {
-    ensure_fresh_async(auth).await?;
-    Ok(auth.shared_creds.read().await.clone())
 }
 
 pub fn ensure_fresh_sync(runtime: &Runtime, auth: &S3Auth) -> Result<(), std::io::Error> {
@@ -377,17 +351,17 @@ mod tests {
     }
 
     #[test]
-    fn auth_expected_true_for_env_and_file_vars() {
+    fn aws_auth_configured_true_for_env_and_file_vars() {
         with_env(&[("AWS_PROFILE", Some("dev"))], || {
-            assert!(auth_expected());
+            assert!(aws_auth_configured());
         });
         with_env(&[("AWS_CONFIG_FILE", Some("/tmp/aws-config"))], || {
-            assert!(auth_expected());
+            assert!(aws_auth_configured());
         });
     }
 
     #[test]
-    fn auth_expected_false_without_aws_config() {
+    fn aws_auth_configured_false_without_aws_config() {
         with_env(
             &[
                 ("AWS_PROFILE", None),
@@ -397,7 +371,7 @@ mod tests {
                 ("HOME", Some("/nonexistent-empty-home-for-test")),
             ],
             || {
-                assert!(!auth_expected());
+                assert!(!aws_auth_configured());
             },
         );
     }
