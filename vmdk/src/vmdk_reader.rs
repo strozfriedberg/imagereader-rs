@@ -120,13 +120,12 @@ fn handle_image(
             crs.seek(SeekFrom::Start(0))?;
             read_descriptor_file(&mut crs)?
         }
-        // this is bogus
-        _ => return Err(DescriptorError::ParseExtentDescriptionError.into()),
+        // a sparse extent or SESPARSE file on its own: no descriptor to follow
+        Some(ft) => return Err(DescriptorError::NoDescriptor(ft).into()),
     };
 
     // get the extent descriptions
-    let eds = extract_extent_descriptions(&descriptor)
-        .or(Err(DescriptorError::ParseExtentDescriptionError))?;
+    let eds = extract_extent_descriptions(&descriptor).map_err(DescriptorError::from)?;
 
     let is_bin_and_singular = ft == Some(FileType::Vmdk4) && eds.len() == 1;
 

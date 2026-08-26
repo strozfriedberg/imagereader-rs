@@ -8,9 +8,8 @@ pub enum AccessMode {
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-// TODO
-#[error("")]
-pub struct ParseAccessModeError;
+#[error("unrecognized access mode '{0}'")]
+pub struct ParseAccessModeError(String);
 
 impl FromStr for AccessMode {
     type Err = ParseAccessModeError;
@@ -20,7 +19,7 @@ impl FromStr for AccessMode {
             "NOACCESS" => Ok(Self::NoAccess),
             "RDONLY" => Ok(Self::RdOnly),
             "RW" => Ok(Self::Rw),
-            _ => Err(ParseAccessModeError),
+            _ => Err(ParseAccessModeError(s.into())),
         }
     }
 }
@@ -38,9 +37,8 @@ pub enum ExtentKind {
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-// TODO
-#[error("")]
-pub struct ParseExtentKindError;
+#[error("unrecognized extent kind '{0}'")]
+pub struct ParseExtentKindError(String);
 
 impl FromStr for ExtentKind {
     type Err = ParseExtentKindError;
@@ -55,7 +53,7 @@ impl FromStr for ExtentKind {
             "VMFSRDM" => Ok(Self::VmfsRdm),
             "VMFSSPARSE" => Ok(Self::VmfsSparse),
             "ZERO" => Ok(Self::Zero),
-            _ => Err(ParseExtentKindError),
+            _ => Err(ParseExtentKindError(s.into())),
         }
     }
 }
@@ -69,39 +67,50 @@ struct ExtentDescriptionLine {
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-// TODO
-#[error("")]
-pub struct ParseExtentDescriptionError;
+#[error("malformed extent description '{line}': {reason}")]
+pub struct ParseExtentDescriptionError {
+    line: String,
+    reason: String,
+}
+
+impl ParseExtentDescriptionError {
+    fn new(line: &str, reason: impl ToString) -> Self {
+        Self {
+            line: line.into(),
+            reason: reason.to_string(),
+        }
+    }
+}
 
 impl FromStr for ExtentDescriptionLine {
     type Err = ParseExtentDescriptionError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s.trim();
+    fn from_str(line: &str) -> Result<Self, Self::Err> {
+        let err = |reason: &dyn std::fmt::Display| ParseExtentDescriptionError::new(line, reason);
+        let s = line.trim();
 
         // read the access mode. Nothing downstream distinguishes RW from
         // RDONLY -- this reader never writes -- so it is only validated.
         let (tok, s) = s
             .trim_start()
             .split_once(' ')
-            .ok_or(ParseExtentDescriptionError)?;
-        tok.parse::<AccessMode>()
-            .or(Err(ParseExtentDescriptionError))?;
+            .ok_or_else(|| err(&"missing sector count"))?;
+        tok.parse::<AccessMode>().map_err(|e| err(&e))?;
 
         // read the sector count
         let (tok, s) = s
             .trim_start()
             .split_once(' ')
-            .ok_or(ParseExtentDescriptionError)?;
-        let sectors = tok.parse::<u64>().or(Err(ParseExtentDescriptionError))?;
+            .ok_or_else(|| err(&"missing extent kind"))?;
+        let sectors = tok
+            .parse::<u64>()
+            .map_err(|e| err(&format!("bad sector count '{tok}': {e}")))?;
 
         // read the extent kind. It may be the final token on the line: a ZERO
         // extent has no filename, so there is nothing after it.
         let s = s.trim_start();
         let (tok, s) = s.split_once(' ').unwrap_or((s, ""));
-        let kind = tok
-            .parse::<ExtentKind>()
-            .or(Err(ParseExtentDescriptionError))?;
+        let kind = tok.parse::<ExtentKind>().map_err(|e| err(&e))?;
 
         // read the optional filename and offset
         let s = s.trim_start();
@@ -111,16 +120,18 @@ impl FromStr for ExtentDescriptionLine {
             // read the filename
             let (tok, s) = s
                 .strip_prefix('"')
-                .ok_or(ParseExtentDescriptionError)?
-                .rsplit_once('"')
-                .ok_or(ParseExtentDescriptionError)?;
+                .and_then(|s| s.rsplit_once('"'))
+                .ok_or_else(|| err(&"filename is not double-quoted"))?;
             let filename = Some(tok.to_string());
 
             // read the offset
             let s = s.trim_start();
             let offset = match s.is_empty() {
                 true => None,
-                false => Some(s.parse::<u64>().or(Err(ParseExtentDescriptionError))?),
+                false => Some(
+                    s.parse::<u64>()
+                        .map_err(|e| err(&format!("bad offset '{s}': {e}")))?,
+                ),
             };
 
             (filename, offset)
@@ -229,7 +240,17 @@ impl TryFrom<ExtentDescriptionLine> for ExtentDescription {
                     offset: None,
                     ..
                 } => ExtentDescriptionInner::VmfsRaw { filename },
-                _ => Err(ParseExtentDescriptionError)?,
+                ExtentDescriptionLine {
+                    kind,
+                    filename,
+                    offset,
+                    ..
+                } => {
+                    return Err(ParseExtentDescriptionError::new(
+                        &format!("{kind:?} {filename:?} {offset:?}"),
+                        "unexpected filename or offset for this extent kind",
+                    ));
+                }
             },
         })
     }
