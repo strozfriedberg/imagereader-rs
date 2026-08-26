@@ -51,7 +51,7 @@ impl Drop for SessionSlot {
     }
 }
 
-/// CLI flags shared by every diskimage-nbd binary.  Flatten into format-specific `Args`.
+/// CLI flags common to every image format; flattened into the binary's `Args`.
 #[derive(Parser)]
 pub struct CommonArgs {
     /// TCP address to listen on (default NBD port 10809).

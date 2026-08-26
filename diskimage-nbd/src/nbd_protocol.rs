@@ -4,9 +4,7 @@
 //! transmission command and reads export data with `read_at_offset` directly.
 //!
 //! Generic over the [`NbdImage`] trait so the same protocol code can serve any
-//! disk-image reader. This file is kept near-identical to e01's copy for
-//! hand-sync; the only intended differences are the trait seam and the
-//! `NBD_OPT_LIST` server name.
+//! disk-image reader.
 
 use crate::{IoLog, ReadTimer};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
