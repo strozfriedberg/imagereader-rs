@@ -17,19 +17,18 @@ capi = []
 
 [dependencies]
 imagesource.workspace = true
-bytesize = "2.3.1"
-clap = { version = "4.1.7", features = ["derive"] }
-hex = "0.4.3"
-sha-1 = "^0.10"
+bytesize.workspace = true
+clap.workspace = true
+hex.workspace = true
+sha1.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-rand = "0.10"
-criterion = "0.7"
+rand.workspace = true
+criterion.workspace = true
 tempfile.workspace = true
 
 [[bench]]

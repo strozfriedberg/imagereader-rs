@@ -28,7 +28,7 @@ pub enum Section {
 }
 
 fn checksum_reader(reader: &BytesReader, len: usize) -> Result<u32, IoError> {
-    Ok(adler32::adler32(std::io::Cursor::new(
+    Ok(simd_adler32::read::adler32(&mut std::io::Cursor::new(
         &reader.read_bytes(len).map_err(IoError::Read)?,
     ))?)
 }

@@ -4,25 +4,28 @@ version = "0.1.1"
 authors = ["LevelBlue"]
 edition = "2024"
 autobins = false
-exclude = [
-    "/session*/",
-    "/artifacts/",
-]
 
 [lib]
 name = "e01"
 path = "src/lib.rs"
 
+# The binaries need clap/bytesize/rand; the library does not. They sit behind
+# the default `cli` feature so a library consumer can opt out with
+# `default-features = false` and not link them.
 [[bin]]
 name = "e01verify"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "e01bench"
 path = "src/bin/e01bench.rs"
+required-features = ["cli"]
 
 [features]
+default = ["cli"]
 capi = []
+cli = ["dep:bytesize", "dep:clap", "dep:rand"]
 
 [build-dependencies]
 buildinfo.workspace = true
@@ -30,36 +33,29 @@ buildinfo.workspace = true
 [dependencies]
 imagesource.workspace = true
 buildinfo.workspace = true
-adler32 = "1.2"
-byteorder = "1.5"
-bytesize = "2.3.1"
-clap = { version = "4.5", features = ["derive"] }
 digest = "0.10.7"
 flate2 = { version = "1", features = ["zlib-rs"] }
-futures.workspace = true
-glob = "0.3"
-hex = "0.4"
+hex.workspace = true
 itertools = "0.14.0"
 kaitai = { git = "https://github.com/strozfriedberg/kaitai_struct_rust_runtime.git", rev = "14ab334ec9a188561924cd3cb5a6ac00d16fc4e8" }
 md-5 = "0.10"
-rand = "0.9"
 rayon = "1.11.0"
-rust-s3.workspace = true
-sha1 = "0.10"
+sha1.workspace = true
 sha2 = "0.10"
 simd-adler32 = "0.3"
-tempfile.workspace = true
 thiserror.workspace = true
-time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
-url.workspace = true
+
+# `cli` only
+bytesize = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
 
 [dev-dependencies]
-const_format = "0.2"
-test-log = { version = "0.2.18", default-features = false, features = ["trace"] }
-criterion = "0.7"
+criterion.workspace = true
+rand.workspace = true
+tempfile.workspace = true
 
 [[bench]]
 name = "reader_bench"

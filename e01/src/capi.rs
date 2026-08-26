@@ -873,10 +873,7 @@ mod test {
 
     #[test]
     fn test_e01_open_one_segment() {
-        #[cfg(unix)]
         let paths = [c"data/image.E01".as_ptr()];
-        #[cfg(windows)]
-        let paths = [c"data\\image.E01".as_ptr()];
 
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -897,10 +894,7 @@ mod test {
 
     #[test]
     fn test_e01_open_one_segment_null_err() {
-        #[cfg(unix)]
         let paths = [c"data/image.E01".as_ptr()];
-        #[cfg(windows)]
-        let paths = [c"data\\image.E01".as_ptr()];
 
         let options = &ERROR_OPTS;
 
@@ -921,10 +915,7 @@ mod test {
 
     #[test]
     fn test_e01_open_two_segments() {
-        #[cfg(unix)]
         let paths = [c"data/mimage.E01".as_ptr(), c"data/mimage.E02".as_ptr()];
-        #[cfg(windows)]
-        let paths = [c"data\\mimage.E01".as_ptr(), c"data\\mimage.E02".as_ptr()];
 
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -945,10 +936,7 @@ mod test {
 
     #[test]
     fn test_e01_open_two_segments_null_err() {
-        #[cfg(unix)]
         let paths = [c"data/mimage.E01".as_ptr(), c"data/mimage.E02".as_ptr()];
-        #[cfg(windows)]
-        let paths = [c"data\\mimage.E01".as_ptr(), c"data\\mimage.E02".as_ptr()];
 
         let options = &ERROR_OPTS;
 
@@ -992,10 +980,7 @@ mod test {
 
     #[test]
     fn test_e01_read_null_buffer_null_err() {
-        #[cfg(unix)]
         let paths = [c"data/image.E01".as_ptr()];
-        #[cfg(windows)]
-        let paths = [c"data\\image.E01".as_ptr()];
 
         let options = &ERROR_OPTS;
 
@@ -1031,10 +1016,7 @@ mod test {
 
     #[test]
     fn test_e01_read_null_buffer() {
-        #[cfg(unix)]
         let paths = [c"data/image.E01".as_ptr()];
-        #[cfg(windows)]
-        let paths = [c"data\\image.E01".as_ptr()];
 
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -1052,10 +1034,7 @@ mod test {
 
     #[test]
     fn test_e01_read_offset_past_end() {
-        #[cfg(unix)]
         let paths = [c"data/image.E01".as_ptr()];
-        #[cfg(windows)]
-        let paths = [c"data\\image.E01".as_ptr()];
 
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -1078,10 +1057,7 @@ mod test {
 
     #[test]
     fn test_e01_read_offset_bad_chunk_checksum() {
-        #[cfg(unix)]
         let paths = [c"data/bad_chunk.E01".as_ptr()];
-        #[cfg(windows)]
-        let paths = [c"data\\bad_chunk.E01".as_ptr()];
 
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();
@@ -1103,10 +1079,7 @@ mod test {
 
     #[test]
     fn test_e01_read_and_hash() {
-        #[cfg(unix)]
         let paths = [c"data/image.E01".as_ptr()];
-        #[cfg(windows)]
-        let paths = [c"data\\image.E01".as_ptr()];
 
         let options = &ERROR_OPTS;
         let mut err = std::ptr::null_mut();

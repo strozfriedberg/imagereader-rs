@@ -9,9 +9,7 @@ use aws_config::provider_config::ProviderConfig;
 use aws_credential_types::Credentials as AwsCredentials;
 use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::provider::error::CredentialsError;
-use aws_smithy_async::rt::sleep::TokioSleep;
-use awscreds::Rfc3339OffsetDateTime;
-use s3::creds::Credentials;
+use s3::creds::{Credentials, Rfc3339OffsetDateTime};
 use time::OffsetDateTime;
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex as AsyncMutex, RwLock};
@@ -129,7 +127,9 @@ fn chain_for_profile(
         return Ok(chain.clone());
     }
 
-    let conf = ProviderConfig::empty().with_sleep_impl(TokioSleep::new());
+    // `without_region()` is `empty()` plus aws-config's default tokio sleep
+    // (feature `rt-tokio`); the region is set below.
+    let conf = ProviderConfig::without_region();
     let mut builder = DefaultCredentialsChain::builder().configure(conf);
     if profile_key != "default" {
         builder = builder.profile_name(profile_key);

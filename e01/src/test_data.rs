@@ -1,5 +1,3 @@
-use const_format::concatcp;
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct TestData<'a> {
     pub segment_paths: &'a [&'a str],
@@ -15,10 +13,8 @@ pub struct TestData<'a> {
     pub sha256: Option<&'a str>,
 }
 
-const SEP: char = std::path::MAIN_SEPARATOR;
-
 pub const IMAGE_E01: TestData = TestData {
-    segment_paths: &[concatcp!("data", SEP, "image.E01")],
+    segment_paths: &["data/image.E01"],
     chunk_size: 32768,
     chunk_count: 41,
     sector_size: 512,
@@ -32,10 +28,7 @@ pub const IMAGE_E01: TestData = TestData {
 };
 
 pub const MIMAGE_E01: TestData = TestData {
-    segment_paths: &[
-        concatcp!("data", SEP, "mimage.E01"),
-        concatcp!("data", SEP, "mimage.E02"),
-    ],
+    segment_paths: &["data/mimage.E01", "data/mimage.E02"],
     chunk_size: 32768,
     chunk_count: 27,
     sector_size: 512,
@@ -49,7 +42,7 @@ pub const MIMAGE_E01: TestData = TestData {
 };
 
 pub const BAD_CHUNK_E01: TestData = TestData {
-    segment_paths: &[concatcp!("data", SEP, "bad_chunk.E01")],
+    segment_paths: &["data/bad_chunk.E01"],
     chunk_size: 32768,
     chunk_count: 41,
     sector_size: 512,
@@ -63,7 +56,7 @@ pub const BAD_CHUNK_E01: TestData = TestData {
 };
 
 pub const BAD_CHUNK_E01_ZEROED: TestData = TestData {
-    segment_paths: &[concatcp!("data", SEP, "bad_chunk.E01")],
+    segment_paths: &["data/bad_chunk.E01"],
     chunk_size: 32768,
     chunk_count: 41,
     sector_size: 512,

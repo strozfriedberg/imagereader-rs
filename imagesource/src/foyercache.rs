@@ -3,13 +3,12 @@ use foyer::{
     BlockEngineConfig, DefaultHasher, DeviceBuilder, FsDeviceBuilder, HybridCache,
     HybridCacheBuilder, HybridCacheEntry,
 };
-use foyer_common::code::HashBuilder;
 use futures::future::{BoxFuture, FutureExt, Shared, try_join_all};
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{fmt::Debug, future::Future, path::Path, sync::Arc};
+use std::{future::Future, path::Path, sync::Arc};
 use tempfile::TempDir;
 use tokio::sync::OwnedSemaphorePermit;
 use tracing::trace;
@@ -168,25 +167,19 @@ impl GroupLatch {
     }
 }
 
-struct MetadataTier<S>
-where
-    S: HashBuilder + Debug,
-{
-    cache: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
+struct MetadataTier {
+    cache: Arc<BlockCache>,
     regular_phase: Arc<AtomicBool>,
 }
 
-pub struct FoyerCache<S = DefaultHasher>
-where
-    S: HashBuilder + Debug,
-{
+pub struct FoyerCache {
     chlen: usize,
     /// Bytes pulled from the backing store per miss. Always a whole multiple of
     /// `chlen`; when larger, one GET fills several cache blocks. See `make_fetch`.
     fetch_size: usize,
     sources: SourceSlots,
-    content: Arc<HybridCache<(usize, u64), Vec<u8>, S>>,
-    metadata: Option<MetadataTier<S>>,
+    content: Arc<BlockCache>,
+    metadata: Option<MetadataTier>,
     fetch_limit: Arc<FetchLimiter>,
     /// Joins concurrent misses on one fetch group into a single GET.
     groups: Arc<GroupLatch>,
@@ -195,10 +188,7 @@ where
     io_log: Option<Arc<IoLog>>,
 }
 
-impl<S> FoyerCache<S>
-where
-    S: HashBuilder + Debug,
-{
+impl FoyerCache {
     /// Attach a trace log, so prefetch decisions show up in the JSONL trace.
     pub fn with_io_log(mut self, io_log: Option<Arc<IoLog>>) -> Self {
         self.io_log = io_log;
@@ -259,7 +249,7 @@ async fn build_hybrid(
     builder.build().await.map_err(std::io::Error::other)
 }
 
-impl FoyerCache<DefaultHasher> {
+impl FoyerCache {
     pub async fn single_memory(
         chlen: usize,
         fetch_size: usize,
@@ -621,7 +611,7 @@ async fn route_block(
 }
 
 #[async_trait]
-impl Cache for FoyerCache<DefaultHasher> {
+impl Cache for FoyerCache {
     async fn read(
         &self,
         idx: usize,

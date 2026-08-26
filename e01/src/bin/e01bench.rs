@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use bytesize::ByteSize;
 use clap::Parser;
 use e01::e01_reader::{E01Reader, E01ReaderOptions};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 #[derive(Parser)]
 #[command(about = "Measure e01 read patterns against a real image")]
