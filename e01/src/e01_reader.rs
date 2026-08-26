@@ -197,11 +197,6 @@ pub enum E01Error {
     ReadError(#[from] ReadError),
 }
 
-#[derive(Debug)]
-struct Segment {
-    pub path: String,
-}
-
 struct SegmentComponents {
     path: String,
     segment_number: u16,
@@ -323,8 +318,7 @@ struct E01Metadata {
     volume: VolumeSection,
     md5: Option<[u8; 16]>,
     sha1: Option<[u8; 20]>,
-    segments: Vec<Segment>,
-    segment_paths: Vec<PathBuf>,
+    segment_paths: Vec<String>,
     chunks: Vec<Chunk>,
 }
 
@@ -335,7 +329,6 @@ fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
     let mut stored_md5 = None;
     let mut stored_sha1 = None;
 
-    let mut segments = vec![];
     let mut segment_paths = vec![];
     let mut chunks = vec![];
 
@@ -390,8 +383,7 @@ fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
         chunks.extend(seg.chunks);
 
         // record the segment
-        segment_paths.push((&seg.path).into());
-        segments.push(Segment { path: seg.path });
+        segment_paths.push(seg.path);
 
         if seg.done {
             if done {
@@ -412,7 +404,6 @@ fn process_segments<S: IntoIterator<Item = SegmentComponents>>(
         volume,
         md5: stored_md5,
         sha1: stored_sha1,
-        segments,
         segment_paths,
         chunks,
     })
@@ -595,7 +586,6 @@ impl Default for E01ReaderOptions {
 }
 
 pub struct E01Reader {
-    segments: Vec<Segment>,
     chunks: Vec<Chunk>,
 
     pub chunk_size: usize,
@@ -607,9 +597,9 @@ pub struct E01Reader {
     pub stored_md5: Option<[u8; 16]>,
     pub stored_sha1: Option<[u8; 20]>,
 
+    /// Segment files in sequence order; `Chunk::segment` indexes this.
     pub segment_paths: Vec<PathBuf>,
 
-    corrupt_section_policy: CorruptSectionPolicy,
     corrupt_chunk_policy: CorruptChunkPolicy,
 
     /// Decoder scratch, checked out per read.
@@ -648,7 +638,7 @@ type ChunkTask<'a> = (
     &'a mut [u8],
     usize,
     usize,
-    &'a String,
+    &'a Path,
     &'a mut ReadWorker,
 );
 
@@ -760,7 +750,6 @@ fn run_chunk_task(task: ChunkTask<'_>) -> Result<(), ReadError> {
 impl Debug for E01Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("E01Reader")
-            .field("segments", &self.segments)
             .field("chunks", &self.chunks)
             .field("chunk_size", &self.chunk_size)
             .field("chunk_count", &self.chunk_count)
@@ -770,7 +759,6 @@ impl Debug for E01Reader {
             .field("stored_md5", &self.stored_md5)
             .field("stored_sha1", &self.stored_sha1)
             .field("segment_paths", &self.segment_paths)
-            .field("corrupt_section_policy", &self.corrupt_section_policy)
             .field("corrupt_chunk_policy", &self.corrupt_chunk_policy)
             .finish()
     }
@@ -936,7 +924,6 @@ impl E01Reader {
         validate_chunk_coverage(image_size, chunk_count, chunk_size)?;
 
         Ok(Self {
-            segments: meta.segments,
             chunks: meta.chunks,
             chunk_count,
             chunk_size,
@@ -945,8 +932,7 @@ impl E01Reader {
             image_size,
             stored_md5: meta.md5,
             stored_sha1: meta.sha1,
-            segment_paths: meta.segment_paths,
-            corrupt_section_policy: options.corrupt_section_policy,
+            segment_paths: meta.segment_paths.into_iter().map(PathBuf::from).collect(),
             corrupt_chunk_policy: options.corrupt_chunk_policy,
             worker_pool: Mutex::new(vec![]),
             cache,
@@ -1010,7 +996,7 @@ impl E01Reader {
             let chunk_index = (offset / chunk_size) as usize;
 
             let chunk = &self.chunks[chunk_index];
-            let seg = &self.segments[chunk.segment];
+            let seg_path = self.segment_paths[chunk.segment].as_path();
 
             let chunk_beg = chunk_index as u64 * chunk_size;
             let chunk_end = std::cmp::min(chunk_beg + chunk_size, image_end);
@@ -1042,7 +1028,7 @@ impl E01Reader {
                 bleft,
                 beg_in_chunk,
                 end_in_chunk,
-                &seg.path,
+                seg_path,
                 &mut wleft[0],
             ));
 

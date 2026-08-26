@@ -25,21 +25,16 @@ impl TryFrom<u16> for CompressionMethod {
     }
 }
 
+/// What the reader actually uses from a segment's file header. The version
+/// and compression method are parsed for validation only.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct SegmentFileHeader {
-    major_version: u8,
-    minor_version: u8,
-    compr_method: CompressionMethod,
     segment_number: u16,
 }
 
 fn try_ewf_file_header_v1(io: &BytesReader) -> Result<SegmentFileHeader, LibError> {
     match EwfFileHeaderV1::read_into::<_, EwfFileHeaderV1>(io, None, None) {
         Ok(h) => Ok(SegmentFileHeader {
-            major_version: 1,
-            minor_version: 0,
-            compr_method: CompressionMethod::Deflate,
             segment_number: *h.segment_number(),
         }),
         Err(e) => Err(LibError::DeserializationFailed("EwfFileHeaderV1", e)),
@@ -48,12 +43,13 @@ fn try_ewf_file_header_v1(io: &BytesReader) -> Result<SegmentFileHeader, LibErro
 
 fn try_ewf_file_header_v2(io: &BytesReader) -> Result<SegmentFileHeader, LibError> {
     match EwfFileHeaderV2::read_into::<_, EwfFileHeaderV2>(io, None, None) {
-        Ok(h) => Ok(SegmentFileHeader {
-            major_version: *h.major_version(),
-            minor_version: *h.minor_version(),
-            compr_method: (*h.compression_method()).try_into()?,
-            segment_number: *h.segment_number(),
-        }),
+        Ok(h) => {
+            // reject unknown compression methods up front
+            CompressionMethod::try_from(*h.compression_method())?;
+            Ok(SegmentFileHeader {
+                segment_number: *h.segment_number(),
+            })
+        }
         Err(e) => Err(LibError::DeserializationFailed("EwfFileHeaderV2", e)),
     }
 }

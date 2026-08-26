@@ -220,8 +220,8 @@ mod test {
     struct SeqChecker(std::vec::IntoIter<bool>);
 
     impl SeqChecker {
-        fn new<const N: usize>(seq: [bool; N]) -> Self {
-            Self(seq.to_vec().into_iter())
+        fn new(seq: impl IntoIterator<Item = bool>) -> Self {
+            Self(Vec::from_iter(seq).into_iter())
         }
     }
 

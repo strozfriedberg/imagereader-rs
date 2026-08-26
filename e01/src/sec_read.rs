@@ -48,7 +48,7 @@ fn checksum_ok(
 
 fn read_section(io: &BytesReader, ignore_checksums: bool) -> Result<(usize, Section), LibError> {
     let sd = EwfSectionDescriptorV1::read_into::<_, EwfSectionDescriptorV1>(io, None, None)
-        .map_err(|e| LibError::DeserializationFailed("EwfFileHeaderV1", e))?;
+        .map_err(|e| LibError::DeserializationFailed("EwfSectionDescriptorV1", e))?;
 
     let section_size = if *sd.size() > 0x4c {
         // header size
