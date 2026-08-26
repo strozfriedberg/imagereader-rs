@@ -215,61 +215,96 @@ mod test {
         assert_eq!(i.next(), None);
     }
 
-    /*
-        #[test]
-        fn validate_segment_path_ok() {
-            let good = [
-                ("a/img.E01", "E01", SeqChecker::new([true, false])),
-                ("a/img.E02", "E02", SeqChecker::new([true, false])),
-                ("a/img.e02", "E02", SeqChecker::new([false, true])),
-                ("a/b.c.E01", "E01", SeqChecker::new([true, false]))
-            ];
+    /// Answers probes from a fixed script, so a test can dictate which names
+    /// exist. Any probe past the end of the script is absent.
+    struct SeqChecker(std::vec::IntoIter<bool>);
 
-            for (p, exp_ext, mut ch) in good {
-                assert_eq!(
-                    validate_segment_path(p.clone(), exp_ext, &mut ch).unwrap(),
-                    p
-                );
-            }
-         }
-
-        #[test]
-        fn find_segment_paths_impl_ok() {
-            let cases = [
-                ("a/i.E01", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
-                ("a/i.E02", vec!["a/i.E01", "a/i.E02"], SeqChecker::new([true, true, false])),
-                ("a/i.e01", vec!["a/i.e01", "a/i.E02"], SeqChecker::new([false, true, true])),
-                ("a/i.e02", vec!["a/i.E01", "a/i.e02"], SeqChecker::new([true, false, true])),
-                ("a/i.j.e02", vec!["a/i.j.E01", "a/i.j.e02"], SeqChecker::new([true, false, true]))
-            ];
-
-            for (proto, exp_paths, ch) in cases {
-                // Iterator doesn't impl Debug, so we need to map it
-                // to something that does for the failure case
-                let act_paths = find_segment_paths_impl(proto, ch)
-                    .map(Iterator::collect::<Vec<_>>);
-
-                assert_eq!(act_paths.unwrap(), exp_paths);
-            }
+    impl SeqChecker {
+        fn new<const N: usize>(seq: [bool; N]) -> Self {
+            Self(seq.to_vec().into_iter())
         }
+    }
 
-        #[test]
-        fn find_segment_paths_impl_err() {
-            let cases = [
-                ("", TrueChecker, UnrecognizedExtension("".into())),
-                ("a/i", TrueChecker, UnrecognizedExtension("a/i".into())),
-                ("a/i.", TrueChecker, UnrecognizedExtension("a/i.".into())),
-                ("a/i.E00", TrueChecker, UnrecognizedExtension("a/i.E00".into())),
-            ];
-
-            for (proto, ch, err) in cases {
-                // Iterator doesn't impl Debug, so we need to map it
-                // to something that does for the failure case
-                let act_paths = find_segment_paths_impl(proto, ch)
-                    .map(Iterator::collect::<Vec<_>>);
-
-                assert_eq!(act_paths.unwrap_err(), err);
-            }
+    impl ExistsChecker for SeqChecker {
+        fn exists<T: AsRef<str>>(&mut self, _path: T) -> Result<bool, ExistsError> {
+            Ok(self.0.next().unwrap_or(false))
         }
-    */
+    }
+
+    /// Fails every probe, for checking that the failure reaches the caller.
+    struct FailingChecker;
+
+    impl ExistsChecker for FailingChecker {
+        fn exists<T: AsRef<str>>(&mut self, path: T) -> Result<bool, ExistsError> {
+            Err(ExistsError::new(
+                path,
+                std::io::Error::other("probe failed"),
+            ))
+        }
+    }
+
+    #[test]
+    fn validated_segment_paths_ok() {
+        // Each extension is probed upper-case first, then lower-case, and the
+        // sequence ends at the first extension present in neither case.
+        let cases = [
+            (
+                "a/i.E01",
+                vec!["a/i.E01", "a/i.E02"],
+                SeqChecker::new([true, true, false, false]),
+            ),
+            (
+                "a/i.E02",
+                vec!["a/i.E01", "a/i.E02"],
+                SeqChecker::new([true, true, false, false]),
+            ),
+            (
+                "a/i.e01",
+                vec!["a/i.e01", "a/i.E02"],
+                SeqChecker::new([false, true, true, false, false]),
+            ),
+            (
+                "a/i.e02",
+                vec!["a/i.E01", "a/i.e02"],
+                SeqChecker::new([true, false, true, false, false]),
+            ),
+            (
+                "a/i.j.e02",
+                vec!["a/i.j.E01", "a/i.j.e02"],
+                SeqChecker::new([true, false, true, false, false]),
+            ),
+            (
+                "a/i.L01",
+                vec!["a/i.L01"],
+                SeqChecker::new([true, false, false]),
+            ),
+        ];
+
+        for (proto, exp_paths, ch) in cases {
+            assert_eq!(
+                validated_segment_paths(proto, ch).unwrap(),
+                exp_paths,
+                "{proto}"
+            );
+        }
+    }
+
+    #[test]
+    fn validated_segment_paths_bad_extension() {
+        for proto in ["", "a/i", "a/i.", "a/i.E00", "a/i.FAA"] {
+            let err = validated_segment_paths(proto, SeqChecker::new([true])).unwrap_err();
+            assert!(
+                matches!(&err, SegPathError::UnrecognizedExtension(UnrecognizedExtension(p)) if p == proto),
+                "{proto}: {err:?}"
+            );
+        }
+    }
+
+    /// A probe that cannot be answered must fail the open, not end the
+    /// sequence early.
+    #[test]
+    fn validated_segment_paths_probe_failure_is_an_error() {
+        let err = validated_segment_paths("a/i.E01", FailingChecker).unwrap_err();
+        assert!(matches!(err, SegPathError::Undetermined(_)), "{err:?}");
+    }
 }
