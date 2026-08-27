@@ -1,7 +1,6 @@
 # e01-rs
 
 `e01-rs` is a Rust library to read data from Expert Witness Format (E01) files.
-This project is in active development and should be considered beta quality, with no known issues.
 
 # [Expert Witness Compression Format (EWF)](https://github.com/libyal/libewf/blob/main/documentation/Expert%20Witness%20Compression%20Format%20(EWF).asciidoc)
 
@@ -21,13 +20,18 @@ This project is in active development and should be considered beta quality, wit
 
 * [EWF2](https://github.com/libyal/libewf/blob/main/documentation/Expert%20Witness%20Compression%20Format%202%20(EWF2).asciidoc)
 
-Sample of usage (library):
+### Usage example
 
-```
-    use e01::e01_reader::E01Reader;
+Read from an E01 in Rust. `open_glob` takes any one segment and discovers the
+rest (`.E01`, `.E02`, ... `.EAA`, ...); `open` takes an explicit list of segment
+paths.
+
+```rust
+    use e01::e01_reader::{E01Reader, E01ReaderOptions};
 
     fn read_e01(e01_path: &str) {
-        let e01_reader = E01Reader::open(&e01_path).unwrap();
+        let options = E01ReaderOptions::default();
+        let e01_reader = E01Reader::open_glob(e01_path, &options).unwrap();
 
         let mut buf: Vec<u8> = vec![0; 1048576];
         let mut offset = 0;
@@ -39,32 +43,20 @@ Sample of usage (library):
 
             // process buf[..read]
 
-            offset += read;
+            offset += read as u64;
         }
     }
-
 ```
 
-## `e01-nbd` — NBD server (qemu-style)
+`E01ReaderOptions` also selects what to do with sections and chunks that fail
+their checksums, and configures caching, readahead, S3 concurrency and I/O
+logging.
 
-The `e01-nbd` binary serves a forensic image using the fixed new-style NBD handshake, similar to `qemu-nbd`. The export is **read-only**.
+### Binaries
 
-For local use, prefer a **Unix socket** (avoids TCP overhead):
-
-```sh
-cargo build --release --bin e01-nbd
-./target/release/e01-nbd --unix /tmp/e01-nbd.sock /path/to/disk.E01
-nbd-client -u -N "" /tmp/e01-nbd.sock /dev/nbd0
-```
-
-TCP is also supported (default port **10809**):
-
-```sh
-./target/release/e01-nbd --listen 127.0.0.1:10809 /path/to/disk.E01
-nbd-client -N "" -R 10809 <server> /dev/nbd0
-```
-
-Optional: `-i` / `--ignore-checksums` (same meaning as for e01verify).
+* `e01verify` hashes an image and compares the result with the stored digests.
+* To serve an E01 over NBD, use [`diskimage-nbd`](../diskimage-nbd), which
+  handles all three image formats.
 
 ## S3 credentials
 
@@ -72,15 +64,10 @@ Segment paths may use `s3://bucket/key` URLs. Credentials are resolved via the
 AWS SDK Rust [`DefaultCredentialsChain`](https://docs.rs/aws-config/latest/aws_config/default_provider/credentials/struct.DefaultCredentialsChain.html)
 (profile files, environment variables, SSO, ECS, EC2 instance role).
 
-**Resolution policy:** the chain is always attempted for `s3://` opens. If
-resolution fails and AWS auth is expected (environment variables, `AWS_CONFIG_FILE`,
-`AWS_SHARED_CREDENTIALS_FILE`, or `~/.aws/credentials` / `~/.aws/config`), open
-fails with an explicit error. If no auth is configured, the reader falls back to
-anonymous access (public buckets).
-
-**Behavior change:** a default profile in `~/.aws/credentials` may be used
-without setting `AWS_PROFILE` or other env vars (previously anonymous-only when
-env vars were unset).
+**Resolution policy:** the chain is always attempted for `s3://` opens (environment variables, `AWS_CONFIG_FILE`,
+`AWS_SHARED_CREDENTIALS_FILE`, or `~/.aws/credentials` / `~/.aws/config`). If
+resolution fails and AWS auth is expected, open fails with an explicit error. 
+If no auth is configured, the reader falls back to anonymous access (public buckets).
 
 **EC2 instance role:** works without local AWS config files via IMDS in the chain.
 
@@ -98,4 +85,4 @@ library queries the bucket location before reading rather than assuming one.
 
 ### Copyright
 
-Copyright 2025, LevelBlue. `e01-rs` is licensed under the Apache License, Version 2.0.
+Copyright 2025–2026, LevelBlue. `e01-rs` is licensed under the Apache License, Version 2.0.

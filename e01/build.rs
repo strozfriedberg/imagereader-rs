@@ -1,23 +1,19 @@
-use std::io::{BufRead, BufReader};
-use std::{env, fs, process::Command, str};
+use std::{env, fs, path::Path, process::Command, str};
 
-fn lines_from_file(file: &str) -> Vec<String> {
-    let file = fs::File::open(file).expect("no such file");
-    let buf = BufReader::new(file);
-    buf.lines()
-        .map(|l| l.expect("Could not parse line"))
-        .collect()
-}
-
-fn remove_inner_attrs(file: &str) {
-    let mut lines = lines_from_file(file);
-    for line in &mut lines {
-        if line.contains("#!") {
-            *line = line.replace("#!", "#");
-        }
-    }
-
-    fs::write(file, lines.join("\n")).expect("Failed to update file");
+/// Turn the generated files' crate-level `#![...]` attributes into item
+/// attributes, so the files can be included as modules. Only lines that
+/// begin with `#!` are attributes; a `#!` inside a string literal is not.
+fn remove_inner_attrs(file: &Path) {
+    let src = fs::read_to_string(file).expect("read generated file");
+    let out = src
+        .lines()
+        .map(|line| match line.trim_start().strip_prefix("#!") {
+            Some(rest) => format!("#{rest}"),
+            None => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(file, out).expect("Failed to update file");
 }
 
 fn main() {
@@ -25,37 +21,21 @@ fn main() {
     buildinfo::emit_git_commit();
 
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=Cargo.toml");
-    println!("cargo:rerun-if-changed=src/");
-    println!("cargo:rerun-if-changed=ksy/");
+    println!("cargo:rerun-if-changed=ksy");
+    println!("cargo:rerun-if-env-changed=KAITAI_STRUCT_COMPILER");
 
-    let out_dir = env::var_os("OUT_DIR").unwrap();
+    // The parsers in ksy/pre-generated/ are checked in and compiled straight
+    // from there (see src/generated/mod.rs). They are only regenerated when a
+    // kaitai-struct-compiler is named.
     let env_var_compiler_name = "KAITAI_STRUCT_COMPILER";
-
-    // if env KAITAI_STRUCT_COMPILER is not defined
-    if env::var_os(env_var_compiler_name).is_none() {
-        // copy pre-generated files
-        if let Ok(entries) = fs::read_dir(
-            env::current_dir()
-                .unwrap()
-                .join("ksy")
-                .join("pre-generated"),
-        ) {
-            for entry in entries.flatten() {
-                let out = std::path::Path::new(out_dir.to_str().unwrap()).join(entry.file_name());
-                println!("copying {:?} to {:?}", entry.path(), out);
-                fs::copy(entry.path(), out).unwrap();
-            }
-        }
-        println!("copyed pre-generated files");
+    let Some(kaitai_struct_compiler) = env::var_os(env_var_compiler_name) else {
         return;
-    }
+    };
+    let kaitai_struct_compiler = kaitai_struct_compiler.to_str().unwrap().to_string();
 
-    let kaitai_struct_compiler = env::var_os(env_var_compiler_name)
-        .unwrap_or_else(|| panic!("Not defined env var '{env_var_compiler_name}'"))
-        .to_str()
-        .unwrap()
-        .to_string();
+    let ksy_dir = env::current_dir().unwrap().join("ksy");
+    let out_dir = ksy_dir.join("pre-generated");
+
     let cmd_is_batch = kaitai_struct_compiler.ends_with(".bat");
     let mut cmd = if cmd_is_batch {
         Command::new("cmd")
@@ -69,7 +49,7 @@ fn main() {
     };
 
     let mut ksy_files: Vec<String> = Vec::new();
-    if let Ok(entries) = fs::read_dir(env::current_dir().unwrap().join("ksy")) {
+    if let Ok(entries) = fs::read_dir(&ksy_dir) {
         for entry in entries.flatten() {
             if let Some(ext) = entry.path().extension()
                 && ext == "ksy"
@@ -99,10 +79,8 @@ fn main() {
     if let Ok(entries) = fs::read_dir(out_dir) {
         for entry in entries.flatten() {
             generated_files += 1;
-            remove_inner_attrs(entry.path().to_str().unwrap());
+            remove_inner_attrs(&entry.path());
         }
     }
     assert_eq!(generated_files, ksy_files.len());
-
-    println!("cargo:rerun-if-changed=ksy");
 }

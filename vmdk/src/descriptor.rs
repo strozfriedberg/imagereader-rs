@@ -1,12 +1,7 @@
-use regex::Regex;
-use std::{
-    io::{BufRead, BufReader, Read, Seek, SeekFrom},
-    sync::LazyLock,
-};
+use crate::SECTOR_SIZE;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 use crate::errors::{DescriptorError, OpenErrorKind};
-
-const SECTOR_SIZE: u64 = 512;
 
 pub fn read_descriptor_internal<R>(src: &mut R, offset: u64) -> Result<String, std::io::Error>
 where
@@ -69,21 +64,39 @@ where
 }
 
 pub fn extract_parent_fn_hint(descriptor: &str) -> Option<String> {
-    static PAT: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"^parentFileNameHint="([^"]+)"#).expect("bad regex"));
-
-    for line in descriptor.lines() {
-        if let Some(captures) = PAT.captures(line) {
-            return Some(captures[1].to_string());
-        }
-    }
-    None
+    descriptor.lines().find_map(|line| {
+        let rest = line.strip_prefix("parentFileNameHint=\"")?;
+        let end = rest.find('"').unwrap_or(rest.len());
+        (end > 0).then(|| rest[..end].to_string())
+    })
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn parent_hint_is_the_quoted_value_on_its_own_line() {
+        let d = "# Disk DescriptorFile\nversion=1\nparentFileNameHint=\"base.vmdk\"\nddb.x=\"1\"\n";
+        assert_eq!(extract_parent_fn_hint(d).as_deref(), Some("base.vmdk"));
+    }
+
+    #[test]
+    fn parent_hint_absent_or_empty_is_none() {
+        assert_eq!(extract_parent_fn_hint("version=1\n"), None);
+        assert_eq!(extract_parent_fn_hint("parentFileNameHint=\"\"\n"), None);
+        // Must be at the start of the line, like the old anchored regex.
+        assert_eq!(extract_parent_fn_hint("#parentFileNameHint=\"x\"\n"), None);
+    }
+
+    #[test]
+    fn parent_hint_without_closing_quote_takes_the_rest_of_the_line() {
+        assert_eq!(
+            extract_parent_fn_hint("parentFileNameHint=\"open.vmdk\n").as_deref(),
+            Some("open.vmdk")
+        );
+    }
 
     /// An offset at or past EOF reads zero bytes; the old `len - 1` underflowed
     /// and panicked. It must return an empty descriptor instead.

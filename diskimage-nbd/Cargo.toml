@@ -15,7 +15,7 @@ buildinfo.workspace = true
 
 [dependencies]
 buildinfo.workspace = true
-e01-rs = { path = "../e01" }
+e01-rs = { path = "../e01", default-features = false }
 vmdk-rs = { path = "../vmdk" }
 rawdisk-rs = { path = "../rawdisk" }
 byteorder = "1.5"

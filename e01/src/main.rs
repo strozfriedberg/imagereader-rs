@@ -20,7 +20,7 @@ struct Args {
     input: String,
 
     /// Calculate additional digest (hash) types
-    #[arg(short = 'd', long = "digest", value_enum, name = "hash")]
+    #[arg(short = 'd', long = "digest", name = "hash")]
     extra_hashes: Vec<HashType>,
 
     /// Ignore all checksums during read, default value is false

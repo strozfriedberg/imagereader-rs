@@ -1,3 +1,4 @@
+use crate::SECTOR_SIZE;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::{
     collections::HashMap,
@@ -67,8 +68,6 @@ impl Extent {
         !matches!(self.storage, ExtentStorage::Zero)
     }
 }
-
-const SECTOR_SIZE: u64 = 512;
 
 fn read_grain_table_sparse<R>(
     h: &VmdkSparseMeta,
@@ -273,13 +272,11 @@ where
         }
         ExtentDescriptionInner::Vmfs { .. } => ExtentStorage::Flat(FlatStorage {
             source: Box::new(src) as Box<dyn ReadSeekSource>,
-            filename,
             offset: 0,
             start_sector,
         }),
         ExtentDescriptionInner::Flat { offset, .. } => ExtentStorage::Flat(FlatStorage {
             source: Box::new(src) as Box<dyn ReadSeekSource>,
-            filename,
             offset: *offset,
             start_sector,
         }),
@@ -339,17 +336,9 @@ pub fn read_extents(
                 }
             )?;
 
-        let seg_len = src.end();
-
         cache.add_source(idx, src);
 
-        let crs = CacheReadSeek::new(
-            cache.clone(),
-            runtime.clone(),
-            idx,
-            seg_len,
-            io_log.cloned(),
-        );
+        let crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, io_log.cloned());
 
         let storage =
             read_extent(ed, start_sector, filename, crs).map_err(|e| e.with_path(ed_url))?;

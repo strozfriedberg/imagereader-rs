@@ -28,7 +28,7 @@ pub enum Section {
 }
 
 fn checksum_reader(reader: &BytesReader, len: usize) -> Result<u32, IoError> {
-    Ok(adler32::adler32(std::io::Cursor::new(
+    Ok(simd_adler32::read::adler32(&mut std::io::Cursor::new(
         &reader.read_bytes(len).map_err(IoError::Read)?,
     ))?)
 }
@@ -48,7 +48,7 @@ fn checksum_ok(
 
 fn read_section(io: &BytesReader, ignore_checksums: bool) -> Result<(usize, Section), LibError> {
     let sd = EwfSectionDescriptorV1::read_into::<_, EwfSectionDescriptorV1>(io, None, None)
-        .map_err(|e| LibError::DeserializationFailed("EwfFileHeaderV1", e))?;
+        .map_err(|e| LibError::DeserializationFailed("EwfSectionDescriptorV1", e))?;
 
     let section_size = if *sd.size() > 0x4c {
         // header size

@@ -1,15 +1,15 @@
 pub use imagesource::errors::InitError;
 
+use crate::{extent_description::ParseExtentDescriptionError, header::FileType};
+
 #[derive(Debug, thiserror::Error)]
 pub enum DescriptorError {
-    #[error("failed to parse '{0}' as a u64")]
-    U64ParseError(String),
-    #[error("failed to parse '{0}' as Kind enum")]
-    KindParseError(String),
-    #[error("")]
-    ParseExtentDescriptionError,
+    #[error("{0}")]
+    ParseExtentDescription(#[from] ParseExtentDescriptionError),
     #[error("failed to recognize descriptor")]
     UnrecognizedDescriptor,
+    #[error("a {0:?} file has no descriptor and cannot be opened directly")]
+    NoDescriptor(FileType),
 }
 
 #[derive(Debug, thiserror::Error)]

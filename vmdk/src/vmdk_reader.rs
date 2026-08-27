@@ -1,3 +1,4 @@
+use crate::SECTOR_SIZE;
 use std::{
     collections::{BTreeMap, HashSet},
     fmt::Debug,
@@ -29,8 +30,6 @@ pub use imagesource::{
     CacheMode, DEFAULT_CACHE_CHUNK_SIZE, DEFAULT_CACHE_FETCH_SIZE, DEFAULT_CACHE_MEM_MIB,
     DEFAULT_S3_CONCURRENCY, source_for_url,
 };
-
-const SECTOR_SIZE: u64 = 512;
 
 pub struct VmdkReader {
     pub image_path: PathBuf,
@@ -81,17 +80,9 @@ fn handle_image(
     io_log: Option<&Arc<IoLog>>,
 ) -> Result<(Vec<Extent>, Option<Url>), OpenError> {
     let src = source_for_url(current_url, idx, &runtime, s3_auth, io_log)?;
-    let seg_len = src.end();
-
     cache.add_source(idx, src);
 
-    let mut crs = CacheReadSeek::new(
-        cache.clone(),
-        runtime.clone(),
-        idx,
-        seg_len,
-        io_log.cloned(),
-    );
+    let mut crs = CacheReadSeek::new(cache.clone(), runtime.clone(), idx, io_log.cloned());
 
     idx += 1;
 
@@ -121,13 +112,12 @@ fn handle_image(
             crs.seek(SeekFrom::Start(0))?;
             read_descriptor_file(&mut crs)?
         }
-        // this is bogus
-        _ => return Err(DescriptorError::ParseExtentDescriptionError.into()),
+        // a sparse extent or SESPARSE file on its own: no descriptor to follow
+        Some(ft) => return Err(DescriptorError::NoDescriptor(ft).into()),
     };
 
     // get the extent descriptions
-    let eds = extract_extent_descriptions(&descriptor)
-        .or(Err(DescriptorError::ParseExtentDescriptionError))?;
+    let eds = extract_extent_descriptions(&descriptor).map_err(DescriptorError::from)?;
 
     let is_bin_and_singular = ft == Some(FileType::Vmdk4) && eds.len() == 1;
 
@@ -282,7 +272,13 @@ impl VmdkReader {
                 runtime.clone(),
                 s3_auth.as_ref(),
                 io_log.as_ref(),
-            )?;
+            )
+            // Extent errors already name the extent file; everything else
+            // (descriptor, header, source) is about this image.
+            .map_err(|e| match e.path.is_empty() {
+                true => e.with_path(current_url.as_ref()),
+                false => e,
+            })?;
 
             idx += 1;
 

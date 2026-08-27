@@ -1,14 +1,9 @@
-use rand::Rng;
 use std::collections::HashMap;
 use tracing::trace;
 
 use crate::hasher::{HashType, MultiHasher};
 
-pub fn do_hash<RF>(
-    mut reader: RF,
-    image_size: u64,
-    random_buf_size: bool,
-) -> HashMap<HashType, String>
+pub fn do_hash<RF>(mut reader: RF, image_size: u64) -> HashMap<HashType, String>
 where
     RF: FnMut(u64, &mut [u8]) -> usize,
 {
@@ -20,13 +15,7 @@ where
     let mut offset = 0;
 
     while offset < image_size {
-        let buf_size = if random_buf_size {
-            rand::rng().random_range(0..buf.len())
-        } else {
-            buf.len()
-        };
-
-        let read = reader(offset, &mut buf[..buf_size]);
+        let read = reader(offset, &mut buf);
 
         if read == 0 {
             break;

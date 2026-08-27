@@ -340,7 +340,6 @@ mod test {
                 read
             },
             handle.image_size,
-            false,
         );
 
         let image_path = unsafe { CStr::from_ptr(handle.image_path) }

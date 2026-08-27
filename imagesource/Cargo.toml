@@ -7,13 +7,10 @@ edition = "2024"
 [dependencies]
 async-trait.workspace = true
 foyer.workspace = true
-foyer-common.workspace = true
 futures.workspace = true
 rust-s3.workspace = true
 aws-config.workspace = true
 aws-credential-types.workspace = true
-aws-creds.workspace = true
-aws-smithy-async.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 time.workspace = true
@@ -24,7 +21,7 @@ url.workspace = true
 percent-encoding = "2.3"
 
 [dev-dependencies]
-criterion = "0.7"
+criterion.workspace = true
 
 [[bench]]
 name = "cache_bench"

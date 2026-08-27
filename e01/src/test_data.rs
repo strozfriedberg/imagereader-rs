@@ -1,5 +1,3 @@
-use const_format::concatcp;
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct TestData<'a> {
     pub segment_paths: &'a [&'a str],
@@ -15,10 +13,8 @@ pub struct TestData<'a> {
     pub sha256: Option<&'a str>,
 }
 
-const SEP: char = std::path::MAIN_SEPARATOR;
-
 pub const IMAGE_E01: TestData = TestData {
-    segment_paths: &[concatcp!("data", SEP, "image.E01")],
+    segment_paths: &["data/image.E01"],
     chunk_size: 32768,
     chunk_count: 41,
     sector_size: 512,
@@ -32,10 +28,7 @@ pub const IMAGE_E01: TestData = TestData {
 };
 
 pub const MIMAGE_E01: TestData = TestData {
-    segment_paths: &[
-        concatcp!("data", SEP, "mimage.E01"),
-        concatcp!("data", SEP, "mimage.E02"),
-    ],
+    segment_paths: &["data/mimage.E01", "data/mimage.E02"],
     chunk_size: 32768,
     chunk_count: 27,
     sector_size: 512,
@@ -49,7 +42,7 @@ pub const MIMAGE_E01: TestData = TestData {
 };
 
 pub const BAD_CHUNK_E01: TestData = TestData {
-    segment_paths: &[concatcp!("data", SEP, "bad_chunk.E01")],
+    segment_paths: &["data/bad_chunk.E01"],
     chunk_size: 32768,
     chunk_count: 41,
     sector_size: 512,
@@ -63,7 +56,7 @@ pub const BAD_CHUNK_E01: TestData = TestData {
 };
 
 pub const BAD_CHUNK_E01_ZEROED: TestData = TestData {
-    segment_paths: &[concatcp!("data", SEP, "bad_chunk.E01")],
+    segment_paths: &["data/bad_chunk.E01"],
     chunk_size: 32768,
     chunk_count: 41,
     sector_size: 512,
@@ -74,19 +67,4 @@ pub const BAD_CHUNK_E01_ZEROED: TestData = TestData {
     md5: Some("67c44c58dd4bb4f7d162b3d3ad521e33"),
     sha1: Some("18e70fcac21668a2ee849cdb815d45dab107f0fc"),
     sha256: Some("077861781adaad81e64b229111ef4a490884eecee74eb7c91fed5d291995caf2"),
-};
-
-#[allow(dead_code)]
-pub const IMAGEFORMAT_MMLS_1_E01: TestData = TestData {
-    segment_paths: &["s3://digitalcorpora/corpora/drives/dftt-2004/imageformat_mmls_1.E01"],
-    chunk_size: 32768,
-    chunk_count: 1921,
-    sector_size: 512,
-    sector_count: 122881,
-    image_size: 62915072,
-    stored_md5: Some("8ec671e301095c258224aad701740503"),
-    stored_sha1: Some("067bc6ab29685ee19b0cf82c9d15ac510d1e7d95"),
-    md5: Some("8ec671e301095c258224aad701740503"),
-    sha1: Some("067bc6ab29685ee19b0cf82c9d15ac510d1e7d95"),
-    sha256: Some("e7eb6fca46bebeedc4af4cc5bfe9675691bab8ce471315317b561a28899e7902"),
 };

@@ -29,7 +29,7 @@ fn read_all(reader: &E01Reader, buf: &mut [u8]) {
 }
 
 fn random_offsets(image_size: u64) -> Vec<u64> {
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     let mut rng = StdRng::seed_from_u64(42);
     (0..NUM_OFFSETS)

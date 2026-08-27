@@ -1,3 +1,4 @@
+use crate::SECTOR_SIZE;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use flate2::read::DeflateDecoder;
 use std::{
@@ -8,8 +9,6 @@ use std::{
 
 use crate::vmdk_reader::ReadError;
 use imagesource::ReadSeek;
-
-const SECTOR_SIZE: u64 = 512;
 
 /// Something that can hand out a fresh cursor over an extent's bytes.
 ///
@@ -37,7 +36,6 @@ where
 #[derive(Debug)]
 pub struct SparseStorage {
     pub source: Box<dyn ReadSeekSource>,
-    #[allow(dead_code)]
     pub filename: String,
     pub grain_table: HashMap<u64 /*grain index in extent*/, u64 /*real sector in file*/>,
     // grain size in sectors; grain byte size is grain_size * 512
@@ -50,8 +48,6 @@ pub struct SparseStorage {
 #[derive(Debug)]
 pub struct FlatStorage {
     pub source: Box<dyn ReadSeekSource>,
-    #[allow(dead_code)]
-    pub filename: String,
     pub offset: u64,
     pub start_sector: u64,
 }

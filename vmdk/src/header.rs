@@ -1,10 +1,9 @@
+use crate::SECTOR_SIZE;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Read, Seek, SeekFrom};
 
 use crate::errors::{DeserializationError, OpenErrorKind};
 use imagesource::ReadSeek;
-
-const SECTOR_SIZE: u64 = 512;
 
 /// Multiply a chain of `u64`s, returning `None` on overflow.
 ///
@@ -331,16 +330,6 @@ pub enum FileType {
     VmdkSeSparse,
 }
 
-impl FileType {
-    #[allow(dead_code)]
-    pub fn sig_len(&self) -> usize {
-        match self {
-            FileType::Vmdk3 | FileType::Vmdk4 => 4,
-            FileType::VmdkSeSparse => 8,
-        }
-    }
-}
-
 fn signature_to_file_type(sig: &[u8; 8]) -> Option<FileType> {
     match *sig {
         _ if sig.starts_with(&VMDK3_MAGIC) => Some(FileType::Vmdk3),
@@ -378,9 +367,12 @@ pub fn read_header_sparse<T: Read + Seek + Clone + Send + 'static>(
                 .map_err(|e| DeserializationError("Vmdk4Header", e))?;
 
             if h.use_secondary() {
-                // secondary header is 1024 bytes from the end of the file
+                // secondary header is 1024 bytes from the end of the file;
+                // it must carry the same magic as the primary
                 src.seek(SeekFrom::End(-1024))?;
-                let _ft = check_signature(&mut src)?;
+                if check_signature(&mut src)? != Some(FileType::Vmdk4) {
+                    return Err(OpenErrorKind::InvalidFileHeader);
+                }
                 src.seek(SeekFrom::End(-1024))?;
 
                 Vmdk4Header::from_reader(&mut src)
@@ -432,6 +424,60 @@ mod test {
             check_bytes: [0; 4],
             compress_algorithm: 0,
         }
+    }
+
+    /// Serialize a header exactly as `Vmdk4Header::from_reader` reads it.
+    fn v4_bytes(h: &Vmdk4Header) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&h.magic);
+        b.extend_from_slice(&h.version.to_le_bytes());
+        b.extend_from_slice(&h.flags.to_le_bytes());
+        b.extend_from_slice(&h.capacity.to_le_bytes());
+        b.extend_from_slice(&h.granularity.to_le_bytes());
+        b.extend_from_slice(&h.desc_offset.to_le_bytes());
+        b.extend_from_slice(&h.desc_size.to_le_bytes());
+        b.extend_from_slice(&h.num_gtes_per_gt.to_le_bytes());
+        b.extend_from_slice(&h.rgd_offset.to_le_bytes());
+        b.extend_from_slice(&h.gd_offset.to_le_bytes());
+        b.extend_from_slice(&h.grain_offset.to_le_bytes());
+        b.push(h.filler);
+        b.extend_from_slice(&h.check_bytes);
+        b.extend_from_slice(&h.compress_algorithm.to_le_bytes());
+        b
+    }
+
+    /// A stream-optimized file whose primary header defers to a footer
+    /// 1024 bytes from the end. The footer is `footer_magic` followed by an
+    /// otherwise sane header.
+    fn stream_optimized_file(footer_magic: [u8; 4]) -> std::io::Cursor<Vec<u8>> {
+        let mut primary = base_v4();
+        primary.gd_offset = u64::MAX;
+        primary.compress_algorithm = 1;
+
+        let mut footer = base_v4();
+        footer.magic = footer_magic;
+
+        let mut file = v4_bytes(&primary);
+        file.resize(4096, 0);
+        file.extend_from_slice(&v4_bytes(&footer));
+        file.resize(4096 + 1024, 0);
+        std::io::Cursor::new(file)
+    }
+
+    #[test]
+    fn secondary_header_with_the_vmdk4_magic_is_used() {
+        let meta = read_header_sparse(stream_optimized_file(VMDK4_MAGIC)).unwrap();
+        assert_eq!(meta.l1_offset, base_v4().gd_offset * SECTOR_SIZE);
+    }
+
+    /// The footer's signature used to be read and thrown away, so a file with
+    /// junk where the secondary header should be was parsed as a header.
+    #[test]
+    fn secondary_header_without_the_vmdk4_magic_is_rejected() {
+        assert!(matches!(
+            read_header_sparse(stream_optimized_file(*b"JUNK")),
+            Err(OpenErrorKind::InvalidFileHeader)
+        ));
     }
 
     #[test]

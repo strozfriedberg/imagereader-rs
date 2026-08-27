@@ -38,9 +38,7 @@ pub fn path_or_url_to_url<P: AsRef<str>>(p: P) -> Option<Url> {
             .canonicalize()
             .map(Url::from_file_path)
             .map_err(|_| ())
-            // FIXME: use flatten after Rust 1.89
-            //            .flatten()
-            .and_then(|r| r)
+            .flatten()
             .ok(),
         r => r.ok(),
     }

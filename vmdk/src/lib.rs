@@ -17,6 +17,9 @@ mod header;
 mod spans;
 mod storage;
 
+/// Every VMDK on-disk quantity that is "in sectors" means 512-byte sectors.
+pub const SECTOR_SIZE: u64 = 512;
+
 pub use imagesource::{IoLog, ReadTimer, ReadTrace, chunk_cache_label, init_tracing};
 
 #[cfg(test)]
@@ -34,7 +37,6 @@ mod test {
                 reader.read_at_offset(offset, &mut buf[..buf_len]).unwrap()
             },
             image_size,
-            false,
         );
 
         let act = TestData {
