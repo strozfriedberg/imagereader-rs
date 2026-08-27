@@ -13,7 +13,11 @@ The jobs are independent on purpose:
 
 * `ctest` is separate because cargo-c works one crate at a time, and it is the
   only thing that links the `capi` surface as a real C library;
-  `cargo test --all-features` only covers the Rust side of it.
+  `cargo test --all-features` only covers the Rust side of it. It then runs
+  [`scripts/ctest-capi.sh`](../scripts/ctest-capi.sh), which compiles each
+  crate's `c_api/test.c` against the headers cargo-c installs -- once as C99
+  and once as C++17 -- and runs it against a fixture from that crate's `data/`.
+  This check ensures that the headers are usable for both C and C++.
 * `build-artifact` is separate from `build-test` because `lto = true` in the
   release profile makes the release build slow and it shares almost nothing
   with the debug build. Its 40-minute timeout (against 20 for the others)
@@ -42,8 +46,13 @@ cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 cargo build --workspace --all-targets --all-features --locked                # build-test
 cargo test --workspace --all-features --locked --tests
 for crate in vmdk e01 rawdisk; do (cd "$crate" && cargo ctest); done         # ctest
+scripts/ctest-capi.sh
 scripts/build-release.sh                                                     # build-artifact
 ```
+
+`ctest-capi.sh` needs cargo-c (`cargo install cargo-c --locked`) and a C and
+C++ compiler (`$CC`/`$CXX`, or `cc` and `c++`) -- the same three things the
+`ctest` job installs, and nothing beyond a stock toolchain.
 
 `build-release.sh` needs cargo-c for the C libraries, and refuses to build a
 dirty tree, so the embedded commit always identifies the source. The CI checkout is clean and `Swatinem/rust-cache`

@@ -43,6 +43,9 @@ jobs:
   # The C API is built and exercised per crate, as cargo-c works one crate at a
   # time. This is the only thing that links the capi surface as a real C
   # library; `cargo test --all-features` only covers the Rust side of it.
+  # ctest-capi.sh goes one step further and compiles each crate's c_api/test.c
+  # against the installed headers, as C99 and as C++17, so a header that is
+  # broken for one of the two languages fails here.
   ctest:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -55,6 +58,7 @@ jobs:
           cache-bin: true # keeps cargo-c out of a rebuild on every run
       - run: command -v cargo-ctest >/dev/null || cargo install cargo-c --locked
       - run: for crate in vmdk e01 rawdisk; do (cd "$crate" && cargo ctest); done
+      - run: scripts/ctest-capi.sh
 
   # scripts/build-release.sh builds every binary and, through cargo-c, the C
   # libraries. It refuses to build a dirty tree so the embedded commit always
