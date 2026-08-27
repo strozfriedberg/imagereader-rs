@@ -150,9 +150,9 @@ When the active sessions disconnect, new connections are accepted again.
 cargo build --release --bin diskimage-nbd
 ```
 
-`scripts/build-release.sh` produces the shippable binary. It refuses to build with
-uncommitted tracked changes and embeds the commit, so a binary always identifies
-its exact source:
+`scripts/build-release.sh` builds this along with everything else in the
+workspace. It refuses to build with uncommitted tracked changes and embeds the
+commit, so a binary always identifies its exact source:
 
 ```
 $ diskimage-nbd --version

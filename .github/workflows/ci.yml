@@ -56,9 +56,10 @@ jobs:
       - run: command -v cargo-ctest >/dev/null || cargo install cargo-c --locked
       - run: for crate in vmdk e01 rawdisk; do (cd "$crate" && cargo ctest); done
 
-  # scripts/build-release.sh refuses to build a dirty tree so the embedded
-  # commit always identifies the source. lto = true in the release profile, so
-  # this is slow; nothing above waits on it.
+  # scripts/build-release.sh builds every binary and, through cargo-c, the C
+  # libraries. It refuses to build a dirty tree so the embedded commit always
+  # identifies the source. lto = true in the release profile, so this is slow;
+  # nothing above waits on it.
   build-artifact:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -68,12 +69,18 @@ jobs:
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
           cache-on-failure: true
+          cache-bin: true # keeps cargo-c out of a rebuild on every run
+      - run: command -v cargo-ctest >/dev/null || cargo install cargo-c --locked
       - run: scripts/build-release.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: imagereader-${{ github.sha }}
           path: |
             target/release/e01verify
+            target/release/e01bench
+            target/release/vmdkverify
+            target/release/rawdiskverify
             target/release/diskimage-nbd
+            target/release/dist
           retention-days: 30
           if-no-files-found: error

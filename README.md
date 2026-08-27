@@ -20,10 +20,11 @@ crate directory).
 
 `rust-toolchain.toml` pins the Rust channel; rustup and CI both follow it.
 
-`scripts/build-release.sh` builds the shippable binaries (`e01verify` and
-`diskimage-nbd`) with the commit embedded; see
-[`diskimage-nbd`](diskimage-nbd/README.md#building) for what that looks like.
-[`.github/CI.md`](.github/CI.md) describes the CI workflow.
+`scripts/build-release.sh` builds every binary and, through cargo-c, every C
+library in release mode with the commit embedded; the libraries and headers
+land in `target/release/dist/`. See
+[`diskimage-nbd`](diskimage-nbd/README.md#building) for how a binary reports
+its commit. [`.github/CI.md`](.github/CI.md) describes the CI workflow.
 
 ### Copyright
 

@@ -31,7 +31,8 @@ To bump Rust: change `channel` in `rust-toolchain.toml`, build and test
 locally, push. No workflow edits are needed.
 
 `cargo-c` is installed with `cargo install cargo-c --locked` (unpinned, cached
-via `cache-bin`) in both CI and `.world/setup.sh`.
+via `cache-bin`) in the `ctest` and `build-artifact` jobs and in
+`.world/setup.sh`.
 
 ## Reproducing a job locally
 
@@ -44,8 +45,8 @@ for crate in vmdk e01 rawdisk; do (cd "$crate" && cargo ctest); done         # c
 scripts/build-release.sh                                                     # build-artifact
 ```
 
-`build-release.sh` refuses to build a dirty tree, so the embedded commit always
-identifies the source. The CI checkout is clean and `Swatinem/rust-cache`
+`build-release.sh` needs cargo-c for the C libraries, and refuses to build a
+dirty tree, so the embedded commit always identifies the source. The CI checkout is clean and `Swatinem/rust-cache`
 restores only under gitignored paths, so this never trips in CI; locally,
 commit or stash first.
 
