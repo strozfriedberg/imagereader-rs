@@ -36,17 +36,20 @@ name, so `.001` pairs with `.002` but not with `.02`.
 
 ### Incomplete sequences
 
-The reader never serves a truncated image where it can avoid it. There is no
-mode in which a gap is tolerated and skipped over -- the image either opens
-or fails with `missing image segment: <path>`, naming the lowest segment it
-believes is absent.
+There is no mode in which a gap is tolerated and skipped over: when discovery
+detects one, the open fails with `missing image segment: <path>`, naming the
+lowest segment it believes is absent. Gap detection capability depends on which 
+segment you name:
 
-A gap of a _single file_ after the named segment will be identified and terminate with an error.
-A gap two or more segments after the named segment will end the sequence and result
-in a truncated image. 
-Conversely, a gap of one or more segments _before_ the named segment will 
-terminate with an error instead of proceeding with a truncated image. Therefore, the most 
-robust approach is to call the reader with the last segment if you know what it is. 
+* A gap of any width _below_ the named segment is always detected: the walk up
+  from the start must reach the segment you named.
+* A gap of exactly one segment _above_ the named segment is detected: discovery
+  looks one name past the first absent one.
+* A gap of two or more segments _above_ the named segment is **not** detected.
+  The sequence ends at the gap and the image opens truncated.
+
+So the most robust choice is to name the last segment if you know which it is;
+everything below it is then checked.
 
 ### Usage example
 

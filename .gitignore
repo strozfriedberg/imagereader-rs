@@ -5,7 +5,7 @@
 /.superpowers/
 __pycache__/
 
-# CI cache directories (CARGO_HOME/SCCACHE_DIR are redirected into the
-# project dir so GitLab can cache them; see .gitlab-ci.yml)
+# Leftovers from the former GitLab CI, which redirected CARGO_HOME and
+# SCCACHE_DIR into the project directory.
 /.cargo
 /.sccache-*

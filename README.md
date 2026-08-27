@@ -16,25 +16,14 @@ support, backed by a shared foyer-based caching layer.
 Each reader crate builds a C library via cargo-c (`cargo cinstall` from the
 crate directory).
 
-## Release binaries
+## Building
 
-`scripts/build-release.sh` builds the shippable binaries — `e01verify` and
-`diskimage-nbd` (the NBD server) — in release mode. It refuses to build when any
-tracked file has uncommitted changes and embeds the commit it built from, so a
-binary always identifies its exact source. Each binary reports that commit via
-its long version string:
+`rust-toolchain.toml` pins the Rust channel; rustup and CI both follow it.
 
-```
-$ diskimage-nbd --version
-diskimage-nbd 0.1.0 (a1b2c3d)   # --version: crate version + commit
-$ diskimage-nbd -V
-diskimage-nbd 0.1.0             # -V: plain crate version
-```
-
-## Supported image formats
-
-E01 (`.e01`), VMDK (`.vmdk`), and raw/dd (`.raw`, `.dd`, `.img`, or a numbered
-segment such as `disk.001`). The format is chosen by the path's extension.
+`scripts/build-release.sh` builds the shippable binaries (`e01verify` and
+`diskimage-nbd`) with the commit embedded; see
+[`diskimage-nbd`](diskimage-nbd/README.md#building) for what that looks like.
+[`.github/CI.md`](.github/CI.md) describes the CI workflow.
 
 ### Copyright
 
