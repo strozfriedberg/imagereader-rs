@@ -3,9 +3,9 @@
 `.github/workflows/ci.yml` is the source of truth for what runs; this file
 covers what the workflow cannot say about itself.
 
-## Shape
+## Jobs
 
-Four independent jobs -- `lint`, `build-test`, `ctest`, `build-artifact` --
+Four independent jobs -- `lint`, `build-test`, `ctest`, `build-release` --
 on every pull request and on pushes to `main`. Feature-branch pushes without a
 PR do not run CI. For branch protection, require those four check names.
 
@@ -18,7 +18,7 @@ The jobs are independent on purpose:
   crate's `c_api/test.c` against the headers cargo-c installs -- once as C99
   and once as C++17 -- and runs it against a fixture from that crate's `data/`.
   This check ensures that the headers are usable for both C and C++.
-* `build-artifact` is separate from `build-test` because `lto = true` in the
+* `build-release` is separate from `build-test` because `lto = true` in the
   release profile makes the release build slow and it shares almost nothing
   with the debug build. Its 40-minute timeout (against 20 for the others)
   reflects that; `ctest` gets 40 as well because it builds each crate afresh.
@@ -35,7 +35,7 @@ To bump Rust: change `channel` in `rust-toolchain.toml`, build and test
 locally, push. No workflow edits are needed.
 
 `cargo-c` is installed with `cargo install cargo-c --locked` (unpinned, cached
-via `cache-bin`) in the `ctest` and `build-artifact` jobs and in
+via `cache-bin`) in the `ctest` and `build-release` jobs and in
 `.world/setup.sh`.
 
 ## Reproducing a job locally
@@ -47,7 +47,7 @@ cargo build --workspace --all-targets --all-features --locked                # b
 cargo test --workspace --all-features --locked --tests
 for crate in vmdk e01 rawdisk; do (cd "$crate" && cargo ctest); done         # ctest
 scripts/ctest-capi.sh
-scripts/build-release.sh                                                     # build-artifact
+scripts/build-release.sh                                                     # build-release
 ```
 
 `ctest-capi.sh` needs cargo-c (`cargo install cargo-c --locked`) and a C and

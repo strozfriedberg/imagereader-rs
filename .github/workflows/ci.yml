@@ -76,7 +76,7 @@ jobs:
   # libraries. It refuses to build a dirty tree so the embedded commit always
   # identifies the source. lto = true in the release profile, so this is slow;
   # nothing above waits on it.
-  build-artifact:
+  build-release:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -88,7 +88,11 @@ jobs:
           cache-bin: true # keeps cargo-c out of a rebuild on every run
       - run: command -v cargo-ctest >/dev/null || cargo install cargo-c --locked
       - run: scripts/build-release.sh
+      # Only publish from main. PR runs and dispatched runs (including the asdf
+      # nightly roll-up) still do the release build — they just don't upload,
+      # so a stored artifact always corresponds to a commit on main.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           name: imagereader-${{ github.sha }}
           path: |
@@ -98,5 +102,5 @@ jobs:
             target/release/rawdiskverify
             target/release/diskimage-nbd
             target/release/dist
-          retention-days: 30
+          retention-days: 3
           if-no-files-found: error
