@@ -88,11 +88,12 @@ jobs:
           cache-bin: true # keeps cargo-c out of a rebuild on every run
       - run: command -v cargo-ctest >/dev/null || cargo install cargo-c --locked
       - run: scripts/build-release.sh
-      # Only publish from main. PR runs and dispatched runs (including the asdf
-      # nightly roll-up) still do the release build — they just don't upload,
-      # so a stored artifact always corresponds to a commit on main.
+      # Uploaded from every run, all branches included: a consumer testing a
+      # cross-repo change needs a build of its branch, and this is our way of
+      # making a build available. They have short retention, intended for a branch test
+      # or the nightly CI build. Anything that must stay fetchable (a downstream pin)
+      # uses a Release instead, published by release.yml on a tag; those assets never expire.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           name: imagereader-${{ github.sha }}
           path: |
@@ -102,5 +103,5 @@ jobs:
             target/release/rawdiskverify
             target/release/diskimage-nbd
             target/release/dist
-          retention-days: 3
+          retention-days: 1
           if-no-files-found: error
