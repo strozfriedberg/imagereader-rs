@@ -73,14 +73,22 @@ jobs:
       - run: scripts/ctest-capi.sh
 
   # scripts/build-release.sh builds every binary and, through cargo-c, the C
-  # libraries. It refuses to build a dirty tree so the embedded commit always
-  # identifies the source. lto = true in the release profile, so this is slow;
+  # libraries. lto = true in the release profile, so this is slow;
   # nothing above waits on it.
   build-release:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      # On a pull_request, github.sha is the synthetic refs/pull/N/merge commit,
+      # which sits on no branch and is eventually garbage collected. Building it
+      # would bake a commit into --version that nobody can ever check out, so
+      # this job builds the branch tip instead. (lint/build-test/ctest keep
+      # testing the merge result)
+      BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BUILD_SHA }}
       - uses: ./.github/actions/setup-rust
       - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
@@ -95,7 +103,7 @@ jobs:
       # uses a Release instead, published by release.yml on a tag; those assets never expire.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: imagereader-${{ github.sha }}
+          name: imagereader-${{ env.BUILD_SHA }}
           path: |
             target/release/e01verify
             target/release/e01bench
