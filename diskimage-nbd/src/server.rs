@@ -443,7 +443,10 @@ mod tests {
         use clap::CommandFactory;
 
         let command = CommonArgs::command();
-        let present: Vec<&str> = command.get_arguments().filter_map(|a| a.get_long()).collect();
+        let present: Vec<&str> = command
+            .get_arguments()
+            .filter_map(|a| a.get_long())
+            .collect();
         let missing: Vec<&str> = STABLE_FLAGS
             .iter()
             .copied()
