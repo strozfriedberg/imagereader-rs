@@ -1,22 +1,16 @@
 name: CI
-# When dispatched by asdf's nightly roll-up, echo its tag into the run name so
-# the caller can find this run (workflow_dispatch returns no run id).
-run-name: ${{ inputs.caller_run_id && format('CI ({0})', inputs.caller_run_id) || format('CI on {0}', github.ref_name) }}
 on:
   pull_request:
   push:
     branches: [main] # post-merge safety net only; avoids duplicate runs on PR branches
+  schedule:
+    - cron: "0 5 * * *" # nightly, an hour before asdf's, so a break here surfaces first
   workflow_dispatch:
-    inputs:
-      caller_run_id:
-        description: Tag from the calling workflow, echoed into run-name so the caller can locate this run.
-        required: false
-        default: ""
-        type: string
 concurrency:
-  # Dispatched runs get their own group keyed by the caller's tag, so a push to
-  # main can't cancel a nightly roll-up run mid-flight and report it as failed.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.caller_run_id || 'auto' }}
+  # Keyed by event as well as ref: a scheduled run and a push to main share a
+  # ref, and cancel-in-progress would otherwise let one kill the other and
+  # report it as failed.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 permissions:
   contents: read
@@ -113,3 +107,37 @@ jobs:
             target/release/dist
           retention-days: 1
           if-no-files-found: error
+
+  # Slack post for a nightly (or manually dispatched) run
+  notify:
+    needs: [lint, build-test, ctest, build-release]
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Notify Slack
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_CI_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          # A missing webhook must not turn the nightly red on its own — that
+          # would report a configuration gap as a build failure.
+          if [ -z "${SLACK_WEBHOOK_URL}" ]; then
+            echo "::warning::SLACK_CI_WEBHOOK_URL is not set; skipping notification"
+            exit 0
+          fi
+          if echo "$NEEDS_JSON" | jq -e \
+            'to_entries | all(.value.result == "success" or .value.result == "skipped")' \
+            > /dev/null; then
+            PAYLOAD=$(jq -n --arg url "$RUN_URL" \
+              '{text: (":fistpump_kid: imagereader-rs nightly CI succeeded\n" + $url)}')
+          else
+            FAILED=$(jq -r \
+              '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | join(", ")' \
+              <<< "$NEEDS_JSON")
+            PAYLOAD=$(jq -n --arg failed "$FAILED" --arg url "$RUN_URL" \
+              '{text: ("<!channel> :nuke: imagereader-rs nightly CI failed: " + $failed + "\n" + $url)}')
+          fi
+          curl -sS -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$SLACK_WEBHOOK_URL"
