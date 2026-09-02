@@ -421,6 +421,45 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Long flags that downstream consumers pass on the command line.
+    ///
+    /// These are public API: changing one is a breaking change to be
+    /// coordinated with that consumer, not a refactor. Adding flags is free.
+    const STABLE_FLAGS: &[&str] = &[
+        "cache-chunk-size",
+        "cache-dir",
+        "cache-fetch-size",
+        "cache-trace-log",
+        "content-cache-disk-mib",
+        "io-log",
+        "metadata-cache",
+        "metadata-cache-disk-mib",
+        "unix",
+    ];
+
+    #[test]
+    fn common_args_keeps_its_public_flags() {
+        use clap::CommandFactory;
+
+        let command = CommonArgs::command();
+        let present: Vec<&str> = command
+            .get_arguments()
+            .filter_map(|a| a.get_long())
+            .collect();
+        let missing: Vec<&str> = STABLE_FLAGS
+            .iter()
+            .copied()
+            .filter(|flag| !present.contains(flag))
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "diskimage-nbd no longer offers {missing:?}, which downstream consumers pass. \
+             Renaming or removing a flag here breaks them; coordinate the change rather \
+             than adjusting this list to match."
+        );
+    }
     use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
     #[cfg(unix)]
     use std::os::unix::net::UnixStream;

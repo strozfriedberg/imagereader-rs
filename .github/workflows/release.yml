@@ -1,0 +1,93 @@
+name: release
+
+# Publishes the release binaries as GitHub Release assets, which — unlike the
+# ephemeral build artifacts ci.yml uploads — never expire. Downstream consumers pin
+# a tag and fetch from here
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # required to create the release and upload assets
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # build-release.sh reads git state; ancestry check needs history
+
+      # A tag on a side branch would publish binaries that main's CI never ran
+      # against, and consumers pinning that tag would be pinning untested code.
+      - name: Verify the tag is on main
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::${{ github.ref_name }} points at a commit that is not on main"
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup-rust
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          cache-on-failure: true
+          cache-bin: true # keeps cargo-c out of a rebuild on every run
+      - run: command -v cargo-ctest >/dev/null || cargo install cargo-c --locked
+
+      # Same script ci.yml's build-release job runs, so a release is bit-for-bit
+      # the build CI already exercised. It refuses a dirty tree, so nothing may
+      # write into the workspace before this point.
+      - run: scripts/build-release.sh
+
+      # Assets carry a platform suffix so a second target can be added later
+      # without renaming what consumers already pin.
+      - name: Stage assets
+        id: stage
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          for bin in e01verify e01bench vmdkverify rawdiskverify diskimage-nbd; do
+            cp "target/release/${bin}" "staging/${bin}-linux-x86_64"
+          done
+          tar -czf staging/imagereader-capi-linux-x86_64.tar.gz -C target/release/dist .
+          # Named explicitly so SHA256SUMS can never list itself.
+          (cd staging && sha256sum -- *-linux-x86_64 *.tar.gz > SHA256SUMS)
+          cat staging/SHA256SUMS
+
+      # The notes double as the source for a consumer's pin: each binary's
+      # reported version and the digest to verify the download against.
+      - name: Compose release notes
+        run: |
+          set -euo pipefail
+          {
+            echo "Built from \`$(git rev-parse --short HEAD)\` by \`scripts/build-release.sh\`."
+            echo
+            echo "| Binary | Version | sha256 |"
+            echo "|--------|---------|--------|"
+            for bin in e01verify diskimage-nbd; do
+              version="$("target/release/${bin}" --version)"
+              sum="$(awk -v f="${bin}-linux-x86_64" '$2 == f {print $1}' staging/SHA256SUMS)"
+              echo "| \`${bin}\` | ${version} | \`${sum}\` |"
+            done
+            echo
+            echo "Verify with \`sha256sum -c SHA256SUMS\`."
+          } > notes.md
+          cat notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --notes-file notes.md \
+            --verify-tag \
+            staging/*
