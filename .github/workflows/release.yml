@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p staging
-          for bin in e01verify e01bench vmdkverify rawdiskverify diskimage-nbd; do
+          for bin in e01verify vmdkverify rawdiskverify diskimage-nbd; do
             cp "target/release/${bin}" "staging/${bin}-linux-x86_64"
           done
           tar -czf staging/imagereader-capi-linux-x86_64.tar.gz -C target/release/dist .
@@ -61,21 +61,11 @@ jobs:
           (cd staging && sha256sum -- *-linux-x86_64 *.tar.gz > SHA256SUMS)
           cat staging/SHA256SUMS
 
-      # The notes double as the source for a consumer's pin: each binary's
-      # reported version and the digest to verify the download against.
       - name: Compose release notes
         run: |
           set -euo pipefail
           {
             echo "Built from \`$(git rev-parse --short HEAD)\` by \`scripts/build-release.sh\`."
-            echo
-            echo "| Binary | Version | sha256 |"
-            echo "|--------|---------|--------|"
-            for bin in e01verify diskimage-nbd; do
-              version="$("target/release/${bin}" --version)"
-              sum="$(awk -v f="${bin}-linux-x86_64" '$2 == f {print $1}' staging/SHA256SUMS)"
-              echo "| \`${bin}\` | ${version} | \`${sum}\` |"
-            done
             echo
             echo "Verify with \`sha256sum -c SHA256SUMS\`."
           } > notes.md
