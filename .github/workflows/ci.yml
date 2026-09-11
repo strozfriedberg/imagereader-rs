@@ -4,7 +4,7 @@ on:
   push:
     branches: [main] # post-merge safety net only; avoids duplicate runs on PR branches
   schedule:
-    - cron: "0 5 * * *" # nightly, an hour before asdf's, so a break here surfaces first
+    - cron: "0 5 * * *" # nightly
   workflow_dispatch:
 concurrency:
   # Keyed by event as well as ref: a scheduled run and a push to main share a
@@ -18,7 +18,12 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 jobs:
+  # The nightly exists to report to Slack. A repo with no CI_NIGHTLY variable
+  # (the public mirror, and every fork) has nothing to report to, so the whole
+  # scheduled run is skipped rather than burning runners on a silent build.
+  # Manual workflow_dispatch is deliberately not gated.
   lint:
+    if: github.event_name != 'schedule' || vars.CI_NIGHTLY == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -35,6 +40,7 @@ jobs:
   # --all-features covers the capi modules; --tests skips doctests, of which
   # all six crates have none.
   build-test:
+    if: github.event_name != 'schedule' || vars.CI_NIGHTLY == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -53,6 +59,7 @@ jobs:
   # against the installed headers, as C99 and as C++17, so a header that is
   # broken for one of the two languages fails here.
   ctest:
+    if: github.event_name != 'schedule' || vars.CI_NIGHTLY == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -67,9 +74,9 @@ jobs:
       - run: scripts/ctest-capi.sh
 
   # scripts/build-release.sh builds every binary and, through cargo-c, the C
-  # libraries. lto = true in the release profile, so this is slow;
-  # nothing above waits on it.
+  # libraries. 
   build-release:
+    if: github.event_name != 'schedule' || vars.CI_NIGHTLY == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -111,7 +118,10 @@ jobs:
   # Slack post for a nightly (or manually dispatched) run
   notify:
     needs: [lint, build-test, ctest, build-release]
-    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    # Same gate as the build jobs; never notify on a plain push or PR.
+    if: >-
+      always() && vars.CI_NIGHTLY == 'true'
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -123,9 +133,10 @@ jobs:
         run: |
           set -euo pipefail
           # A missing webhook must not turn the nightly red on its own — that
-          # would report a configuration gap as a build failure.
-          if [ -z "${SLACK_WEBHOOK_URL}" ]; then
-            echo "::warning::SLACK_CI_WEBHOOK_URL is not set; skipping notification"
+          # would report a configuration gap as a build failure. Nor amber: a
+          # plain log line, not ::warning::, so the run summary stays clean.
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "SLACK_CI_WEBHOOK_URL is not set; skipping notification"
             exit 0
           fi
           if echo "$NEEDS_JSON" | jq -e \
