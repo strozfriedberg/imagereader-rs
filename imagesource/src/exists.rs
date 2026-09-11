@@ -17,12 +17,12 @@ use crate::{
 /// We could not tell whether a segment is there.
 ///
 /// Distinct from `Ok(false)` on purpose. Segment discovery walks upward until a
-/// name is absent, so "absent" is load-bearing: it terminates the sequence. A
+/// name is absent, so "absent" is meaningful: it terminates the sequence. A
 /// throttled HEAD, an expired credential, or an unreadable directory reported
 /// as absent silently truncates the image -- the reader opens, the partition
 /// table parses, and the short read only shows up much later as corruption.
-/// Anything short of a definite answer has to stop the open instead -- with one
-/// documented exception, S3's 403, which is genuinely ambiguous and is resolved
+/// Anything short of a definite answer has to stop the open instead, with one
+/// documented exception: S3's 403, which is genuinely ambiguous and is resolved
 /// by policy in [`classify_head_status`].
 #[derive(Debug, thiserror::Error)]
 #[error("could not determine whether {path} exists: {source}")]

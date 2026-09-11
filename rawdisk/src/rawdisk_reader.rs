@@ -247,9 +247,9 @@ impl RawdiskReader {
             .unwrap_or_else(|| image_path.as_ref().to_string());
 
         // The no-suffix case short-circuits before any checker is built, and that
-        // ordering is load-bearing for S3: `S3Checker::new` calls `s3_bucket`,
-        // a GetBucketLocation round trip. Building it unconditionally would add a
-        // network call to every single-file S3 open that does not need one.
+        // ordering optimizes S3 access: `S3Checker::new` calls `s3_bucket`,
+        // which incurs a GetBucketLocation round trip so building it unconditionally
+        // would add a network call to every single-file S3 open that does not need one.
         let paths = if crate::seg_path::has_numeric_suffix(&discovery_path) {
             match url.scheme() {
                 "s3" => {
