@@ -3,6 +3,8 @@
 Cargo workspace of disk-image readers with local-file and direct-from-S3
 support, backed by a shared foyer-based caching layer.
 
+This workspace is the new home of the formerly-standalone `e01-rs` and `vmdk-rs` projects.
+
 - [`imagesource`](imagesource/README.md) — shared infrastructure: byte sources
   (file, S3), hybrid memory/disk caching with a protected metadata tier, AWS
   credential resolution, and I/O logging.
