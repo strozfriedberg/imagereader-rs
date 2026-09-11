@@ -28,4 +28,4 @@ its commit. [`.github/CI.md`](.github/CI.md) describes the CI workflow.
 
 ### Copyright
 
-Copyright 2025–2026, LevelBlue. `imagereader-rs` is licensed under the Apache License, Version 2.0.
+Copyright 2025–2026, LevelBlue, LLC. `imagereader-rs` is licensed under the Apache License, Version 2.0.

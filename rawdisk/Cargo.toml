@@ -3,6 +3,7 @@ name = "rawdisk-rs"
 version = "0.1.0"
 authors = ["LevelBlue"]
 edition = "2024"
+license.workspace = true
 
 [lib]
 name = "rawdisk"

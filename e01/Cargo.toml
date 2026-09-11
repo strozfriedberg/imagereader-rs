@@ -3,6 +3,7 @@ name = "e01-rs"
 version = "0.1.1"
 authors = ["LevelBlue"]
 edition = "2024"
+license.workspace = true
 autobins = false
 
 [lib]

@@ -134,4 +134,4 @@ across every reader in this workspace -- see
 
 ### Copyright
 
-Copyright 2025–2026, LevelBlue. `rawdisk-rs` is licensed under the Apache License, Version 2.0.
+Copyright 2025–2026, LevelBlue, LLC. `rawdisk-rs` is licensed under the Apache License, Version 2.0.

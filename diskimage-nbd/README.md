@@ -169,4 +169,4 @@ shared across the workspace — see
 
 ### Copyright
 
-Copyright 2025–2026, LevelBlue. `diskimage-nbd` is licensed under the Apache License, Version 2.0.
+Copyright 2025–2026, LevelBlue, LLC. `diskimage-nbd` is licensed under the Apache License, Version 2.0.

@@ -100,4 +100,4 @@ Read from a VMDK in C:
 
 ### Copyright
 
-Copyright 2025–2026, LevelBlue. `vmdk-rs` is licensed under the Apache License, Version 2.0.
+Copyright 2025–2026, LevelBlue, LLC. `vmdk-rs` is licensed under the Apache License, Version 2.0.
