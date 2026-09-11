@@ -3,6 +3,7 @@ name = "diskimage-nbd"
 version = "0.1.0"
 authors = ["LevelBlue"]
 edition = "2024"
+license.workspace = true
 description = "NBD server for disk image formats (E01, VMDK, raw and split raw)"
 autobins = false
 

@@ -129,4 +129,4 @@ cargo bench -p imagesource
 
 ### Copyright
 
-Copyright 2025–2026, LevelBlue. `imagesource` is licensed under the Apache License, Version 2.0.
+Copyright 2025–2026, LevelBlue, LLC. `imagesource` is licensed under the Apache License, Version 2.0.

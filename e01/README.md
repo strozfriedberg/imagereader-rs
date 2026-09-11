@@ -85,4 +85,4 @@ library queries the bucket location before reading rather than assuming one.
 
 ### Copyright
 
-Copyright 2025–2026, LevelBlue. `e01-rs` is licensed under the Apache License, Version 2.0.
+Copyright 2025–2026, LevelBlue, LLC. `e01-rs` is licensed under the Apache License, Version 2.0.
