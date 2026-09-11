@@ -644,7 +644,7 @@ type ChunkTask<'a> = (
 /// Threads this process may actually use.
 ///
 /// Respects `sched_setaffinity` (`taskset`) and cgroup CPU quotas, which is the
-/// whole point: a fixed thread count oversubscribes a pinned or containerised
+/// whole point: a fixed thread count oversubscribes a pinned or containerized
 /// process and thrashes. Pinned to 2 CPUs, a 4-thread pool made e01's benches
 /// 5x slower.
 fn available_parallelism() -> usize {
